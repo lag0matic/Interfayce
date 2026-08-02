@@ -222,19 +222,31 @@ Source: [VRChat OSC as Input Controller](https://docs.vrchat.com/docs/osc-as-inp
 
 ## Spotify/media integration
 
-First choice: use the operating system's media-session API to learn the current track and issue basic transport commands. On Windows, this is now implemented through Global Media Transport Controls; it avoids requiring Spotify OAuth for the basic case and has a plausible Linux counterpart through MPRIS.
+Use the operating system's media-session API to learn the current track and issue immediate transport commands. On Windows, this is now implemented through Global Media Transport Controls and has a plausible Linux counterpart through MPRIS.
 
-Only add Spotify Web API control if media sessions cannot satisfy a concrete required behavior.
+Spotify OAuth/Web API access is explicitly in scope for search, play-by-name, conversational selection, and other behaviors media sessions cannot satisfy. Credentials and refresh tokens belong only in ignored local configuration. Keep the media-session path for fast basic transport and as a useful fallback.
 
 ## Voice control
 
 Preferred initial pipeline:
 
 ```text
-intentional gesture → local microphone capture → local STT → command grammar → action
+Music mic button → local microphone capture → local STT
+    → deterministic fast path for obvious commands
+    → constrained LLM fallback for conversational requests
+    → validated Spotify/Interfayce action
+    → short acknowledgment through David's local TTS server
 ```
 
-Start with limited, explicit commands and confirmations for impactful actions. Avoid an LLM in the critical path: it adds latency, cost, and unnecessary ambiguity. Consider an LLM only later for opt-in free-form commands running on the local server box or a chosen API.
+The LLM returns a constrained intent and arguments; it does not receive arbitrary authority to operate the computer. Simple commands such as pause, next, and volume changes bypass it for speed. Natural requests and conversational follow-ups may use a local model or chosen API. Track metadata, captured application text, and other untrusted strings are data, never instructions.
+
+VRChat textbox dictation is a separate Comms-deck path:
+
+```text
+Comms mic button → local microphone capture → local STT → preview / cancel / send → VRChat OSC chatbox
+```
+
+Command mode and dictation mode must have distinct visible states and must never silently cross-route. Neither mode may enable the VRChat voice microphone. Microphone capture is always deliberately armed and time-bounded.
 
 ## Audio routing
 
