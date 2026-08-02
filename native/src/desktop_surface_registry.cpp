@@ -282,7 +282,6 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
         hit.distance = result.fDistance;
         hit.u = result.vUVs.v[0];
         hit.v = result.vUVs.v[1];
-        hit.point = result.vPoint;
         if (!hit.captured) {
             const auto x = result.vUVs.v[0] * static_cast<float>(kPickerWidth);
             const auto y = (1.0F - result.vUVs.v[1]) * static_cast<float>(kPickerHeight);

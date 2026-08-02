@@ -31,7 +31,6 @@ struct DesktopSurfaceHit {
     int pageDelta{};
     float u{};
     float v{};
-    vr::HmdVector3_t point{};
 };
 
 enum class DesktopPointerEvent { Move, PrimaryDown, PrimaryUp };

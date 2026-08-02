@@ -741,8 +741,6 @@ int main(int argc, char** argv) {
             ray.vDirection = {{pointerRay->direction.x, pointerRay->direction.y, pointerRay->direction.z}};
             if (vr::VROverlay()->ComputeOverlayIntersection(wristOverlay, &ray, &panelHit)) {
                 panelHitFound = true;
-                pointerTarget = Vector3{
-                    panelHit.vPoint.v[0], panelHit.vPoint.v[1], panelHit.vPoint.v[2]};
                 const auto x = panelHit.vUVs.v[0] * 768.0F;
                 const auto y = (1.0F - panelHit.vUVs.v[1]) * 384.0F;
                 panelX = x;
@@ -766,11 +764,6 @@ int main(int argc, char** argv) {
             }
             if (!panelHitFound) {
                 desktopSurfaceHit = desktopSurfaces.HitTest(ray);
-                if (desktopSurfaceHit) {
-                    pointerTarget = Vector3{
-                        desktopSurfaceHit->point.v[0], desktopSurfaceHit->point.v[1],
-                        desktopSurfaceHit->point.v[2]};
-                }
             }
         }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
@@ -790,6 +783,11 @@ int main(int argc, char** argv) {
             if (leftController != vr::k_unTrackedDeviceIndexInvalid) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
                     cursorOverlay, leftController, &cursorTransform);
+                if (const auto leftPose = ReadControllerPose(system, DragHand::Left)) {
+                    const auto absoluteCursor = MultiplyTransforms(*leftPose, cursorTransform);
+                    pointerTarget = Vector3{absoluteCursor.m[0][3], absoluteCursor.m[1][3],
+                        absoluteCursor.m[2][3]};
+                }
                 const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
                     || desktopNewSurfaceHit || desktopSurfaceListHit
                     || desktopListBackHit || desktopBringIndex.has_value() || desktopCloseIndex.has_value();
@@ -803,6 +801,8 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 30);
                 vr::VROverlay()->SetOverlayTransformAbsolute(cursorOverlay,
                     vr::TrackingUniverseStanding, &*cursorTransform);
+                pointerTarget = Vector3{cursorTransform->m[0][3], cursorTransform->m[1][3],
+                    cursorTransform->m[2][3]};
                 const bool actionable = desktopSurfaceHit->captured
                     || desktopSurfaceHit->sourceIndex.has_value()
                     || desktopSurfaceHit->pageDelta != 0;
