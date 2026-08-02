@@ -614,8 +614,7 @@ std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
         const auto x = result.vUVs.v[0] * static_cast<float>(kKeyboardWidth);
         const auto y = (1.0F - result.vUVs.v[1]) * static_cast<float>(kKeyboardHeight);
         const auto keyIndex = KeyboardKeyAt(x, y, surface.keyboardShifted);
-        if (!keyIndex) continue;
-        KeyboardSurfaceHit hit{surface.id, *keyIndex, result.fDistance,
+        KeyboardSurfaceHit hit{surface.id, keyIndex, result.fDistance,
             result.vUVs.v[0], result.vUVs.v[1]};
         if (!nearest || hit.distance < nearest->distance) nearest = hit;
     }
@@ -708,10 +707,10 @@ bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
 bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) {
     const auto keyboard = std::find_if(surfaces_.begin(), surfaces_.end(),
         [&hit](const auto& surface) { return surface.id == hit.id && surface.keyboard; });
-    if (keyboard == surfaces_.end()) return false;
+    if (keyboard == surfaces_.end() || !hit.keyIndex) return false;
     const auto keys = KeyboardLayout(keyboard->keyboardShifted);
-    if (hit.keyIndex >= keys.size()) return false;
-    const auto& key = keys[hit.keyIndex];
+    if (*hit.keyIndex >= keys.size()) return false;
+    const auto& key = keys[*hit.keyIndex];
     if (key.togglesShift) {
         keyboard->keyboardShifted = !keyboard->keyboardShifted;
         keyboard->hoveredKey.reset();
@@ -803,8 +802,7 @@ void DesktopSurfaceRegistry::SetHoveredKeyboard(const std::optional<KeyboardSurf
     }
     for (auto& surface : surfaces_) {
         if (!surface.keyboard) continue;
-        const auto nextHover = hit && hit->id == surface.id
-            ? std::optional<size_t>(hit->keyIndex) : std::nullopt;
+        const auto nextHover = hit && hit->id == surface.id ? hit->keyIndex : std::nullopt;
         if (nextHover == surface.hoveredKey) continue;
         surface.hoveredKey = nextHover;
         surface.texture->RenderKeyboard(targetLabel, surface.keyboardShifted,

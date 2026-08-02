@@ -36,7 +36,7 @@ struct DesktopSurfaceHit {
 
 struct KeyboardSurfaceHit {
     uint64_t id{};
-    size_t keyIndex{};
+    std::optional<size_t> keyIndex;
     float distance{};
     float u{};
     float v{};
