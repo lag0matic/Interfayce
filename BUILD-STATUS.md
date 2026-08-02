@@ -19,6 +19,7 @@ The current offline-verified slice now:
 - shows a cyan world-space aiming reticle at the trigger ray's exact picker or captured-surface hit point;
 - gives every desktop surface a slim cyan/violet frame; aiming at it brightens the frame and holding right grip moves and rotates the surface while preserving the original grab offset;
 - supports one-hand frame movement from either controller and two-hand stretch/compact scaling around the controllers' midpoint, with smooth fallback when either grip is released;
+- requires deliberate Index grip force (0.75 activation / 0.55 release) for surface grabs so naturally holding the controllers does not move windows while typing;
 - forwards right-thumbstick vertical and horizontal wheel input to the captured surface under the controller ray, with a dead zone and proportional speed;
 - spawns one reusable, independent keyboard surface from the wrist Desktop deck; it targets the most recently clicked captured surface and participates in Bring to me, Close, one-hand movement, and two-hand scaling;
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
