@@ -34,6 +34,14 @@ struct DesktopSurfaceHit {
     float v{};
 };
 
+struct KeyboardSurfaceHit {
+    uint64_t id{};
+    size_t keyIndex{};
+    float distance{};
+    float u{};
+    float v{};
+};
+
 enum class DesktopPointerEvent { Move, PrimaryDown, PrimaryUp };
 enum class DesktopGrabHand { Left, Right };
 
@@ -42,6 +50,8 @@ public:
     bool Initialize(ID3D11Device* device);
     bool Render(const std::vector<DesktopSource>& sources,
                 std::optional<size_t> hoveredSource = std::nullopt, size_t applicationPage = 0);
+    bool RenderKeyboard(const std::wstring& targetLabel, bool shifted,
+                        std::optional<size_t> hoveredKey = std::nullopt);
     vr::Texture_t Texture() const;
 
 private:
@@ -64,14 +74,21 @@ class DesktopSurfaceRegistry {
 public:
     bool Initialize(vr::IVRSystem* system, ID3D11Device* device);
     uint64_t SpawnPicker(const std::vector<DesktopSource>& sources);
+    uint64_t SpawnKeyboard();
     std::optional<DesktopSurfaceHit> HitTest(const vr::VROverlayIntersectionParams_t& ray) const;
+    std::optional<KeyboardSurfaceHit> KeyboardHitTest(
+        const vr::VROverlayIntersectionParams_t& ray) const;
     std::optional<uint64_t> FrameHitTest(const vr::VROverlayIntersectionParams_t& ray) const;
     bool ActivateHit(const DesktopSurfaceHit& hit);
     bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
     bool SendScrollEvent(const DesktopSurfaceHit& hit, int32_t verticalDelta,
                          int32_t horizontalDelta);
+    bool ActivateKeyboardHit(const KeyboardSurfaceHit& hit);
     std::optional<vr::HmdMatrix34_t> CursorTransform(const DesktopSurfaceHit& hit) const;
+    std::optional<vr::HmdMatrix34_t> KeyboardCursorTransform(
+        const KeyboardSurfaceHit& hit) const;
     void SetHoveredHit(const std::optional<DesktopSurfaceHit>& hit);
+    void SetHoveredKeyboard(const std::optional<KeyboardSurfaceHit>& hit);
     void SetHoveredFrame(std::optional<uint64_t> id);
     void Update();
     bool BringToMe(uint64_t id);
@@ -97,6 +114,9 @@ private:
         std::optional<size_t> assignedSource;
         std::optional<size_t> hoveredSource;
         size_t applicationPage{};
+        bool keyboard{};
+        bool keyboardShifted{};
+        std::optional<size_t> hoveredKey;
         float aspectRatio{1.6F};
         float widthMeters{0.92F};
         vr::HmdMatrix34_t transform{};
@@ -128,6 +148,7 @@ private:
     std::vector<Surface> surfaces_;
     std::array<std::optional<GrabState>, 2> activeGrabs_;
     std::optional<ScaleState> activeScale_;
+    std::optional<uint64_t> focusedSurfaceId_;
 };
 
 }  // namespace interfayce

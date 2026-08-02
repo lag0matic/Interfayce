@@ -762,11 +762,13 @@ int main(int argc, char** argv) {
         bool rigFullResetHit = false;
         bool rigMountResetHit = false;
         bool desktopNewSurfaceHit = false;
+        bool desktopKeyboardSpawnHit = false;
         bool desktopSurfaceListHit = false;
         bool desktopListBackHit = false;
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopCloseIndex;
         std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
+        std::optional<interfayce::KeyboardSurfaceHit> keyboardSurfaceHit;
         std::optional<uint64_t> leftDesktopFrameHit;
         std::optional<uint64_t> desktopFrameHit;
         bool panelHitFound = false;
@@ -798,12 +800,21 @@ int main(int argc, char** argv) {
                         }
                     }
                 } else {
-                    desktopNewSurfaceHit = selectedDeck == 1 && x >= 120.0F && x <= 280.0F && y >= 252.0F && y <= 338.0F;
-                    desktopSurfaceListHit = selectedDeck == 1 && x >= 488.0F && x <= 648.0F && y >= 252.0F && y <= 338.0F;
+                    desktopNewSurfaceHit = selectedDeck == 1 && x >= 70.0F && x <= 230.0F && y >= 252.0F && y <= 338.0F;
+                    desktopKeyboardSpawnHit = selectedDeck == 1 && x >= 304.0F && x <= 464.0F && y >= 252.0F && y <= 338.0F;
+                    desktopSurfaceListHit = selectedDeck == 1 && x >= 538.0F && x <= 698.0F && y >= 252.0F && y <= 338.0F;
                 }
             }
             if (!panelHitFound) {
                 desktopSurfaceHit = desktopSurfaces.HitTest(ray);
+                keyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(ray);
+                if (desktopSurfaceHit && keyboardSurfaceHit) {
+                    if (keyboardSurfaceHit->distance < desktopSurfaceHit->distance) {
+                        desktopSurfaceHit.reset();
+                    } else {
+                        keyboardSurfaceHit.reset();
+                    }
+                }
                 desktopFrameHit = desktopSurfaces.FrameHitTest(ray);
             }
         }
@@ -817,6 +828,7 @@ int main(int argc, char** argv) {
             leftDesktopFrameHit = desktopSurfaces.FrameHitTest(leftRay);
         }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
+        desktopSurfaces.SetHoveredKeyboard(keyboardSurfaceHit);
         desktopSurfaces.SetHoveredFrame(desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit);
         if (panelHitFound) {
             vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0035F);
@@ -840,11 +852,25 @@ int main(int argc, char** argv) {
                         absoluteCursor.m[2][3]};
                 }
                 const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
-                    || desktopNewSurfaceHit || desktopSurfaceListHit
+                    || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
                     || desktopListBackHit || desktopBringIndex.has_value() || desktopCloseIndex.has_value();
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
                     actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
+            }
+        } else if (keyboardSurfaceHit) {
+            if (const auto cursorTransform = desktopSurfaces.KeyboardCursorTransform(
+                    *keyboardSurfaceHit)) {
+                vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0055F);
+                vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 30);
+                vr::VROverlay()->SetOverlayTransformAbsolute(cursorOverlay,
+                    vr::TrackingUniverseStanding, &*cursorTransform);
+                pointerTarget = Vector3{cursorTransform->m[0][3], cursorTransform->m[1][3],
+                    cursorTransform->m[2][3]};
+                vr::VROverlay()->SetOverlayColor(cursorOverlay, 0.20F, 1.0F, 1.0F);
+                vr::VROverlay()->ShowOverlay(cursorOverlay);
+            } else {
+                vr::VROverlay()->HideOverlay(cursorOverlay);
             }
         } else if (desktopSurfaceHit) {
             if (const auto cursorTransform = desktopSurfaces.CursorTransform(*desktopSurfaceHit)) {
@@ -866,7 +892,7 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(cursorOverlay);
         }
-        if ((panelHitFound || desktopSurfaceHit) && pointerRay && pointerTarget) {
+        if ((panelHitFound || keyboardSurfaceHit || desktopSurfaceHit) && pointerRay && pointerTarget) {
             if (const auto laserTransform = LaserTransform(
                     system, pointerRay->source, *pointerTarget)) {
                 constexpr float kLaserTextureHeightToWidth = 256.0F;
@@ -921,7 +947,9 @@ int main(int argc, char** argv) {
         if (rightSurfaceGrab.bChanged && !rightSurfaceGrab.bState) {
             desktopSurfaces.EndGrab(interfayce::DesktopGrabHand::Right);
         }
-        if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
+        if (rightUiClick.bChanged && rightUiClick.bState && keyboardSurfaceHit && !panelHitFound) {
+            desktopSurfaces.ActivateKeyboardHit(*keyboardSurfaceHit);
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
             if (desktopSurfaceHit->captured) {
                 if (desktopSurfaces.SendPointerEvent(*desktopSurfaceHit,
                         interfayce::DesktopPointerEvent::PrimaryDown)) {
@@ -983,6 +1011,20 @@ int main(int argc, char** argv) {
                 }
             } else {
                 std::cerr << "Could not spawn desktop picker surface\n";
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopKeyboardSpawnHit) {
+            const auto keyboardId = desktopSurfaces.SpawnKeyboard();
+            if (keyboardId != 0) {
+                desktopPanel.surfaces = desktopSurfaces.Summaries();
+                desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+                std::cout << "Keyboard surface " << keyboardId << " is available.\n";
+                if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else {
+                std::cerr << "Could not spawn keyboard surface\n";
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceListHit) {
             desktopPanel.showSurfaceList = true;
