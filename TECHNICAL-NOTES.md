@@ -250,10 +250,10 @@ Command mode and dictation mode must have distinct visible states and must never
 
 ### Kokoro acknowledgment server
 
-David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. The port must remain configurable. David's latest recollection is port `5000`; an older note said `7079`, but neither port answered a health probe while the service was offline on 2026-08-02. Verify against the running server before choosing the local default.
+David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. Port `5000` was live-verified on 2026-08-02; the older `7079` note is wrong. Keep the base URL configurable, but use the local hostname as the personal default:
 
 ```text
-POST http://thearkive.local:<configured-port>/v1/audio/speech
+POST http://thearkive.local:5000/v1/audio/speech
 ```
 
 Example request:
@@ -276,6 +276,14 @@ Discovery/health endpoints:
 - `GET /v1/models`
 - `GET /voices`
 - `GET /v1/voices`
+
+The confirmed health response from `GET http://192.168.4.194:5000/health` is:
+
+```json
+{"service":"Kokoro TTS Server (OpenAI Compatible)","status":"ok"}
+```
+
+A live WAV request using `af_heart` completed in about 11.1 seconds and produced a valid 208,844-byte file. That timing may include server/model warmup, but it confirms that synthesis must run asynchronously. Show action completion on the wrist immediately, then play the spoken acknowledgment when it arrives. Do not hold the command UI in a busy state for the duration of TTS generation.
 
 The base URL, model, voice/blend, response format, speed, and timeout belong in ignored local configuration. TTS is acknowledgment, not the authority that decides whether an action succeeded. A failed or sleeping TTS server must not roll back, block, or misreport a completed Spotify action; the wrist should still show the result visually. Keep acknowledgments short, bound request timeouts, and discard stale queued speech when a newer command supersedes it.
 
