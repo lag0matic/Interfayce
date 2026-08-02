@@ -68,6 +68,8 @@ public:
     std::optional<uint64_t> FrameHitTest(const vr::VROverlayIntersectionParams_t& ray) const;
     bool ActivateHit(const DesktopSurfaceHit& hit);
     bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
+    bool SendScrollEvent(const DesktopSurfaceHit& hit, int32_t verticalDelta,
+                         int32_t horizontalDelta);
     std::optional<vr::HmdMatrix34_t> CursorTransform(const DesktopSurfaceHit& hit) const;
     void SetHoveredHit(const std::optional<DesktopSurfaceHit>& hit);
     void SetHoveredFrame(std::optional<uint64_t> id);

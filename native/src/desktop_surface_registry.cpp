@@ -124,6 +124,25 @@ bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent eve
     return SendInput(1, &input, sizeof(input)) == 1;
 }
 
+bool InjectDesktopScroll(const POINT point, int32_t verticalDelta, int32_t horizontalDelta) {
+    if (!InjectDesktopPointer(point, interfayce::DesktopPointerEvent::Move)) return false;
+    std::array<INPUT, 2> inputs{};
+    UINT count = 0;
+    if (verticalDelta != 0) {
+        inputs[count].type = INPUT_MOUSE;
+        inputs[count].mi.dwFlags = MOUSEEVENTF_WHEEL;
+        inputs[count].mi.mouseData = static_cast<DWORD>(verticalDelta);
+        ++count;
+    }
+    if (horizontalDelta != 0) {
+        inputs[count].type = INPUT_MOUSE;
+        inputs[count].mi.dwFlags = MOUSEEVENTF_HWHEEL;
+        inputs[count].mi.mouseData = static_cast<DWORD>(horizontalDelta);
+        ++count;
+    }
+    return count == 0 || SendInput(count, inputs.data(), sizeof(INPUT)) == count;
+}
+
 }  // namespace
 
 namespace interfayce {
@@ -472,6 +491,17 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         || *found->assignedSource >= found->sources.size()) return false;
     const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
     return point && InjectDesktopPointer(*point, event);
+}
+
+bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
+                                             int32_t verticalDelta,
+                                             int32_t horizontalDelta) {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [&hit](const auto& surface) { return surface.id == hit.id; });
+    if (found == surfaces_.end() || !found->capture || !found->assignedSource
+        || *found->assignedSource >= found->sources.size()) return false;
+    const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
+    return point && InjectDesktopScroll(*point, verticalDelta, horizontalDelta);
 }
 
 std::optional<vr::HmdMatrix34_t> DesktopSurfaceRegistry::CursorTransform(

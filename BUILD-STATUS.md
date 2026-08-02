@@ -19,10 +19,11 @@ The current offline-verified slice now:
 - shows a cyan world-space aiming reticle at the trigger ray's exact picker or captured-surface hit point;
 - gives every desktop surface a slim cyan/violet frame; aiming at it brightens the frame and holding right grip moves and rotates the surface while preserving the original grab offset;
 - supports one-hand frame movement from either controller and two-hand stretch/compact scaling around the controllers' midpoint, with smooth fallback when either grip is released;
+- forwards right-thumbstick vertical and horizontal wheel input to the captured surface under the controller ray, with a dead zone and proportional speed;
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
 - removes SteamVR's modal keyboard; a non-modal Interfayce keyboard will live on assigned surfaces later.
 
-The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, the visible frame, and right-grip movement have passed live VR checkpoints. Left-grip movement and two-hand scaling await live verification. Scrolling and the internal keyboard are not implemented yet.
+The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, visible frames, one-hand movement, and two-hand scaling have passed live VR checkpoints. Contextual thumbstick scrolling awaits live verification. The internal keyboard is not implemented yet.
 
 Confirmed interaction direction:
 
@@ -49,8 +50,8 @@ What exists:
 
 Next implementation sequence:
 
-1. Live-test left-grip movement and two-hand scaling; never reuse B-double playspace drag.
-2. Add scroll input and the non-modal Interfayce keyboard attached to the active surface.
+1. Live-test contextual thumbstick scrolling.
+2. Add the non-modal Interfayce keyboard attached to the active surface.
 3. Add capture update policies (active, glanceable, sleeping) and persisted transforms after interaction is stable.
 
 Constraints to preserve:

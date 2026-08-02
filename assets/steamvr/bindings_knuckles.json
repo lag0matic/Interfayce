@@ -52,6 +52,15 @@
               "output": "/actions/interfayce/in/right_surface_grab"
             }
           }
+        },
+        {
+          "path": "/user/hand/right/input/thumbstick",
+          "mode": "joystick",
+          "inputs": {
+            "position": {
+              "output": "/actions/interfayce/in/right_surface_scroll"
+            }
+          }
         }
       ]
     }

@@ -25,6 +25,7 @@ constexpr char kRightDragActionPath[] = "/actions/interfayce/in/right_drag";
 constexpr char kRightUiClickActionPath[] = "/actions/interfayce/in/right_ui_click";
 constexpr char kLeftSurfaceGrabActionPath[] = "/actions/interfayce/in/left_surface_grab";
 constexpr char kRightSurfaceGrabActionPath[] = "/actions/interfayce/in/right_surface_grab";
+constexpr char kRightSurfaceScrollActionPath[] = "/actions/interfayce/in/right_surface_scroll";
 constexpr char kWristOverlayKey[] = "com.lag0matic.interfayce.wrist.panel";
 constexpr char kCursorOverlayKey[] = "com.lag0matic.interfayce.wrist.cursor";
 constexpr char kLaserOverlayKey[] = "com.lag0matic.interfayce.pointer.laser";
@@ -246,6 +247,13 @@ float Dot(const Vector3 left, const Vector3 right) {
     return left.x * right.x + left.y * right.y + left.z * right.z;
 }
 
+float ApplyDeadzone(float value, float deadzone = 0.18F) {
+    const auto magnitude = std::abs(value);
+    if (magnitude <= deadzone) return 0.0F;
+    const auto scaled = (magnitude - deadzone) / (1.0F - deadzone);
+    return std::copysign((std::min)(scaled, 1.0F), value);
+}
+
 Vector3 Cross(const Vector3 left, const Vector3 right) {
     return {
         left.y * right.z - left.z * right.y,
@@ -465,6 +473,7 @@ int main(int argc, char** argv) {
     vr::VRActionHandle_t rightUiClickAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t leftSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightSurfaceGrabAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t rightSurfaceScrollAction = vr::k_ulInvalidActionHandle;
     const auto leftHandleError = vr::VRInput()->GetActionHandle(kLeftDragActionPath, &leftDragAction);
     const auto rightHandleError = vr::VRInput()->GetActionHandle(kRightDragActionPath, &rightDragAction);
     const auto rightUiClickError = vr::VRInput()->GetActionHandle(
@@ -473,6 +482,8 @@ int main(int argc, char** argv) {
         kLeftSurfaceGrabActionPath, &leftSurfaceGrabAction);
     const auto rightSurfaceGrabError = vr::VRInput()->GetActionHandle(
         kRightSurfaceGrabActionPath, &rightSurfaceGrabAction);
+    const auto rightSurfaceScrollError = vr::VRInput()->GetActionHandle(
+        kRightSurfaceScrollActionPath, &rightSurfaceScrollAction);
 
     interfayce::OverlayRenderer renderer;
     if (!rawPanel && !renderer.Initialize(system)) {
@@ -489,6 +500,7 @@ int main(int argc, char** argv) {
                 && rightUiClickError == vr::VRInputError_None
                 && leftSurfaceGrabError == vr::VRInputError_None
                 && rightSurfaceGrabError == vr::VRInputError_None
+                && rightSurfaceScrollError == vr::VRInputError_None
             ? 0
             : 1;
     }
@@ -676,6 +688,10 @@ int main(int argc, char** argv) {
     const wchar_t* rigResetKind = nullptr;
     auto restoreHoldStarted = std::chrono::steady_clock::now();
     std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
+    std::optional<uint64_t> activeScrollSurface;
+    double verticalScrollRemainder = 0.0;
+    double horizontalScrollRemainder = 0.0;
+    auto lastScrollUpdate = std::chrono::steady_clock::now();
     auto* chaperone = vr::VRChaperoneSetup();
     const auto restoreBaseline = [&](std::optional<vr::HmdMatrix34_t>& baseline, const char* reason) {
         if (baseline) {
@@ -705,6 +721,7 @@ int main(int argc, char** argv) {
         vr::InputDigitalActionData_t rightUiClick{};
         vr::InputDigitalActionData_t leftSurfaceGrab{};
         vr::InputDigitalActionData_t rightSurfaceGrab{};
+        vr::InputAnalogActionData_t rightSurfaceScroll{};
         const auto leftDataError = vr::VRInput()->GetDigitalActionData(
             leftDragAction, &leftDrag, sizeof(leftDrag), vr::k_ulInvalidInputValueHandle);
         const auto rightDataError = vr::VRInput()->GetDigitalActionData(
@@ -715,6 +732,8 @@ int main(int argc, char** argv) {
             sizeof(leftSurfaceGrab), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetDigitalActionData(rightSurfaceGrabAction, &rightSurfaceGrab,
             sizeof(rightSurfaceGrab), vr::k_ulInvalidInputValueHandle);
+        vr::VRInput()->GetAnalogActionData(rightSurfaceScrollAction, &rightSurfaceScroll,
+            sizeof(rightSurfaceScroll), vr::k_ulInvalidInputValueHandle);
         if (!printedInputDiagnostics) {
             std::array<vr::VRInputValueHandle_t, 16> leftOrigins{};
             std::array<vr::VRInputValueHandle_t, 16> rightOrigins{};
@@ -1009,6 +1028,35 @@ int main(int argc, char** argv) {
             desktopSurfaces.SendPointerEvent(*activeDesktopPointer,
                 interfayce::DesktopPointerEvent::PrimaryUp);
             activeDesktopPointer.reset();
+        }
+        const auto scrollNow = std::chrono::steady_clock::now();
+        const auto scrollSeconds = (std::min)(
+            std::chrono::duration<double>(scrollNow - lastScrollUpdate).count(), 0.05);
+        lastScrollUpdate = scrollNow;
+        if (desktopSurfaceHit && desktopSurfaceHit->captured && rightSurfaceScroll.bActive
+            && !leftSurfaceGrab.bState && !rightSurfaceGrab.bState && !rightUiClick.bState) {
+            if (!activeScrollSurface || *activeScrollSurface != desktopSurfaceHit->id) {
+                activeScrollSurface = desktopSurfaceHit->id;
+                verticalScrollRemainder = 0.0;
+                horizontalScrollRemainder = 0.0;
+            }
+            constexpr double kWheelUnitsPerSecond = 900.0;
+            verticalScrollRemainder += ApplyDeadzone(rightSurfaceScroll.y)
+                * kWheelUnitsPerSecond * scrollSeconds;
+            horizontalScrollRemainder += ApplyDeadzone(rightSurfaceScroll.x)
+                * kWheelUnitsPerSecond * scrollSeconds;
+            const auto verticalDelta = static_cast<int32_t>(verticalScrollRemainder);
+            const auto horizontalDelta = static_cast<int32_t>(horizontalScrollRemainder);
+            verticalScrollRemainder -= verticalDelta;
+            horizontalScrollRemainder -= horizontalDelta;
+            if (verticalDelta != 0 || horizontalDelta != 0) {
+                desktopSurfaces.SendScrollEvent(
+                    *desktopSurfaceHit, verticalDelta, horizontalDelta);
+            }
+        } else {
+            activeScrollSurface.reset();
+            verticalScrollRemainder = 0.0;
+            horizontalScrollRemainder = 0.0;
         }
         if (selectedDeck == 0 && std::chrono::steady_clock::now() >= nextMusicPoll) {
             nextMusicPoll = std::chrono::steady_clock::now() + std::chrono::seconds(2);
