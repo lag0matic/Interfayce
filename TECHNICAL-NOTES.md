@@ -250,10 +250,10 @@ Command mode and dictation mode must have distinct visible states and must never
 
 ### Kokoro acknowledgment server
 
-David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. The expected local endpoint is:
+David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. The port must remain configurable. David's latest recollection is port `5000`; an older note said `7079`, but neither port answered a health probe while the service was offline on 2026-08-02. Verify against the running server before choosing the local default.
 
 ```text
-POST http://thearkive.local:7079/v1/audio/speech
+POST http://thearkive.local:<configured-port>/v1/audio/speech
 ```
 
 Example request:
