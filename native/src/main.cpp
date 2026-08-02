@@ -657,6 +657,8 @@ int main(int argc, char** argv) {
         }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
         if (panelHitFound) {
+            vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.007F);
+            vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 11);
             vr::HmdMatrix34_t localCursor{};
             localCursor.m[0][0] = 1.0F;
             localCursor.m[1][1] = 1.0F;
@@ -676,6 +678,21 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
                     actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
+            }
+        } else if (desktopSurfaceHit) {
+            if (const auto cursorTransform = desktopSurfaces.CursorTransform(*desktopSurfaceHit)) {
+                vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.011F);
+                vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 30);
+                vr::VROverlay()->SetOverlayTransformAbsolute(cursorOverlay,
+                    vr::TrackingUniverseStanding, &*cursorTransform);
+                const bool actionable = desktopSurfaceHit->captured
+                    || desktopSurfaceHit->sourceIndex.has_value()
+                    || desktopSurfaceHit->pageDelta != 0;
+                vr::VROverlay()->SetOverlayColor(cursorOverlay,
+                    actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
+                vr::VROverlay()->ShowOverlay(cursorOverlay);
+            } else {
+                vr::VROverlay()->HideOverlay(cursorOverlay);
             }
         } else {
             vr::VROverlay()->HideOverlay(cursorOverlay);

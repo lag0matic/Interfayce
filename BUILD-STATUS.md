@@ -16,10 +16,11 @@ The current offline-verified slice now:
 - destroys only the Interfayce VR surface on Close, never the underlying application;
 - includes a non-VR `--desktop-sources` inventory probe and `--desktop-capture-probe` GPU-frame check;
 - supports paged picker applications, live Windows Graphics Capture for displays and HWNDs, and primary pointer movement/click forwarding;
+- shows a cyan world-space aiming reticle at the trigger ray's exact picker or captured-surface hit point;
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
 - removes SteamVR's modal keyboard; a non-modal Interfayce keyboard will live on assigned surfaces later.
 
-The native sources and a separately named verification executable compile and link successfully while the prior live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Live VR verification of picker selection, capture display, and pointer clicks is still pending. Surface frames, grip movement, two-hand scaling, scrolling, and the internal keyboard are not implemented yet.
+The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, and primary pointer input have passed a live VR checkpoint. Surface frames, grip movement, two-hand scaling, scrolling, and the internal keyboard are not implemented yet.
 
 Confirmed interaction direction:
 
@@ -46,7 +47,7 @@ What exists:
 
 Next implementation sequence:
 
-1. Live-test picker selection, capture textures, and primary pointer injection in VR.
+1. Live-test the new world-space aiming reticle in VR.
 2. Add a visible frame and dedicated grip action for one-hand movement; never reuse B-double playspace drag.
 3. Add two-hand grip scaling around the initial grab span.
 4. Add scroll input and the non-modal Interfayce keyboard attached to the active surface.
@@ -62,8 +63,9 @@ Constraints to preserve:
 
 Last verification:
 
-- Native Release build succeeded after adding `DesktopSurfaceManager`.
-- Python suite: 27 passing before the last native-only desktop inventory changes.
+- Native Release verification build succeeds with Windows Graphics Capture and the world-space aiming reticle.
+- Desktop capture probe receives a real GPU frame.
+- Python suite: 27 passing.
 
 ## North-star decisions
 

@@ -327,6 +327,7 @@ bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
     found->label = found->sources[*hit.sourceIndex].label;
     found->assignedSource = *hit.sourceIndex;
     found->hoveredSource.reset();
+    found->aspectRatio = capture->AspectRatio();
     found->capture = std::move(capture);
     return true;
 }
@@ -339,6 +340,24 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         || *found->assignedSource >= found->sources.size()) return false;
     const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
     return point && InjectDesktopPointer(*point, event);
+}
+
+std::optional<vr::HmdMatrix34_t> DesktopSurfaceRegistry::CursorTransform(
+        const DesktopSurfaceHit& hit) const {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [&hit](const auto& surface) { return surface.id == hit.id; });
+    if (found == surfaces_.end()) return std::nullopt;
+
+    constexpr float surfaceWidth = 0.92F;
+    const auto surfaceHeight = surfaceWidth / (std::max)(found->aspectRatio, 0.1F);
+    vr::HmdMatrix34_t local{};
+    local.m[0][0] = 1.0F;
+    local.m[1][1] = 1.0F;
+    local.m[2][2] = 1.0F;
+    local.m[0][3] = (hit.u - 0.5F) * surfaceWidth;
+    local.m[1][3] = (hit.v - 0.5F) * surfaceHeight;
+    local.m[2][3] = 0.006F;
+    return Multiply(found->transform, local);
 }
 
 void DesktopSurfaceRegistry::SetHoveredHit(const std::optional<DesktopSurfaceHit>& hit) {
@@ -358,12 +377,14 @@ void DesktopSurfaceRegistry::Update() {
         if (result == DesktopCapture::UpdateResult::TextureChanged) {
             const auto texture = surface.capture->Texture();
             vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
+            surface.aspectRatio = surface.capture->AspectRatio();
         } else if (result == DesktopCapture::UpdateResult::Closed
                    || result == DesktopCapture::UpdateResult::Failed) {
             surface.capture->Stop();
             surface.capture.reset();
             surface.assignedSource.reset();
             surface.label = L"Choose source";
+            surface.aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
             surface.texture->Render(surface.sources);
             const auto texture = surface.texture->Texture();
             vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
@@ -384,8 +405,10 @@ bool DesktopSurfaceRegistry::PlaceAtEyeLine(Surface& surface) const {
     offset.m[1][3] = -0.04F;
     offset.m[2][3] = -1.05F;
     const auto transform = Multiply(hmd.mDeviceToAbsoluteTracking, offset);
-    return vr::VROverlay()->SetOverlayTransformAbsolute(surface.overlay,
-        vr::TrackingUniverseStanding, &transform) == vr::VROverlayError_None;
+    if (vr::VROverlay()->SetOverlayTransformAbsolute(surface.overlay,
+            vr::TrackingUniverseStanding, &transform) != vr::VROverlayError_None) return false;
+    surface.transform = transform;
+    return true;
 }
 
 bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {

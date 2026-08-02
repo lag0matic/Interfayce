@@ -65,6 +65,7 @@ public:
     std::optional<DesktopSurfaceHit> HitTest(const vr::VROverlayIntersectionParams_t& ray) const;
     bool ActivateHit(const DesktopSurfaceHit& hit);
     bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
+    std::optional<vr::HmdMatrix34_t> CursorTransform(const DesktopSurfaceHit& hit) const;
     void SetHoveredHit(const std::optional<DesktopSurfaceHit>& hit);
     void Update();
     bool BringToMe(uint64_t id);
@@ -84,6 +85,8 @@ private:
         std::optional<size_t> assignedSource;
         std::optional<size_t> hoveredSource;
         size_t applicationPage{};
+        float aspectRatio{1.6F};
+        vr::HmdMatrix34_t transform{};
         bool visible{true};
     };
 
