@@ -28,7 +28,7 @@ The current offline-verified slice now:
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
 - removes SteamVR's modal keyboard in favor of the independent non-modal Interfayce keyboard surface.
 
-The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, visible frames, one-hand movement, two-hand scaling, vertical thumbstick scrolling, keyboard routing, and right-hand keyboard typing have passed live VR checkpoints. VRChat currently consumes the right stick's horizontal axis, which is acceptable because horizontal desktop scrolling is rare. The revised wide keyboard and left-hand pointer await live verification.
+The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, visible frames, one-hand movement, two-hand scaling, vertical thumbstick scrolling, keyboard routing, and ambidextrous keyboard typing have passed live VR checkpoints. VRChat currently consumes the right stick's horizontal axis, which is acceptable because horizontal desktop scrolling is rare. Keyboard pointer handoff and flicker stabilization await a final live checkpoint.
 
 Confirmed interaction direction:
 
@@ -55,8 +55,10 @@ What exists:
 
 Next implementation sequence:
 
-1. Live-test the wide staggered keyboard, independent left-hand pointer, target switching, and modifiers.
-2. Add capture update policies (active, glanceable, sleeping) and persisted transforms after interaction is stable.
+1. Begin the cohesive visual-design pass using David's cyan/violet transparent HUD references, prioritizing clarity and low visual load in VR.
+2. Add capture update policies (active, glanceable, sleeping) after the visual and interaction baseline is settled.
+
+Surface positions and sizes are intentionally session-only; the useful arrangement varies day to day and should not be restored automatically.
 
 Constraints to preserve:
 

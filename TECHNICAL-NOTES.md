@@ -51,7 +51,7 @@ Tracker health is passive status, not the purpose of the entire lower panel. The
 - opens focused cockpit controls (playspace, floor, SlimeVR recovery, audio);
 - launches personal desktop overlay windows such as weather, email, Discord, or browser;
 - spawns each requested window at a comfortable eye-line distance in front of the user;
-- makes a spawned window immediately grabbable and moveable, with a remembered position available later;
+- makes a spawned window immediately grabbable, moveable, and resizable for the current session; transforms deliberately do not persist because the useful arrangement varies day to day;
 - lets dismissed windows sleep/freeze rather than continuing capture.
 
 The panel uses one persistent top control strip—**Music, Desktop, Playspace, Rig/Batteries**—and swaps a single lower deck beneath it. This keeps controls one gesture away without turning the inner wrist into a dashboard graveyard. Render only the selected deck; inactive pages have no capture/update work beyond their own necessary data feeds.
