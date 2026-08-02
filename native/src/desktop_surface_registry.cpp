@@ -7,12 +7,15 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <string_view>
 
 namespace {
 
 constexpr UINT kPickerWidth = 1024;
 constexpr UINT kPickerHeight = 640;
+constexpr float kSurfaceWidthMeters = 0.92F;
+constexpr float kFrameAspectRatio = 128.0F;
 
 std::optional<size_t> SourceAtPickerCoordinates(const std::vector<interfayce::DesktopSource>& sources,
                                                  float x, float y, size_t applicationPage) {
@@ -48,6 +51,19 @@ vr::HmdMatrix34_t Multiply(const vr::HmdMatrix34_t& left, const vr::HmdMatrix34_
             + left.m[row][3];
     }
     return result;
+}
+
+vr::HmdMatrix34_t InverseRigid(const vr::HmdMatrix34_t& transform) {
+    vr::HmdMatrix34_t inverse{};
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            inverse.m[row][column] = transform.m[column][row];
+        }
+        inverse.m[row][3] = -(inverse.m[row][0] * transform.m[0][3]
+            + inverse.m[row][1] * transform.m[1][3]
+            + inverse.m[row][2] * transform.m[2][3]);
+    }
+    return inverse;
 }
 
 std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source, float u, float v) {
@@ -239,6 +255,81 @@ bool DesktopSurfaceRegistry::Initialize(vr::IVRSystem* system, ID3D11Device* dev
     return system_ != nullptr && device_ != nullptr;
 }
 
+bool DesktopSurfaceRegistry::CreateFrameOverlays(Surface& surface) const {
+    constexpr uint32_t kLongEdge = 128;
+    for (size_t index = 0; index < surface.frameOverlays.size(); ++index) {
+        const auto key = surface.overlayKey + ".frame." + std::to_string(index);
+        vr::VROverlayHandle_t stale = vr::k_ulOverlayHandleInvalid;
+        if (vr::VROverlay()->FindOverlay(key.c_str(), &stale) == vr::VROverlayError_None) {
+            vr::VROverlay()->DestroyOverlay(stale);
+        }
+        if (vr::VROverlay()->CreateOverlay(key.c_str(), "Interfayce Desktop Frame",
+                &surface.frameOverlays[index]) != vr::VROverlayError_None) return false;
+        vr::VROverlay()->SetOverlayInputMethod(
+            surface.frameOverlays[index], vr::VROverlayInputMethod_None);
+        vr::VROverlay()->SetOverlaySortOrder(surface.frameOverlays[index], 21);
+        vr::VROverlay()->SetOverlayAlpha(surface.frameOverlays[index], 0.78F);
+
+        const bool horizontal = index < 2;
+        const uint32_t width = horizontal ? kLongEdge : 1;
+        const uint32_t height = horizontal ? 1 : kLongEdge;
+        std::array<uint8_t, kLongEdge * 4> pixels{};
+        for (uint32_t pixelIndex = 0; pixelIndex < kLongEdge; ++pixelIndex) {
+            const auto pixel = pixelIndex * 4U;
+            const bool violet = index >= 2;
+            pixels[pixel + 0] = violet ? 128 : 40;
+            pixels[pixel + 1] = violet ? 74 : 230;
+            pixels[pixel + 2] = 255;
+            pixels[pixel + 3] = 255;
+        }
+        if (vr::VROverlay()->SetOverlayRaw(surface.frameOverlays[index], pixels.data(),
+                width, height, 4) != vr::VROverlayError_None) return false;
+    }
+    return true;
+}
+
+bool DesktopSurfaceRegistry::UpdateFrameOverlays(const Surface& surface) const {
+    const auto surfaceHeight = kSurfaceWidthMeters / (std::max)(surface.aspectRatio, 0.1F);
+    const auto horizontalWidth = kSurfaceWidthMeters + 0.014F;
+    const auto horizontalHeight = horizontalWidth / kFrameAspectRatio;
+    const auto verticalHeight = surfaceHeight;
+    const auto verticalWidth = verticalHeight / kFrameAspectRatio;
+    for (size_t index = 0; index < surface.frameOverlays.size(); ++index) {
+        if (surface.frameOverlays[index] == vr::k_ulOverlayHandleInvalid) return false;
+        vr::HmdMatrix34_t local{};
+        local.m[0][0] = 1.0F;
+        local.m[1][1] = 1.0F;
+        local.m[2][2] = 1.0F;
+        local.m[2][3] = 0.001F;
+        if (index < 2) {
+            local.m[1][3] = (index == 0 ? 1.0F : -1.0F)
+                * (surfaceHeight * 0.5F + horizontalHeight * 0.5F);
+            vr::VROverlay()->SetOverlayWidthInMeters(
+                surface.frameOverlays[index], horizontalWidth);
+        } else {
+            local.m[0][3] = (index == 2 ? -1.0F : 1.0F)
+                * (kSurfaceWidthMeters * 0.5F + verticalWidth * 0.5F);
+            vr::VROverlay()->SetOverlayWidthInMeters(
+                surface.frameOverlays[index], verticalWidth);
+        }
+        const auto transform = Multiply(surface.transform, local);
+        if (vr::VROverlay()->SetOverlayTransformAbsolute(surface.frameOverlays[index],
+                vr::TrackingUniverseStanding, &transform) != vr::VROverlayError_None) return false;
+    }
+    return true;
+}
+
+void DesktopSurfaceRegistry::DestroySurfaceOverlays(Surface& surface) const {
+    for (auto& frame : surface.frameOverlays) {
+        if (frame != vr::k_ulOverlayHandleInvalid) vr::VROverlay()->DestroyOverlay(frame);
+        frame = vr::k_ulOverlayHandleInvalid;
+    }
+    if (surface.overlay != vr::k_ulOverlayHandleInvalid) {
+        vr::VROverlay()->DestroyOverlay(surface.overlay);
+        surface.overlay = vr::k_ulOverlayHandleInvalid;
+    }
+}
+
 uint64_t DesktopSurfaceRegistry::SpawnPicker(const std::vector<DesktopSource>& sources) {
     if (!system_ || !device_) return 0;
     Surface surface{};
@@ -259,12 +350,14 @@ uint64_t DesktopSurfaceRegistry::SpawnPicker(const std::vector<DesktopSource>& s
     vr::VROverlay()->SetOverlayInputMethod(surface.overlay, vr::VROverlayInputMethod_None);
     vr::VROverlay()->SetOverlaySortOrder(surface.overlay, 20);
     const auto texture = surface.texture->Texture();
-    if (vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture) != vr::VROverlayError_None
+    if (!CreateFrameOverlays(surface)
+        || vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture) != vr::VROverlayError_None
         || !PlaceAtEyeLine(surface)
         || vr::VROverlay()->ShowOverlay(surface.overlay) != vr::VROverlayError_None) {
-        vr::VROverlay()->DestroyOverlay(surface.overlay);
+        DestroySurfaceOverlays(surface);
         return 0;
     }
+    for (const auto frame : surface.frameOverlays) vr::VROverlay()->ShowOverlay(frame);
     surfaces_.push_back(std::move(surface));
     return surfaces_.back().id;
 }
@@ -300,6 +393,25 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
     return nearest;
 }
 
+std::optional<uint64_t> DesktopSurfaceRegistry::FrameHitTest(
+        const vr::VROverlayIntersectionParams_t& ray) const {
+    std::optional<uint64_t> nearestId;
+    float nearestDistance = (std::numeric_limits<float>::max)();
+    for (const auto& surface : surfaces_) {
+        if (!surface.visible) continue;
+        for (const auto frame : surface.frameOverlays) {
+            vr::VROverlayIntersectionResults_t result{};
+            if (frame != vr::k_ulOverlayHandleInvalid
+                && vr::VROverlay()->ComputeOverlayIntersection(frame, &ray, &result)
+                && result.fDistance < nearestDistance) {
+                nearestDistance = result.fDistance;
+                nearestId = surface.id;
+            }
+        }
+    }
+    return nearestId;
+}
+
 bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [&hit](const auto& surface) { return surface.id == hit.id; });
@@ -329,6 +441,7 @@ bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
     found->hoveredSource.reset();
     found->aspectRatio = capture->AspectRatio();
     found->capture = std::move(capture);
+    UpdateFrameOverlays(*found);
     return true;
 }
 
@@ -370,6 +483,16 @@ void DesktopSurfaceRegistry::SetHoveredHit(const std::optional<DesktopSurfaceHit
     }
 }
 
+void DesktopSurfaceRegistry::SetHoveredFrame(std::optional<uint64_t> id) {
+    for (const auto& surface : surfaces_) {
+        const bool highlighted = (id && *id == surface.id)
+            || (activeGrab_ && activeGrab_->id == surface.id);
+        for (const auto frame : surface.frameOverlays) {
+            vr::VROverlay()->SetOverlayAlpha(frame, highlighted ? 1.0F : 0.78F);
+        }
+    }
+}
+
 void DesktopSurfaceRegistry::Update() {
     for (auto& surface : surfaces_) {
         if (!surface.capture) continue;
@@ -378,6 +501,7 @@ void DesktopSurfaceRegistry::Update() {
             const auto texture = surface.capture->Texture();
             vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
             surface.aspectRatio = surface.capture->AspectRatio();
+            UpdateFrameOverlays(surface);
         } else if (result == DesktopCapture::UpdateResult::Closed
                    || result == DesktopCapture::UpdateResult::Failed) {
             surface.capture->Stop();
@@ -388,6 +512,7 @@ void DesktopSurfaceRegistry::Update() {
             surface.texture->Render(surface.sources);
             const auto texture = surface.texture->Texture();
             vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
+            UpdateFrameOverlays(surface);
         }
     }
 }
@@ -408,7 +533,7 @@ bool DesktopSurfaceRegistry::PlaceAtEyeLine(Surface& surface) const {
     if (vr::VROverlay()->SetOverlayTransformAbsolute(surface.overlay,
             vr::TrackingUniverseStanding, &transform) != vr::VROverlayError_None) return false;
     surface.transform = transform;
-    return true;
+    return UpdateFrameOverlays(surface);
 }
 
 bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
@@ -416,6 +541,9 @@ bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end() || !PlaceAtEyeLine(*found)) return false;
     found->visible = vr::VROverlay()->ShowOverlay(found->overlay) == vr::VROverlayError_None;
+    if (found->visible) {
+        for (const auto frame : found->frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+    }
     return found->visible;
 }
 
@@ -423,9 +551,36 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end()) return false;
-    vr::VROverlay()->DestroyOverlay(found->overlay);
+    if (activeGrab_ && activeGrab_->id == id) activeGrab_.reset();
+    DestroySurfaceOverlays(*found);
     surfaces_.erase(found);
     return true;
+}
+
+bool DesktopSurfaceRegistry::BeginGrab(uint64_t id, const vr::HmdMatrix34_t& handTransform) {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [id](const auto& surface) { return surface.id == id; });
+    if (found == surfaces_.end()) return false;
+    activeGrab_ = GrabState{id, Multiply(InverseRigid(handTransform), found->transform)};
+    return true;
+}
+
+bool DesktopSurfaceRegistry::UpdateGrab(const vr::HmdMatrix34_t& handTransform) {
+    if (!activeGrab_) return false;
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [this](const auto& surface) { return surface.id == activeGrab_->id; });
+    if (found == surfaces_.end()) {
+        activeGrab_.reset();
+        return false;
+    }
+    found->transform = Multiply(handTransform, activeGrab_->handToSurface);
+    if (vr::VROverlay()->SetOverlayTransformAbsolute(found->overlay,
+            vr::TrackingUniverseStanding, &found->transform) != vr::VROverlayError_None) return false;
+    return UpdateFrameOverlays(*found);
+}
+
+void DesktopSurfaceRegistry::EndGrab() {
+    activeGrab_.reset();
 }
 
 std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
@@ -438,10 +593,9 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
 }
 
 void DesktopSurfaceRegistry::Shutdown() {
+    activeGrab_.reset();
     for (auto& surface : surfaces_) {
-        if (surface.overlay != vr::k_ulOverlayHandleInvalid) {
-            vr::VROverlay()->DestroyOverlay(surface.overlay);
-        }
+        DestroySurfaceOverlays(surface);
     }
     surfaces_.clear();
 }

@@ -16,6 +16,11 @@
       "requirement": "optional"
     },
     {
+      "name": "/actions/interfayce/in/right_surface_grab",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
       "name": "/actions/interfayce/out/left_haptic",
       "type": "vibration",
       "requirement": "optional"
@@ -44,7 +49,8 @@
       "/actions/interfayce": "Interfayce",
       "/actions/interfayce/in/left_drag": "Left playspace drag",
       "/actions/interfayce/in/right_drag": "Right playspace drag",
-      "/actions/interfayce/in/right_ui_click": "Right wrist-panel click"
+      "/actions/interfayce/in/right_ui_click": "Right wrist-panel click",
+      "/actions/interfayce/in/right_surface_grab": "Grab desktop surface frame"
     }
   ]
 }

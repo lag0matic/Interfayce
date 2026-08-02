@@ -2,7 +2,7 @@
   "name": "Interfayce Index default",
   "app_key": "com.lag0matic.interfayce",
   "controller_type": "knuckles",
-  "description": "Deliberate B-button double-tap and hold for playspace drag.",
+  "description": "B-button double-tap and hold for playspace drag; right grip grabs desktop frames.",
   "options": {},
   "simulated_actions": [],
   "bindings": {
@@ -32,6 +32,15 @@
           "inputs": {
             "click": {
               "output": "/actions/interfayce/in/right_ui_click"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/interfayce/in/right_surface_grab"
             }
           }
         }

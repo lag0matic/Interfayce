@@ -17,10 +17,11 @@ The current offline-verified slice now:
 - includes a non-VR `--desktop-sources` inventory probe and `--desktop-capture-probe` GPU-frame check;
 - supports paged picker applications, live Windows Graphics Capture for displays and HWNDs, and primary pointer movement/click forwarding;
 - shows a cyan world-space aiming reticle at the trigger ray's exact picker or captured-surface hit point;
+- gives every desktop surface a slim cyan/violet frame; aiming at it brightens the frame and holding right grip moves and rotates the surface while preserving the original grab offset;
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
 - removes SteamVR's modal keyboard; a non-modal Interfayce keyboard will live on assigned surfaces later.
 
-The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, and primary pointer input have passed a live VR checkpoint. Surface frames, grip movement, two-hand scaling, scrolling, and the internal keyboard are not implemented yet.
+The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, and cursor/laser alignment have passed live VR checkpoints. The new surface frame and right-grip movement await live verification. Two-hand scaling, scrolling, and the internal keyboard are not implemented yet.
 
 Confirmed interaction direction:
 
@@ -47,11 +48,10 @@ What exists:
 
 Next implementation sequence:
 
-1. Live-test the new world-space aiming reticle in VR.
-2. Add a visible frame and dedicated grip action for one-hand movement; never reuse B-double playspace drag.
-3. Add two-hand grip scaling around the initial grab span.
-4. Add scroll input and the non-modal Interfayce keyboard attached to the active surface.
-5. Add capture update policies (active, glanceable, sleeping) and persisted transforms after interaction is stable.
+1. Live-test the visible frame and dedicated right-grip movement; never reuse B-double playspace drag.
+2. Add two-hand grip scaling around the initial grab span.
+3. Add scroll input and the non-modal Interfayce keyboard attached to the active surface.
+4. Add capture update policies (active, glanceable, sleeping) and persisted transforms after interaction is stable.
 
 Constraints to preserve:
 

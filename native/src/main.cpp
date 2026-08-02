@@ -23,6 +23,7 @@ constexpr char kActionSetPath[] = "/actions/interfayce";
 constexpr char kLeftDragActionPath[] = "/actions/interfayce/in/left_drag";
 constexpr char kRightDragActionPath[] = "/actions/interfayce/in/right_drag";
 constexpr char kRightUiClickActionPath[] = "/actions/interfayce/in/right_ui_click";
+constexpr char kRightSurfaceGrabActionPath[] = "/actions/interfayce/in/right_surface_grab";
 constexpr char kWristOverlayKey[] = "com.lag0matic.interfayce.wrist.panel";
 constexpr char kCursorOverlayKey[] = "com.lag0matic.interfayce.wrist.cursor";
 constexpr char kLaserOverlayKey[] = "com.lag0matic.interfayce.pointer.laser";
@@ -458,10 +459,13 @@ int main(int argc, char** argv) {
     vr::VRActionHandle_t leftDragAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightDragAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightUiClickAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t rightSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     const auto leftHandleError = vr::VRInput()->GetActionHandle(kLeftDragActionPath, &leftDragAction);
     const auto rightHandleError = vr::VRInput()->GetActionHandle(kRightDragActionPath, &rightDragAction);
     const auto rightUiClickError = vr::VRInput()->GetActionHandle(
         kRightUiClickActionPath, &rightUiClickAction);
+    const auto rightSurfaceGrabError = vr::VRInput()->GetActionHandle(
+        kRightSurfaceGrabActionPath, &rightSurfaceGrabAction);
 
     interfayce::OverlayRenderer renderer;
     if (!rawPanel && !renderer.Initialize(system)) {
@@ -476,6 +480,7 @@ int main(int argc, char** argv) {
         return actionError == vr::VRInputError_None && actionSetError == vr::VRInputError_None
                 && leftHandleError == vr::VRInputError_None && rightHandleError == vr::VRInputError_None
                 && rightUiClickError == vr::VRInputError_None
+                && rightSurfaceGrabError == vr::VRInputError_None
             ? 0
             : 1;
     }
@@ -690,12 +695,15 @@ int main(int argc, char** argv) {
         vr::InputDigitalActionData_t leftDrag{};
         vr::InputDigitalActionData_t rightDrag{};
         vr::InputDigitalActionData_t rightUiClick{};
+        vr::InputDigitalActionData_t rightSurfaceGrab{};
         const auto leftDataError = vr::VRInput()->GetDigitalActionData(
             leftDragAction, &leftDrag, sizeof(leftDrag), vr::k_ulInvalidInputValueHandle);
         const auto rightDataError = vr::VRInput()->GetDigitalActionData(
             rightDragAction, &rightDrag, sizeof(rightDrag), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetDigitalActionData(
             rightUiClickAction, &rightUiClick, sizeof(rightUiClick), vr::k_ulInvalidInputValueHandle);
+        vr::VRInput()->GetDigitalActionData(rightSurfaceGrabAction, &rightSurfaceGrab,
+            sizeof(rightSurfaceGrab), vr::k_ulInvalidInputValueHandle);
         if (!printedInputDiagnostics) {
             std::array<vr::VRInputValueHandle_t, 16> leftOrigins{};
             std::array<vr::VRInputValueHandle_t, 16> rightOrigins{};
@@ -729,6 +737,7 @@ int main(int argc, char** argv) {
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopCloseIndex;
         std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
+        std::optional<uint64_t> desktopFrameHit;
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
@@ -764,9 +773,11 @@ int main(int argc, char** argv) {
             }
             if (!panelHitFound) {
                 desktopSurfaceHit = desktopSurfaces.HitTest(ray);
+                desktopFrameHit = desktopSurfaces.FrameHitTest(ray);
             }
         }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
+        desktopSurfaces.SetHoveredFrame(desktopFrameHit);
         if (panelHitFound) {
             vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0035F);
             vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 11);
@@ -835,6 +846,21 @@ int main(int argc, char** argv) {
             }
         } else {
             vr::VROverlay()->HideOverlay(laserOverlay);
+        }
+        if (rightSurfaceGrab.bChanged && rightSurfaceGrab.bState && desktopFrameHit) {
+            if (const auto handPose = ReadControllerPose(system, DragHand::Right)) {
+                if (desktopSurfaces.BeginGrab(*desktopFrameHit, *handPose)) {
+                    std::cout << "Desktop surface " << *desktopFrameHit << " grabbed.\n";
+                }
+            }
+        }
+        if (rightSurfaceGrab.bState) {
+            if (const auto handPose = ReadControllerPose(system, DragHand::Right)) {
+                desktopSurfaces.UpdateGrab(*handPose);
+            }
+        }
+        if (rightSurfaceGrab.bChanged && !rightSurfaceGrab.bState) {
+            desktopSurfaces.EndGrab();
         }
         if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
             if (desktopSurfaceHit->captured) {
