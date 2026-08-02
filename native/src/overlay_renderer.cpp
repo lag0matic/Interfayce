@@ -221,27 +221,18 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                     mutedTextBrush_.Get());
             }
         } else {
-            const std::array<D2D1_RECT_F, 3> buttons{
-                D2D1::RectF(70, 252, 210, 338),
-                D2D1::RectF(314, 252, 454, 338),
-                D2D1::RectF(558, 252, 698, 338),
+            const std::array<D2D1_RECT_F, 2> buttons{
+                D2D1::RectF(120, 252, 280, 338),
+                D2D1::RectF(488, 252, 648, 338),
             };
             for (const auto& rectangle : buttons) {
                 d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(rectangle, 8, 8), buttonBrush_.Get());
             }
-            // New surface: plus. Current surfaces: stacked windows. Keyboard: key grid.
-            d2dContext_->DrawLine(D2D1::Point2F(140, 276), D2D1::Point2F(140, 314), accentBrush_.Get(), 4.0F);
-            d2dContext_->DrawLine(D2D1::Point2F(121, 295), D2D1::Point2F(159, 295), accentBrush_.Get(), 4.0F);
-            d2dContext_->DrawRectangle(D2D1::RectF(350, 282, 410, 314), textBrush_.Get(), 2.0F);
-            d2dContext_->DrawRectangle(D2D1::RectF(358, 274, 418, 306), mutedTextBrush_.Get(), 2.0F);
-            d2dContext_->DrawRectangle(D2D1::RectF(586, 276, 670, 316), textBrush_.Get(), 2.0F);
-            for (int row = 0; row < 2; ++row) {
-                for (int column = 0; column < 5; ++column) {
-                    const float left = 594.0F + column * 14.0F;
-                    const float top = 283.0F + row * 13.0F;
-                    d2dContext_->FillRectangle(D2D1::RectF(left, top, left + 8.0F, top + 7.0F), mutedTextBrush_.Get());
-                }
-            }
+            // New surface: plus. Current surfaces: stacked windows.
+            d2dContext_->DrawLine(D2D1::Point2F(200, 276), D2D1::Point2F(200, 314), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(181, 295), D2D1::Point2F(219, 295), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawRectangle(D2D1::RectF(538, 282, 598, 314), textBrush_.Get(), 2.0F);
+            d2dContext_->DrawRectangle(D2D1::RectF(546, 274, 606, 306), mutedTextBrush_.Get(), 2.0F);
         }
     } else if (deck == 3) {
         constexpr const wchar_t* slots[] = {

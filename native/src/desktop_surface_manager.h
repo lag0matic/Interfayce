@@ -14,6 +14,7 @@ struct DesktopSource {
     std::wstring label;
     std::wstring detail;
     HWND window{};
+    HMONITOR monitor{};
 };
 
 // Inventory only for now. Capture and OpenVR surface ownership are deliberately

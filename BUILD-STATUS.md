@@ -9,14 +9,17 @@ Branch: `codex/desktop-surfaces`
 The current offline-verified slice now:
 
 - filters the display/application inventory to visible user-facing applications, excluding Windows shell hosts such as `explorer.exe`;
-- gives the wrist Desktop deck icon-first controls for New Surface, open-surface management, and keyboard;
+- gives the wrist Desktop deck icon-first controls for New Surface and open-surface management;
 - spawns an independent world-space picker overlay at the current HMD eye line;
 - renders display and application choices in that spawned surface using the shared wrist-panel D3D11 device;
 - tracks each spawned surface independently and supports Bring to me and Close from the wrist list;
 - destroys only the Interfayce VR surface on Close, never the underlying application;
-- includes a non-VR `--desktop-sources` probe for checking the real filtered inventory.
+- includes a non-VR `--desktop-sources` inventory probe and `--desktop-capture-probe` GPU-frame check;
+- supports paged picker applications, live Windows Graphics Capture for displays and HWNDs, and primary pointer movement/click forwarding;
+- provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
+- removes SteamVR's modal keyboard; a non-modal Interfayce keyboard will live on assigned surfaces later.
 
-The native sources and a separately named verification executable compile and link successfully while the prior live host remains open. Live VR verification is still pending. Picker pointer input, source assignment/capture, application input forwarding, grip movement, and two-hand scaling are not implemented yet.
+The native sources and a separately named verification executable compile and link successfully while the prior live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Live VR verification of picker selection, capture display, and pointer clicks is still pending. Surface frames, grip movement, two-hand scaling, scrolling, and the internal keyboard are not implemented yet.
 
 Confirmed interaction direction:
 
@@ -36,17 +39,18 @@ What exists:
 
 - `native/src/desktop_surface_manager.h/.cpp` read-only enumerates displays (`EnumDisplayMonitors`) and eligible titled top-level app windows (`EnumWindows`). `EnumerateSources()` combines them.
 - The Desktop deck shows a live display/window count when selected.
-- `KEYBOARD` opens SteamVR's native keyboard via `ShowKeyboardForOverlay`.
-- `WINDOWS / NEXT` is only a visual placeholder; no source selection, capture, spawned overlay, movement, list, or Bring-to-me feature exists yet.
+- New Surface spawns an independent world picker; application choices are paged and source assignment starts a GPU-native Windows Graphics Capture session.
+- The wrist open-surface list supports Bring to me and Close. Close destroys only the VR surface.
+- Trigger input is routed into assigned sources as pointer movement and primary mouse down/up.
+- SteamVR's modal keyboard has been removed because it steals overlay control. The planned replacement is an Interfayce keyboard attached to the active surface.
 
 Next implementation sequence:
 
-1. Render paged/selectable `DesktopSource` cards in Desktop (remove the temporary use of `musicLine` as its inventory title).
-2. Add `DesktopSurfaceRegistry`: independent OpenVR overlay, stable source ID, transform, visibility, and close state for every chosen source.
-3. Use Windows Graphics Capture (C++/WinRT `Windows.Graphics.Capture`) for display and `HWND` capture; feed frames into compositor-GPU D3D11 textures. Do not use GDI/DWM thumbnails for app capture.
-4. Spawn each capture at HMD eye line, independent and immediately grabbable. Use a separate safe grab action; never reuse B-double playspace drag.
-5. Add the open-surface list: Bring to me, hide/show, close. Bring-to-me reposes one surface without recreating capture or disturbing others.
-6. Add pointer/input routing only after capture/spawn works; view-only is acceptable initially because the native keyboard already exists.
+1. Live-test picker selection, capture textures, and primary pointer injection in VR.
+2. Add a visible frame and dedicated grip action for one-hand movement; never reuse B-double playspace drag.
+3. Add two-hand grip scaling around the initial grab span.
+4. Add scroll input and the non-modal Interfayce keyboard attached to the active surface.
+5. Add capture update policies (active, glanceable, sleeping) and persisted transforms after interaction is stable.
 
 Constraints to preserve:
 

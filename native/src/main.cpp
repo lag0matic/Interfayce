@@ -25,6 +25,7 @@ constexpr char kRightDragActionPath[] = "/actions/interfayce/in/right_drag";
 constexpr char kRightUiClickActionPath[] = "/actions/interfayce/in/right_ui_click";
 constexpr char kWristOverlayKey[] = "com.lag0matic.interfayce.wrist.panel";
 constexpr char kCursorOverlayKey[] = "com.lag0matic.interfayce.wrist.cursor";
+constexpr wchar_t kShutdownEventName[] = L"Local\\InterfayceOverlayShutdown";
 
 enum class DragHand { None, Left, Right };
 
@@ -278,6 +279,19 @@ void DestroyStaleOverlay(const char* key) {
 
 int main(int argc, char** argv) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool requestShutdown = argc > 1 && std::string_view(argv[1]) == "--shutdown";
+    if (requestShutdown) {
+        const HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, kShutdownEventName);
+        if (event == nullptr) {
+            std::cerr << "No running Interfayce host accepted the shutdown request.\n";
+            CoUninitialize();
+            return 1;
+        }
+        SetEvent(event);
+        CloseHandle(event);
+        CoUninitialize();
+        return 0;
+    }
     const bool desktopSourcesProbe = argc > 1 && std::string_view(argv[1]) == "--desktop-sources";
     if (desktopSourcesProbe) {
         interfayce::DesktopSurfaceManager manager;
@@ -288,6 +302,43 @@ int main(int argc, char** argv) {
         }
         CoUninitialize();
         return 0;
+    }
+    const bool desktopCaptureProbe = argc > 1 && std::string_view(argv[1]) == "--desktop-capture-probe";
+    if (desktopCaptureProbe) {
+        Microsoft::WRL::ComPtr<ID3D11Device> captureDevice;
+        Microsoft::WRL::ComPtr<ID3D11DeviceContext> captureContext;
+        D3D_FEATURE_LEVEL featureLevel{};
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+                &captureDevice, &featureLevel, &captureContext))) {
+            std::cerr << "Desktop capture probe could not create a D3D11 device.\n";
+            CoUninitialize();
+            return 1;
+        }
+        interfayce::DesktopSurfaceManager manager;
+        const auto displays = manager.EnumerateDisplays();
+        interfayce::DesktopCapture capture;
+        if (displays.empty() || !capture.Start(captureDevice.Get(), displays.front())) {
+            std::cerr << "Desktop capture probe could not start Windows Graphics Capture.\n";
+            CoUninitialize();
+            return 1;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        bool receivedFrame = false;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto result = capture.Update();
+            if (result == interfayce::DesktopCapture::UpdateResult::FrameCopied) {
+                receivedFrame = true;
+                break;
+            }
+            if (result == interfayce::DesktopCapture::UpdateResult::Closed
+                || result == interfayce::DesktopCapture::UpdateResult::Failed) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        capture.Stop();
+        std::cout << "Desktop capture probe " << (receivedFrame ? "received a GPU frame" : "timed out") << ".\n";
+        CoUninitialize();
+        return receivedFrame ? 0 : 1;
     }
     const bool probeOnly = argc > 1 && std::string_view(argv[1]) == "--probe";
     const bool overlayProbe = argc > 1 && std::string_view(argv[1]) == "--overlay-probe";
@@ -478,6 +529,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "Interfayce overlay host is running.\n";
+    const HANDLE shutdownEvent = CreateEventW(nullptr, TRUE, FALSE, kShutdownEventName);
     bool running = true;
     const bool boundedCapture = inputCapture || dragPreview || temporaryDrag
         || (argc > 1 && std::string_view(argv[1]) == "--session-drag");
@@ -503,6 +555,7 @@ int main(int argc, char** argv) {
     bool rigResetHoldActive = false;
     const wchar_t* rigResetKind = nullptr;
     auto restoreHoldStarted = std::chrono::steady_clock::now();
+    std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
     auto* chaperone = vr::VRChaperoneSetup();
     const auto restoreBaseline = [&](std::optional<vr::HmdMatrix34_t>& baseline, const char* reason) {
         if (baseline) {
@@ -514,6 +567,10 @@ int main(int argc, char** argv) {
     };
     auto lastPreviewLog = std::chrono::steady_clock::now();
     while (running && (!boundedCapture || std::chrono::steady_clock::now() < captureDeadline)) {
+        if (shutdownEvent != nullptr && WaitForSingleObject(shutdownEvent, 0) == WAIT_OBJECT_0) {
+            running = false;
+            continue;
+        }
         if (!wristAttached) {
             wristAttached = attachWristOverlay();
         }
@@ -559,12 +616,12 @@ int main(int argc, char** argv) {
         bool restoreButtonHit = false;
         bool rigFullResetHit = false;
         bool rigMountResetHit = false;
-        bool desktopKeyboardHit = false;
         bool desktopNewSurfaceHit = false;
         bool desktopSurfaceListHit = false;
         bool desktopListBackHit = false;
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopCloseIndex;
+        std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
@@ -592,12 +649,13 @@ int main(int argc, char** argv) {
                         }
                     }
                 } else {
-                    desktopNewSurfaceHit = selectedDeck == 1 && x >= 70.0F && x <= 210.0F && y >= 252.0F && y <= 338.0F;
-                    desktopSurfaceListHit = selectedDeck == 1 && x >= 314.0F && x <= 454.0F && y >= 252.0F && y <= 338.0F;
-                    desktopKeyboardHit = selectedDeck == 1 && x >= 558.0F && x <= 698.0F && y >= 252.0F && y <= 338.0F;
+                    desktopNewSurfaceHit = selectedDeck == 1 && x >= 120.0F && x <= 280.0F && y >= 252.0F && y <= 338.0F;
+                    desktopSurfaceListHit = selectedDeck == 1 && x >= 488.0F && x <= 648.0F && y >= 252.0F && y <= 338.0F;
                 }
             }
+            if (!panelHitFound) desktopSurfaceHit = desktopSurfaces.HitTest(ray);
         }
+        desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
         if (panelHitFound) {
             vr::HmdMatrix34_t localCursor{};
             localCursor.m[0][0] = 1.0F;
@@ -613,7 +671,7 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
                     cursorOverlay, leftController, &cursorTransform);
                 const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
-                    || desktopKeyboardHit || desktopNewSurfaceHit || desktopSurfaceListHit
+                    || desktopNewSurfaceHit || desktopSurfaceListHit
                     || desktopListBackHit || desktopBringIndex.has_value() || desktopCloseIndex.has_value();
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
                     actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
@@ -622,7 +680,21 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(cursorOverlay);
         }
-        if (rightUiClick.bChanged && rightUiClick.bState && panelHitFound && panelY <= 82.0F) {
+        if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
+            if (desktopSurfaceHit->captured) {
+                if (desktopSurfaces.SendPointerEvent(*desktopSurfaceHit,
+                        interfayce::DesktopPointerEvent::PrimaryDown)) {
+                    activeDesktopPointer = desktopSurfaceHit;
+                }
+            } else if (desktopSurfaces.ActivateHit(*desktopSurfaceHit)) {
+                if (desktopSurfaceHit->sourceIndex) {
+                    desktopPanel.surfaces = desktopSurfaces.Summaries();
+                    std::cout << "Desktop source assigned to surface " << desktopSurfaceHit->id << '\n';
+                }
+            } else if (desktopSurfaceHit->sourceIndex || desktopSurfaceHit->pageDelta != 0) {
+                std::cerr << "Could not start selected desktop capture\n";
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && panelHitFound && panelY <= 82.0F) {
             const int requestedDeck = panelX < 155.0F ? 0 : panelX < 315.0F ? 1 : panelX < 520.0F ? 2 : 3;
             if (requestedDeck == 0) {
                 musicLine = ReadSpotifyNowPlaying(projectRoot);
@@ -697,10 +769,6 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopKeyboardHit) {
-            vr::VROverlay()->ShowKeyboardForOverlay(wristOverlay,
-                vr::k_EGamepadTextInputModeNormal, vr::k_EGamepadTextInputLineModeSingleLine,
-                vr::KeyboardFlag_Modal, "Interfayce text", 256, "", 0);
         } else if (rightUiClick.bChanged && rightUiClick.bState && restoreButtonHit && selectedDeck == 2) {
             restoreHoldActive = true;
             restoreHoldStarted = std::chrono::steady_clock::now();
@@ -708,6 +776,17 @@ int main(int argc, char** argv) {
             rigResetHoldActive = true;
             rigResetKind = rigFullResetHit ? L"full" : L"mounting";
             restoreHoldStarted = std::chrono::steady_clock::now();
+        }
+        if (rightUiClick.bState && activeDesktopPointer && desktopSurfaceHit
+            && desktopSurfaceHit->captured && desktopSurfaceHit->id == activeDesktopPointer->id) {
+            activeDesktopPointer = desktopSurfaceHit;
+            desktopSurfaces.SendPointerEvent(*activeDesktopPointer,
+                interfayce::DesktopPointerEvent::Move);
+        }
+        if (rightUiClick.bChanged && !rightUiClick.bState && activeDesktopPointer) {
+            desktopSurfaces.SendPointerEvent(*activeDesktopPointer,
+                interfayce::DesktopPointerEvent::PrimaryUp);
+            activeDesktopPointer.reset();
         }
         if (selectedDeck == 0 && std::chrono::steady_clock::now() >= nextMusicPoll) {
             nextMusicPoll = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -838,6 +917,7 @@ int main(int argc, char** argv) {
                 running = false;
             }
         }
+        desktopSurfaces.Update();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
@@ -846,6 +926,7 @@ int main(int argc, char** argv) {
     desktopSurfaces.Shutdown();
     vr::VROverlay()->DestroyOverlay(wristOverlay);
     vr::VROverlay()->DestroyOverlay(cursorOverlay);
+    if (shutdownEvent != nullptr) CloseHandle(shutdownEvent);
     vr::VR_Shutdown();
     return 0;
 }

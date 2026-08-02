@@ -1,5 +1,6 @@
 #pragma once
 
+#include "desktop_capture.h"
 #include "desktop_surface_manager.h"
 
 #include <openvr.h>
@@ -9,6 +10,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <wrl/client.h>
@@ -21,10 +23,23 @@ struct DesktopSurfaceSummary {
     bool visible{};
 };
 
+struct DesktopSurfaceHit {
+    uint64_t id{};
+    std::optional<size_t> sourceIndex;
+    bool captured{};
+    float distance{};
+    int pageDelta{};
+    float u{};
+    float v{};
+};
+
+enum class DesktopPointerEvent { Move, PrimaryDown, PrimaryUp };
+
 class DesktopPickerTexture {
 public:
     bool Initialize(ID3D11Device* device);
-    bool Render(const std::vector<DesktopSource>& sources);
+    bool Render(const std::vector<DesktopSource>& sources,
+                std::optional<size_t> hoveredSource = std::nullopt, size_t applicationPage = 0);
     vr::Texture_t Texture() const;
 
 private:
@@ -47,6 +62,11 @@ class DesktopSurfaceRegistry {
 public:
     bool Initialize(vr::IVRSystem* system, ID3D11Device* device);
     uint64_t SpawnPicker(const std::vector<DesktopSource>& sources);
+    std::optional<DesktopSurfaceHit> HitTest(const vr::VROverlayIntersectionParams_t& ray) const;
+    bool ActivateHit(const DesktopSurfaceHit& hit);
+    bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
+    void SetHoveredHit(const std::optional<DesktopSurfaceHit>& hit);
+    void Update();
     bool BringToMe(uint64_t id);
     bool Close(uint64_t id);
     std::vector<DesktopSurfaceSummary> Summaries() const;
@@ -59,6 +79,11 @@ private:
         std::wstring label;
         vr::VROverlayHandle_t overlay{vr::k_ulOverlayHandleInvalid};
         std::unique_ptr<DesktopPickerTexture> texture;
+        std::unique_ptr<DesktopCapture> capture;
+        std::vector<DesktopSource> sources;
+        std::optional<size_t> assignedSource;
+        std::optional<size_t> hoveredSource;
+        size_t applicationPage{};
         bool visible{true};
     };
 

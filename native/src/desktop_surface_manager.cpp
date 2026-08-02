@@ -71,7 +71,7 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateDisplays() const {
                 ? std::wstring(device.DeviceString)
                 : std::wstring(info.szDevice);
             output.push_back({DesktopSource::Kind::Display, info.szDevice, label,
-                (info.dwFlags & MONITORINFOF_PRIMARY) ? L"Primary display" : L"Display", nullptr});
+                (info.dwFlags & MONITORINFOF_PRIMARY) ? L"Primary display" : L"Display", nullptr, monitor});
         }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&displays));
@@ -90,7 +90,7 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateWindows() const {
         title.resize(static_cast<size_t>(length));
         auto& output = *reinterpret_cast<std::vector<DesktopSource>*>(data);
         output.push_back({DesktopSource::Kind::Window,
-            std::to_wstring(reinterpret_cast<uintptr_t>(window)), title, processName, window});
+            std::to_wstring(reinterpret_cast<uintptr_t>(window)), title, processName, window, nullptr});
         return TRUE;
     }, reinterpret_cast<LPARAM>(&windows));
     std::sort(windows.begin(), windows.end(), [](const auto& left, const auto& right) {
