@@ -14,6 +14,8 @@ namespace {
 
 constexpr UINT kPickerWidth = 1024;
 constexpr UINT kPickerHeight = 640;
+constexpr UINT kKeyboardWidth = 1200;
+constexpr UINT kKeyboardHeight = 440;
 constexpr float kFrameAspectRatio = 128.0F;
 
 struct KeyboardKeyDefinition {
@@ -22,6 +24,8 @@ struct KeyboardKeyDefinition {
     wchar_t character{};
     WORD virtualKey{};
     bool togglesShift{};
+    bool togglesControl{};
+    bool togglesAlt{};
 };
 
 std::vector<KeyboardKeyDefinition> KeyboardLayout(bool shifted) {
@@ -30,24 +34,28 @@ std::vector<KeyboardKeyDefinition> KeyboardLayout(bool shifted) {
                                    float x, float y, float width, float gap) {
         for (size_t index = 0; index < normal.size(); ++index) {
             const auto character = shifted ? upper[index] : normal[index];
-            keys.push_back({D2D1::RectF(x, y, x + width, y + 78.0F),
+            keys.push_back({D2D1::RectF(x, y, x + width, y + 58.0F),
                 std::wstring(1, character), character});
             x += width + gap;
         }
     };
-    addCharacters(L"1234567890", L"!@#$%^&*()", 28.0F, 118.0F, 72.0F, 7.0F);
-    keys.push_back({D2D1::RectF(825, 118, 996, 196), L"BACK", 0, VK_BACK});
-    addCharacters(L"qwertyuiop", L"QWERTYUIOP", 55.0F, 210.0F, 84.0F, 8.0F);
-    addCharacters(L"asdfghjkl", L"ASDFGHJKL", 92.0F, 302.0F, 82.0F, 8.0F);
-    keys.push_back({D2D1::RectF(910, 302, 996, 380), L"ENTER", 0, VK_RETURN});
-    keys.push_back({D2D1::RectF(28, 394, 150, 472), L"SHIFT", 0, 0, true});
-    addCharacters(L"zxcvbnm", L"ZXCVBNM", 160.0F, 394.0F, 78.0F, 8.0F);
-    addCharacters(L",./", L"<>?", 762.0F, 394.0F, 70.0F, 8.0F);
-    keys.push_back({D2D1::RectF(28, 486, 150, 574), L"TAB", 0, VK_TAB});
-    keys.push_back({D2D1::RectF(160, 486, 770, 574), L"SPACE", L' '});
-    keys.push_back({D2D1::RectF(780, 486, 846, 574), L"LEFT", 0, VK_LEFT});
-    keys.push_back({D2D1::RectF(855, 486, 921, 574), L"DOWN", 0, VK_DOWN});
-    keys.push_back({D2D1::RectF(930, 486, 996, 574), L"RIGHT", 0, VK_RIGHT});
+    keys.push_back({D2D1::RectF(24, 68, 94, 126), L"ESC", 0, VK_ESCAPE});
+    addCharacters(L"1234567890-=", L"!@#$%^&*()_+", 104.0F, 68.0F, 66.0F, 6.0F);
+    keys.push_back({D2D1::RectF(970, 68, 1176, 126), L"BACKSPACE", 0, VK_BACK});
+    keys.push_back({D2D1::RectF(24, 136, 120, 194), L"TAB", 0, VK_TAB});
+    addCharacters(L"qwertyuiop[]\\", L"QWERTYUIOP{}|", 130.0F, 136.0F, 70.0F, 6.0F);
+    addCharacters(L"asdfghjkl;'", L"ASDFGHJKL:\"", 112.0F, 204.0F, 76.0F, 6.0F);
+    keys.push_back({D2D1::RectF(1020, 204, 1176, 262), L"ENTER", 0, VK_RETURN});
+    keys.push_back({D2D1::RectF(24, 272, 150, 330), L"SHIFT", 0, 0, true});
+    addCharacters(L"zxcvbnm,./", L"ZXCVBNM<>?", 162.0F, 272.0F, 76.0F, 6.0F);
+    keys.push_back({D2D1::RectF(994, 272, 1176, 330), L"SHIFT", 0, 0, true});
+    keys.push_back({D2D1::RectF(24, 340, 114, 420), L"CTRL", 0, 0, false, true});
+    keys.push_back({D2D1::RectF(126, 340, 216, 420), L"ALT", 0, 0, false, false, true});
+    keys.push_back({D2D1::RectF(228, 340, 920, 420), L"SPACE", L' '});
+    keys.push_back({D2D1::RectF(932, 340, 986, 420), L"LEFT", 0, VK_LEFT});
+    keys.push_back({D2D1::RectF(994, 340, 1048, 420), L"DOWN", 0, VK_DOWN});
+    keys.push_back({D2D1::RectF(1056, 340, 1110, 420), L"UP", 0, VK_UP});
+    keys.push_back({D2D1::RectF(1118, 340, 1176, 420), L"RIGHT", 0, VK_RIGHT});
     return keys;
 }
 
@@ -189,35 +197,53 @@ bool InjectDesktopScroll(const POINT point, int32_t verticalDelta, int32_t horiz
     return count == 0 || SendInput(count, inputs.data(), sizeof(INPUT)) == count;
 }
 
-bool InjectKeyboardKey(const KeyboardKeyDefinition& key) {
-    std::array<INPUT, 2> inputs{};
-    if (key.character != 0) {
-        inputs[0].type = INPUT_KEYBOARD;
-        inputs[0].ki.wScan = key.character;
-        inputs[0].ki.dwFlags = KEYEVENTF_UNICODE;
-        inputs[1] = inputs[0];
-        inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+bool InjectKeyboardKey(const KeyboardKeyDefinition& key, bool controlled, bool altered) {
+    std::vector<INPUT> inputs;
+    const auto addVirtual = [&inputs](WORD virtualKey, bool release) {
+        INPUT input{};
+        input.type = INPUT_KEYBOARD;
+        input.ki.wVk = virtualKey;
+        input.ki.dwFlags = release ? KEYEVENTF_KEYUP : 0;
+        inputs.push_back(input);
+    };
+    if (controlled) addVirtual(VK_CONTROL, false);
+    if (altered) addVirtual(VK_MENU, false);
+    if (key.character != 0 && (controlled || altered)) {
+        const auto mapped = VkKeyScanW(key.character);
+        if (mapped == -1) return false;
+        const auto virtualKey = static_cast<WORD>(mapped & 0xFF);
+        addVirtual(virtualKey, false);
+        addVirtual(virtualKey, true);
+    } else if (key.character != 0) {
+        INPUT down{};
+        down.type = INPUT_KEYBOARD;
+        down.ki.wScan = key.character;
+        down.ki.dwFlags = KEYEVENTF_UNICODE;
+        inputs.push_back(down);
+        down.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        inputs.push_back(down);
     } else if (key.virtualKey != 0) {
-        inputs[0].type = INPUT_KEYBOARD;
-        inputs[0].ki.wVk = key.virtualKey;
-        inputs[1] = inputs[0];
-        inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        addVirtual(key.virtualKey, false);
+        addVirtual(key.virtualKey, true);
     } else {
         return false;
     }
-    return SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT)) == inputs.size();
+    if (altered) addVirtual(VK_MENU, true);
+    if (controlled) addVirtual(VK_CONTROL, true);
+    const auto count = static_cast<UINT>(inputs.size());
+    return SendInput(count, inputs.data(), sizeof(INPUT)) == count;
 }
 
 }  // namespace
 
 namespace interfayce {
 
-bool DesktopPickerTexture::Initialize(ID3D11Device* device) {
+bool DesktopPickerTexture::Initialize(ID3D11Device* device, UINT width, UINT height) {
     if (device == nullptr) return false;
 
     D3D11_TEXTURE2D_DESC description{};
-    description.Width = kPickerWidth;
-    description.Height = kPickerHeight;
+    description.Width = width;
+    description.Height = height;
     description.MipLevels = 1;
     description.ArraySize = 1;
     description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -345,6 +371,7 @@ bool DesktopPickerTexture::Render(const std::vector<DesktopSource>& sources,
 }
 
 bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool shifted,
+                                          bool controlled, bool altered,
                                           std::optional<size_t> hoveredKey) {
     if (!context_ || !target_) return false;
     const auto drawText = [&](std::wstring_view text, IDWriteTextFormat* format,
@@ -354,26 +381,27 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
     };
     context_->BeginDraw();
     context_->Clear(D2D1::ColorF(0, 0, 0, 0));
-    context_->FillRectangle(D2D1::RectF(4, 4, 1020, 636), panelBrush_.Get());
-    context_->DrawRectangle(D2D1::RectF(4, 4, 1020, 636), cyanBrush_.Get(), 2.0F);
-    drawText(L"KEYBOARD", titleFormat_.Get(), D2D1::RectF(28, 22, 270, 66), textBrush_.Get());
+    context_->FillRectangle(D2D1::RectF(4, 4, 1196, 436), panelBrush_.Get());
+    context_->DrawRectangle(D2D1::RectF(4, 4, 1196, 436), cyanBrush_.Get(), 2.0F);
+    drawText(L"KEYBOARD", titleFormat_.Get(), D2D1::RectF(24, 14, 260, 54), textBrush_.Get());
     const std::wstring targetLine = targetLabel.empty()
         ? L"Target: click a captured surface first" : L"Target: " + targetLabel;
-    drawText(targetLine, detailFormat_.Get(), D2D1::RectF(300, 31, 992, 68),
+    drawText(targetLine, detailFormat_.Get(), D2D1::RectF(280, 22, 1176, 54),
         targetLabel.empty() ? mutedBrush_.Get() : cyanBrush_.Get());
-    context_->DrawLine(D2D1::Point2F(28, 86), D2D1::Point2F(996, 86), violetBrush_.Get(), 2.0F);
+    context_->DrawLine(D2D1::Point2F(24, 60), D2D1::Point2F(1176, 60), violetBrush_.Get(), 2.0F);
 
     const auto keys = KeyboardLayout(shifted);
     for (size_t index = 0; index < keys.size(); ++index) {
         const auto& key = keys[index];
         const bool selected = hoveredKey && *hoveredKey == index;
-        const bool shiftSelected = key.togglesShift && shifted;
+        const bool modifierSelected = (key.togglesShift && shifted)
+            || (key.togglesControl && controlled) || (key.togglesAlt && altered);
         context_->FillRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
-            selected || shiftSelected ? violetBrush_.Get() : surfaceBrush_.Get());
+            selected || modifierSelected ? violetBrush_.Get() : surfaceBrush_.Get());
         context_->DrawRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
             selected ? cyanBrush_.Get() : mutedBrush_.Get(), selected ? 3.0F : 1.0F);
         drawText(key.label, itemFormat_.Get(),
-            D2D1::RectF(key.bounds.left + 10, key.bounds.top + 25,
+            D2D1::RectF(key.bounds.left + 8, key.bounds.top + 18,
                 key.bounds.right - 8, key.bounds.bottom - 8), textBrush_.Get());
     }
     return SUCCEEDED(context_->EndDraw());
@@ -513,7 +541,8 @@ uint64_t DesktopSurfaceRegistry::SpawnKeyboard() {
     surface.overlayKey = "com.lag0matic.interfayce.keyboard";
     surface.label = L"Keyboard";
     surface.keyboard = true;
-    surface.widthMeters = 0.82F;
+    surface.widthMeters = 0.96F;
+    surface.aspectRatio = static_cast<float>(kKeyboardWidth) / kKeyboardHeight;
     surface.texture = std::make_unique<DesktopPickerTexture>();
     std::wstring targetLabel;
     if (focusedSurfaceId_) {
@@ -521,7 +550,7 @@ uint64_t DesktopSurfaceRegistry::SpawnKeyboard() {
             [this](const auto& candidate) { return candidate.id == *focusedSurfaceId_; });
         if (target != surfaces_.end() && target->capture) targetLabel = target->label;
     }
-    if (!surface.texture->Initialize(device_)
+    if (!surface.texture->Initialize(device_, kKeyboardWidth, kKeyboardHeight)
         || !surface.texture->RenderKeyboard(targetLabel, false)) return 0;
     vr::VROverlayHandle_t stale = vr::k_ulOverlayHandleInvalid;
     if (vr::VROverlay()->FindOverlay(surface.overlayKey.c_str(), &stale)
@@ -582,8 +611,8 @@ std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
         if (!surface.visible || !surface.keyboard) continue;
         vr::VROverlayIntersectionResults_t result{};
         if (!vr::VROverlay()->ComputeOverlayIntersection(surface.overlay, &ray, &result)) continue;
-        const auto x = result.vUVs.v[0] * static_cast<float>(kPickerWidth);
-        const auto y = (1.0F - result.vUVs.v[1]) * static_cast<float>(kPickerHeight);
+        const auto x = result.vUVs.v[0] * static_cast<float>(kKeyboardWidth);
+        const auto y = (1.0F - result.vUVs.v[1]) * static_cast<float>(kKeyboardHeight);
         const auto keyIndex = KeyboardKeyAt(x, y, surface.keyboardShifted);
         if (!keyIndex) continue;
         KeyboardSurfaceHit hit{surface.id, *keyIndex, result.fDistance,
@@ -656,7 +685,8 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         for (auto& surface : surfaces_) {
             if (surface.keyboard) {
                 surface.texture->RenderKeyboard(
-                    found->label, surface.keyboardShifted, surface.hoveredKey);
+                    found->label, surface.keyboardShifted, surface.keyboardControlled,
+                    surface.keyboardAltered, surface.hoveredKey);
             }
         }
     }
@@ -685,6 +715,12 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
     if (key.togglesShift) {
         keyboard->keyboardShifted = !keyboard->keyboardShifted;
         keyboard->hoveredKey.reset();
+    } else if (key.togglesControl) {
+        keyboard->keyboardControlled = !keyboard->keyboardControlled;
+        keyboard->hoveredKey.reset();
+    } else if (key.togglesAlt) {
+        keyboard->keyboardAltered = !keyboard->keyboardAltered;
+        keyboard->hoveredKey.reset();
     } else {
         if (!focusedSurfaceId_) return false;
         const auto target = std::find_if(surfaces_.begin(), surfaces_.end(),
@@ -696,8 +732,12 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
             if (IsIconic(source.window)) ShowWindowAsync(source.window, SW_RESTORE);
             SetForegroundWindow(source.window);
         }
-        if (!InjectKeyboardKey(key)) return false;
+        if (!InjectKeyboardKey(key, keyboard->keyboardControlled, keyboard->keyboardAltered)) {
+            return false;
+        }
         if (keyboard->keyboardShifted && key.character != 0) keyboard->keyboardShifted = false;
+        keyboard->keyboardControlled = false;
+        keyboard->keyboardAltered = false;
     }
     std::wstring targetLabel;
     if (focusedSurfaceId_) {
@@ -706,7 +746,8 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
         if (target != surfaces_.end() && target->capture) targetLabel = target->label;
     }
     return keyboard->texture->RenderKeyboard(
-        targetLabel, keyboard->keyboardShifted, keyboard->hoveredKey);
+        targetLabel, keyboard->keyboardShifted, keyboard->keyboardControlled,
+        keyboard->keyboardAltered, keyboard->hoveredKey);
 }
 
 std::optional<vr::HmdMatrix34_t> DesktopSurfaceRegistry::CursorTransform(
@@ -766,7 +807,8 @@ void DesktopSurfaceRegistry::SetHoveredKeyboard(const std::optional<KeyboardSurf
             ? std::optional<size_t>(hit->keyIndex) : std::nullopt;
         if (nextHover == surface.hoveredKey) continue;
         surface.hoveredKey = nextHover;
-        surface.texture->RenderKeyboard(targetLabel, surface.keyboardShifted, surface.hoveredKey);
+        surface.texture->RenderKeyboard(targetLabel, surface.keyboardShifted,
+            surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
     }
 }
 
@@ -849,7 +891,8 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
         focusedSurfaceId_.reset();
         for (auto& surface : surfaces_) {
             if (surface.keyboard && surface.id != id) {
-                surface.texture->RenderKeyboard(L"", surface.keyboardShifted, surface.hoveredKey);
+                surface.texture->RenderKeyboard(L"", surface.keyboardShifted,
+                    surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
             }
         }
     }

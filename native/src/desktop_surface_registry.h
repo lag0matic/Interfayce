@@ -47,10 +47,11 @@ enum class DesktopGrabHand { Left, Right };
 
 class DesktopPickerTexture {
 public:
-    bool Initialize(ID3D11Device* device);
+    bool Initialize(ID3D11Device* device, UINT width = 1024, UINT height = 640);
     bool Render(const std::vector<DesktopSource>& sources,
                 std::optional<size_t> hoveredSource = std::nullopt, size_t applicationPage = 0);
-    bool RenderKeyboard(const std::wstring& targetLabel, bool shifted,
+    bool RenderKeyboard(const std::wstring& targetLabel, bool shifted, bool controlled = false,
+                        bool altered = false,
                         std::optional<size_t> hoveredKey = std::nullopt);
     vr::Texture_t Texture() const;
 
@@ -116,6 +117,8 @@ private:
         size_t applicationPage{};
         bool keyboard{};
         bool keyboardShifted{};
+        bool keyboardControlled{};
+        bool keyboardAltered{};
         std::optional<size_t> hoveredKey;
         float aspectRatio{1.6F};
         float widthMeters{0.92F};

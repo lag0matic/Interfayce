@@ -22,10 +22,11 @@ The current offline-verified slice now:
 - requires deliberate Index grip force (0.75 activation / 0.55 release) for surface grabs so naturally holding the controllers does not move windows while typing;
 - forwards right-thumbstick vertical and horizontal wheel input to the captured surface under the controller ray, with a dead zone and proportional speed;
 - spawns one reusable, independent keyboard surface from the wrist Desktop deck; it targets the most recently clicked captured surface and participates in Bring to me, Close, one-hand movement, and two-hand scaling;
+- renders that keyboard as a wide staggered QWERTY layout with functional one-shot Shift/Ctrl/Alt modifiers, and accepts trigger input from independent cyan right-hand and violet left-hand cursor/laser pairs;
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
 - removes SteamVR's modal keyboard; a non-modal Interfayce keyboard will live on assigned surfaces later.
 
-The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, visible frames, one-hand movement, two-hand scaling, and vertical thumbstick scrolling have passed live VR checkpoints. VRChat currently consumes the right stick's horizontal axis, which is acceptable because horizontal desktop scrolling is rare. The independent internal keyboard awaits live verification.
+The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, visible frames, one-hand movement, two-hand scaling, vertical thumbstick scrolling, keyboard routing, and right-hand keyboard typing have passed live VR checkpoints. VRChat currently consumes the right stick's horizontal axis, which is acceptable because horizontal desktop scrolling is rare. The revised wide keyboard and left-hand pointer await live verification.
 
 Confirmed interaction direction:
 
@@ -52,7 +53,7 @@ What exists:
 
 Next implementation sequence:
 
-1. Live-test the independent Interfayce keyboard, target switching, and special keys.
+1. Live-test the wide staggered keyboard, independent left-hand pointer, target switching, and modifiers.
 2. Add capture update policies (active, glanceable, sleeping) and persisted transforms after interaction is stable.
 
 Constraints to preserve:
