@@ -746,6 +746,8 @@ int main(int argc, char** argv) {
     double verticalScrollRemainder = 0.0;
     double horizontalScrollRemainder = 0.0;
     auto lastScrollUpdate = std::chrono::steady_clock::now();
+    bool rightKeyboardPointerLatched = false;
+    std::optional<std::chrono::steady_clock::time_point> rightKeyboardExitStarted;
     auto* chaperone = vr::VRChaperoneSetup();
     const auto restoreBaseline = [&](std::optional<vr::HmdMatrix34_t>& baseline, const char* reason) {
         if (baseline) {
@@ -887,6 +889,20 @@ int main(int argc, char** argv) {
                 leftPointerRay->direction.z}};
             leftDesktopFrameHit = desktopSurfaces.FrameHitTest(leftRay);
             leftKeyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(leftRay);
+        }
+        const auto pointerHandoffNow = std::chrono::steady_clock::now();
+        if (keyboardSurfaceHit) {
+            rightKeyboardPointerLatched = true;
+            rightKeyboardExitStarted.reset();
+        } else if (rightKeyboardPointerLatched) {
+            if (!rightKeyboardExitStarted) rightKeyboardExitStarted = pointerHandoffNow;
+            constexpr auto kKeyboardPointerHandoff = std::chrono::milliseconds(350);
+            if (pointerHandoffNow - *rightKeyboardExitStarted < kKeyboardPointerHandoff) {
+                desktopSurfaceHit.reset();
+            } else {
+                rightKeyboardPointerLatched = false;
+                rightKeyboardExitStarted.reset();
+            }
         }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
         desktopSurfaces.SetHoveredKeyboard(

@@ -49,8 +49,8 @@
           "mode": "button",
           "parameters": {
             "force_input": "force",
-            "click_activate_threshold": "0.75",
-            "click_deactivate_threshold": "0.55",
+            "click_activate_threshold": "0.70",
+            "click_deactivate_threshold": "0.50",
             "haptic_amplitude": "0"
           },
           "inputs": {
@@ -64,8 +64,8 @@
           "mode": "button",
           "parameters": {
             "force_input": "force",
-            "click_activate_threshold": "0.75",
-            "click_deactivate_threshold": "0.55",
+            "click_activate_threshold": "0.70",
+            "click_deactivate_threshold": "0.50",
             "haptic_amplitude": "0"
           },
           "inputs": {

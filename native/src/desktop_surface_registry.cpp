@@ -374,6 +374,7 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
                                           bool controlled, bool altered,
                                           std::optional<size_t> hoveredKey) {
     if (!context_ || !target_) return false;
+    (void)hoveredKey;
     const auto drawText = [&](std::wstring_view text, IDWriteTextFormat* format,
                               const D2D1_RECT_F rectangle, ID2D1Brush* brush) {
         context_->DrawText(text.data(), static_cast<UINT32>(text.size()), format, rectangle, brush,
@@ -393,13 +394,12 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
     const auto keys = KeyboardLayout(shifted);
     for (size_t index = 0; index < keys.size(); ++index) {
         const auto& key = keys[index];
-        const bool selected = hoveredKey && *hoveredKey == index;
         const bool modifierSelected = (key.togglesShift && shifted)
             || (key.togglesControl && controlled) || (key.togglesAlt && altered);
         context_->FillRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
-            selected || modifierSelected ? violetBrush_.Get() : surfaceBrush_.Get());
+            modifierSelected ? violetBrush_.Get() : surfaceBrush_.Get());
         context_->DrawRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
-            selected ? cyanBrush_.Get() : mutedBrush_.Get(), selected ? 3.0F : 1.0F);
+            mutedBrush_.Get(), 1.0F);
         drawText(key.label, itemFormat_.Get(),
             D2D1::RectF(key.bounds.left + 8, key.bounds.top + 18,
                 key.bounds.right - 8, key.bounds.bottom - 8), textBrush_.Get());
@@ -826,19 +826,11 @@ void DesktopSurfaceRegistry::SetHoveredHit(const std::optional<DesktopSurfaceHit
 }
 
 void DesktopSurfaceRegistry::SetHoveredKeyboard(const std::optional<KeyboardSurfaceHit>& hit) {
-    std::wstring targetLabel;
-    if (focusedSurfaceId_) {
-        const auto target = std::find_if(surfaces_.begin(), surfaces_.end(),
-            [this](const auto& surface) { return surface.id == *focusedSurfaceId_; });
-        if (target != surfaces_.end() && target->capture) targetLabel = target->label;
-    }
     for (auto& surface : surfaces_) {
         if (!surface.keyboard) continue;
         const auto nextHover = hit && hit->id == surface.id ? hit->keyIndex : std::nullopt;
         if (nextHover == surface.hoveredKey) continue;
         surface.hoveredKey = nextHover;
-        surface.texture->RenderKeyboard(targetLabel, surface.keyboardShifted,
-            surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
     }
 }
 

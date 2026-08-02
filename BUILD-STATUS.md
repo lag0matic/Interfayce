@@ -19,13 +19,14 @@ The current offline-verified slice now:
 - shows a cyan world-space aiming reticle at the trigger ray's exact picker or captured-surface hit point;
 - gives every desktop surface a slim cyan/violet frame; aiming at it brightens the frame and holding right grip moves and rotates the surface while preserving the original grab offset;
 - supports one-hand frame movement from either controller and two-hand stretch/compact scaling around the controllers' midpoint, with smooth fallback when either grip is released;
-- requires deliberate Index grip force (0.75 activation / 0.55 release) for surface grabs so naturally holding the controllers does not move windows while typing;
+- requires deliberate Index grip force (0.70 activation / 0.50 release) for surface grabs so naturally holding the controllers does not move windows while typing;
 - forwards right-thumbstick vertical and horizontal wheel input to the captured surface under the controller ray, with a dead zone and proportional speed;
 - spawns one reusable, independent keyboard surface from the wrist Desktop deck; it targets the most recently clicked captured surface and participates in Bring to me, Close, one-hand movement, and two-hand scaling;
 - renders that keyboard as a wide staggered QWERTY layout with functional one-shot Shift/Ctrl/Alt modifiers, and accepts trigger input from independent cyan right-hand and violet left-hand cursor/laser pairs;
 - treats the full keyboard panel plus a 3.5 cm invisible edge gutter as a pointer occluder, preventing nearby desktop surfaces from stealing the beam while approaching edge keys such as Backspace;
+- keeps keyboard rendering stable during pointer movement and inserts a 350 ms neutral handoff before the right-hand beam can transfer from the keyboard to a farther desktop surface;
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
-- removes SteamVR's modal keyboard; a non-modal Interfayce keyboard will live on assigned surfaces later.
+- removes SteamVR's modal keyboard in favor of the independent non-modal Interfayce keyboard surface.
 
 The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, visible frames, one-hand movement, two-hand scaling, vertical thumbstick scrolling, keyboard routing, and right-hand keyboard typing have passed live VR checkpoints. VRChat currently consumes the right stick's horizontal axis, which is acceptable because horizontal desktop scrolling is rare. The revised wide keyboard and left-hand pointer await live verification.
 
@@ -50,7 +51,7 @@ What exists:
 - New Surface spawns an independent world picker; application choices are paged and source assignment starts a GPU-native Windows Graphics Capture session.
 - The wrist open-surface list supports Bring to me and Close. Close destroys only the VR surface.
 - Trigger input is routed into assigned sources as pointer movement and primary mouse down/up.
-- SteamVR's modal keyboard has been removed because it steals overlay control. The planned replacement is an Interfayce keyboard attached to the active surface.
+- SteamVR's modal keyboard has been replaced by an independent Interfayce keyboard targeting the most recently clicked captured surface.
 
 Next implementation sequence:
 
