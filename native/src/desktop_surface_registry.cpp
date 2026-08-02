@@ -14,7 +14,6 @@ namespace {
 
 constexpr UINT kPickerWidth = 1024;
 constexpr UINT kPickerHeight = 640;
-constexpr float kSurfaceWidthMeters = 0.92F;
 constexpr float kFrameAspectRatio = 128.0F;
 
 std::optional<size_t> SourceAtPickerCoordinates(const std::vector<interfayce::DesktopSource>& sources,
@@ -64,6 +63,26 @@ vr::HmdMatrix34_t InverseRigid(const vr::HmdMatrix34_t& transform) {
             + inverse.m[row][2] * transform.m[2][3]);
     }
     return inverse;
+}
+
+size_t GrabIndex(interfayce::DesktopGrabHand hand) {
+    return hand == interfayce::DesktopGrabHand::Left ? 0U : 1U;
+}
+
+vr::HmdVector3_t Translation(const vr::HmdMatrix34_t& transform) {
+    return {{transform.m[0][3], transform.m[1][3], transform.m[2][3]}};
+}
+
+float Distance(const vr::HmdVector3_t& left, const vr::HmdVector3_t& right) {
+    const auto x = right.v[0] - left.v[0];
+    const auto y = right.v[1] - left.v[1];
+    const auto z = right.v[2] - left.v[2];
+    return std::sqrt(x * x + y * y + z * z);
+}
+
+vr::HmdVector3_t Midpoint(const vr::HmdVector3_t& left, const vr::HmdVector3_t& right) {
+    return {{(left.v[0] + right.v[0]) * 0.5F, (left.v[1] + right.v[1]) * 0.5F,
+        (left.v[2] + right.v[2]) * 0.5F}};
 }
 
 std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source, float u, float v) {
@@ -289,8 +308,8 @@ bool DesktopSurfaceRegistry::CreateFrameOverlays(Surface& surface) const {
 }
 
 bool DesktopSurfaceRegistry::UpdateFrameOverlays(const Surface& surface) const {
-    const auto surfaceHeight = kSurfaceWidthMeters / (std::max)(surface.aspectRatio, 0.1F);
-    const auto horizontalWidth = kSurfaceWidthMeters + 0.014F;
+    const auto surfaceHeight = surface.widthMeters / (std::max)(surface.aspectRatio, 0.1F);
+    const auto horizontalWidth = surface.widthMeters + 0.014F;
     const auto horizontalHeight = horizontalWidth / kFrameAspectRatio;
     const auto verticalHeight = surfaceHeight;
     const auto verticalWidth = verticalHeight / kFrameAspectRatio;
@@ -308,7 +327,7 @@ bool DesktopSurfaceRegistry::UpdateFrameOverlays(const Surface& surface) const {
                 surface.frameOverlays[index], horizontalWidth);
         } else {
             local.m[0][3] = (index == 2 ? -1.0F : 1.0F)
-                * (kSurfaceWidthMeters * 0.5F + verticalWidth * 0.5F);
+                * (surface.widthMeters * 0.5F + verticalWidth * 0.5F);
             vr::VROverlay()->SetOverlayWidthInMeters(
                 surface.frameOverlays[index], verticalWidth);
         }
@@ -346,7 +365,7 @@ uint64_t DesktopSurfaceRegistry::SpawnPicker(const std::vector<DesktopSource>& s
     }
     if (vr::VROverlay()->CreateOverlay(surface.overlayKey.c_str(), "Interfayce Desktop",
             &surface.overlay) != vr::VROverlayError_None) return 0;
-    vr::VROverlay()->SetOverlayWidthInMeters(surface.overlay, 0.92F);
+    vr::VROverlay()->SetOverlayWidthInMeters(surface.overlay, surface.widthMeters);
     vr::VROverlay()->SetOverlayInputMethod(surface.overlay, vr::VROverlayInputMethod_None);
     vr::VROverlay()->SetOverlaySortOrder(surface.overlay, 20);
     const auto texture = surface.texture->Texture();
@@ -461,7 +480,7 @@ std::optional<vr::HmdMatrix34_t> DesktopSurfaceRegistry::CursorTransform(
         [&hit](const auto& surface) { return surface.id == hit.id; });
     if (found == surfaces_.end()) return std::nullopt;
 
-    constexpr float surfaceWidth = 0.92F;
+    const auto surfaceWidth = found->widthMeters;
     const auto surfaceHeight = surfaceWidth / (std::max)(found->aspectRatio, 0.1F);
     vr::HmdMatrix34_t local{};
     local.m[0][0] = 1.0F;
@@ -486,7 +505,9 @@ void DesktopSurfaceRegistry::SetHoveredHit(const std::optional<DesktopSurfaceHit
 void DesktopSurfaceRegistry::SetHoveredFrame(std::optional<uint64_t> id) {
     for (const auto& surface : surfaces_) {
         const bool highlighted = (id && *id == surface.id)
-            || (activeGrab_ && activeGrab_->id == surface.id);
+            || std::any_of(activeGrabs_.begin(), activeGrabs_.end(), [&surface](const auto& grab) {
+                return grab && grab->id == surface.id;
+            });
         for (const auto frame : surface.frameOverlays) {
             vr::VROverlay()->SetOverlayAlpha(frame, highlighted ? 1.0F : 0.78F);
         }
@@ -551,36 +572,96 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end()) return false;
-    if (activeGrab_ && activeGrab_->id == id) activeGrab_.reset();
+    for (auto& grab : activeGrabs_) {
+        if (grab && grab->id == id) grab.reset();
+    }
+    if (activeScale_ && activeScale_->id == id) activeScale_.reset();
     DestroySurfaceOverlays(*found);
     surfaces_.erase(found);
     return true;
 }
 
-bool DesktopSurfaceRegistry::BeginGrab(uint64_t id, const vr::HmdMatrix34_t& handTransform) {
+bool DesktopSurfaceRegistry::BeginGrab(uint64_t id, DesktopGrabHand hand,
+                                       const vr::HmdMatrix34_t& handTransform) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end()) return false;
-    activeGrab_ = GrabState{id, Multiply(InverseRigid(handTransform), found->transform)};
+    const auto index = GrabIndex(hand);
+    activeGrabs_[index] = GrabState{
+        id, Multiply(InverseRigid(handTransform), found->transform), handTransform};
+    const auto otherIndex = 1U - index;
+    if (activeGrabs_[otherIndex] && activeGrabs_[otherIndex]->id == id) {
+        const auto leftPosition = Translation(activeGrabs_[0]->lastHandTransform);
+        const auto rightPosition = Translation(activeGrabs_[1]->lastHandTransform);
+        const auto span = Distance(leftPosition, rightPosition);
+        if (span >= 0.05F) {
+            activeScale_ = ScaleState{id, span, found->widthMeters,
+                Midpoint(leftPosition, rightPosition), found->transform};
+        }
+    }
     return true;
 }
 
-bool DesktopSurfaceRegistry::UpdateGrab(const vr::HmdMatrix34_t& handTransform) {
-    if (!activeGrab_) return false;
+bool DesktopSurfaceRegistry::UpdateGrab(DesktopGrabHand hand,
+                                        const vr::HmdMatrix34_t& handTransform) {
+    const auto index = GrabIndex(hand);
+    if (!activeGrabs_[index]) return false;
+    activeGrabs_[index]->lastHandTransform = handTransform;
+    if (activeScale_) {
+        if (!activeGrabs_[0] || !activeGrabs_[1]
+            || activeGrabs_[0]->id != activeScale_->id
+            || activeGrabs_[1]->id != activeScale_->id) {
+            activeScale_.reset();
+        } else {
+            const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+                [this](const auto& surface) { return surface.id == activeScale_->id; });
+            if (found == surfaces_.end()) return false;
+            const auto leftPosition = Translation(activeGrabs_[0]->lastHandTransform);
+            const auto rightPosition = Translation(activeGrabs_[1]->lastHandTransform);
+            const auto midpoint = Midpoint(leftPosition, rightPosition);
+            const auto span = Distance(leftPosition, rightPosition);
+            found->widthMeters = std::clamp(
+                activeScale_->initialWidth * span / activeScale_->initialSpan, 0.30F, 2.40F);
+            found->transform = activeScale_->initialSurfaceTransform;
+            for (int axis = 0; axis < 3; ++axis) {
+                found->transform.m[axis][3] += midpoint.v[axis] - activeScale_->initialMidpoint.v[axis];
+            }
+            vr::VROverlay()->SetOverlayWidthInMeters(found->overlay, found->widthMeters);
+            if (vr::VROverlay()->SetOverlayTransformAbsolute(found->overlay,
+                    vr::TrackingUniverseStanding, &found->transform) != vr::VROverlayError_None) {
+                return false;
+            }
+            return UpdateFrameOverlays(*found);
+        }
+    }
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
-        [this](const auto& surface) { return surface.id == activeGrab_->id; });
+        [this, index](const auto& surface) { return surface.id == activeGrabs_[index]->id; });
     if (found == surfaces_.end()) {
-        activeGrab_.reset();
+        activeGrabs_[index].reset();
         return false;
     }
-    found->transform = Multiply(handTransform, activeGrab_->handToSurface);
+    found->transform = Multiply(handTransform, activeGrabs_[index]->handToSurface);
     if (vr::VROverlay()->SetOverlayTransformAbsolute(found->overlay,
             vr::TrackingUniverseStanding, &found->transform) != vr::VROverlayError_None) return false;
     return UpdateFrameOverlays(*found);
 }
 
-void DesktopSurfaceRegistry::EndGrab() {
-    activeGrab_.reset();
+void DesktopSurfaceRegistry::EndGrab(DesktopGrabHand hand) {
+    const auto index = GrabIndex(hand);
+    const auto releasedId = activeGrabs_[index] ? activeGrabs_[index]->id : 0;
+    activeGrabs_[index].reset();
+    if (!activeScale_ || activeScale_->id != releasedId) return;
+    activeScale_.reset();
+    const auto otherIndex = 1U - index;
+    if (!activeGrabs_[otherIndex]) return;
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [this, otherIndex](const auto& surface) {
+            return surface.id == activeGrabs_[otherIndex]->id;
+        });
+    if (found != surfaces_.end()) {
+        activeGrabs_[otherIndex]->handToSurface = Multiply(
+            InverseRigid(activeGrabs_[otherIndex]->lastHandTransform), found->transform);
+    }
 }
 
 std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
@@ -593,7 +674,8 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
 }
 
 void DesktopSurfaceRegistry::Shutdown() {
-    activeGrab_.reset();
+    for (auto& grab : activeGrabs_) grab.reset();
+    activeScale_.reset();
     for (auto& surface : surfaces_) {
         DestroySurfaceOverlays(surface);
     }

@@ -23,6 +23,7 @@ constexpr char kActionSetPath[] = "/actions/interfayce";
 constexpr char kLeftDragActionPath[] = "/actions/interfayce/in/left_drag";
 constexpr char kRightDragActionPath[] = "/actions/interfayce/in/right_drag";
 constexpr char kRightUiClickActionPath[] = "/actions/interfayce/in/right_ui_click";
+constexpr char kLeftSurfaceGrabActionPath[] = "/actions/interfayce/in/left_surface_grab";
 constexpr char kRightSurfaceGrabActionPath[] = "/actions/interfayce/in/right_surface_grab";
 constexpr char kWristOverlayKey[] = "com.lag0matic.interfayce.wrist.panel";
 constexpr char kCursorOverlayKey[] = "com.lag0matic.interfayce.wrist.cursor";
@@ -309,9 +310,11 @@ std::optional<vr::HmdMatrix34_t> LaserTransform(vr::IVRSystem* system,
     return transform;
 }
 
-std::optional<PointerRay> ReadRightPointerRay(vr::IVRSystem* system) {
-    const auto device = system->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
-    const auto devicePose = ReadControllerPose(system, DragHand::Right);
+std::optional<PointerRay> ReadPointerRay(vr::IVRSystem* system, DragHand hand) {
+    const auto role = hand == DragHand::Left
+        ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand;
+    const auto device = system->GetTrackedDeviceIndexForControllerRole(role);
+    const auto devicePose = ReadControllerPose(system, hand);
     if (device == vr::k_unTrackedDeviceIndexInvalid || !devicePose) {
         return std::nullopt;
     }
@@ -319,7 +322,8 @@ std::optional<PointerRay> ReadRightPointerRay(vr::IVRSystem* system) {
     system->GetStringTrackedDeviceProperty(
         device, vr::Prop_RenderModelName_String, modelName, sizeof(modelName));
     vr::VRInputValueHandle_t devicePath = vr::k_ulInvalidInputValueHandle;
-    vr::VRInput()->GetInputSourceHandle("/user/hand/right", &devicePath);
+    vr::VRInput()->GetInputSourceHandle(
+        hand == DragHand::Left ? "/user/hand/left" : "/user/hand/right", &devicePath);
     vr::RenderModel_ControllerMode_State_t controllerMode{};
     vr::RenderModel_ComponentState_t tipState{};
     if (modelName[0] != '\0' && devicePath != vr::k_ulInvalidInputValueHandle
@@ -459,11 +463,14 @@ int main(int argc, char** argv) {
     vr::VRActionHandle_t leftDragAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightDragAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightUiClickAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t leftSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     const auto leftHandleError = vr::VRInput()->GetActionHandle(kLeftDragActionPath, &leftDragAction);
     const auto rightHandleError = vr::VRInput()->GetActionHandle(kRightDragActionPath, &rightDragAction);
     const auto rightUiClickError = vr::VRInput()->GetActionHandle(
         kRightUiClickActionPath, &rightUiClickAction);
+    const auto leftSurfaceGrabError = vr::VRInput()->GetActionHandle(
+        kLeftSurfaceGrabActionPath, &leftSurfaceGrabAction);
     const auto rightSurfaceGrabError = vr::VRInput()->GetActionHandle(
         kRightSurfaceGrabActionPath, &rightSurfaceGrabAction);
 
@@ -480,6 +487,7 @@ int main(int argc, char** argv) {
         return actionError == vr::VRInputError_None && actionSetError == vr::VRInputError_None
                 && leftHandleError == vr::VRInputError_None && rightHandleError == vr::VRInputError_None
                 && rightUiClickError == vr::VRInputError_None
+                && leftSurfaceGrabError == vr::VRInputError_None
                 && rightSurfaceGrabError == vr::VRInputError_None
             ? 0
             : 1;
@@ -695,6 +703,7 @@ int main(int argc, char** argv) {
         vr::InputDigitalActionData_t leftDrag{};
         vr::InputDigitalActionData_t rightDrag{};
         vr::InputDigitalActionData_t rightUiClick{};
+        vr::InputDigitalActionData_t leftSurfaceGrab{};
         vr::InputDigitalActionData_t rightSurfaceGrab{};
         const auto leftDataError = vr::VRInput()->GetDigitalActionData(
             leftDragAction, &leftDrag, sizeof(leftDrag), vr::k_ulInvalidInputValueHandle);
@@ -702,6 +711,8 @@ int main(int argc, char** argv) {
             rightDragAction, &rightDrag, sizeof(rightDrag), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetDigitalActionData(
             rightUiClickAction, &rightUiClick, sizeof(rightUiClick), vr::k_ulInvalidInputValueHandle);
+        vr::VRInput()->GetDigitalActionData(leftSurfaceGrabAction, &leftSurfaceGrab,
+            sizeof(leftSurfaceGrab), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetDigitalActionData(rightSurfaceGrabAction, &rightSurfaceGrab,
             sizeof(rightSurfaceGrab), vr::k_ulInvalidInputValueHandle);
         if (!printedInputDiagnostics) {
@@ -737,12 +748,13 @@ int main(int argc, char** argv) {
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopCloseIndex;
         std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
+        std::optional<uint64_t> leftDesktopFrameHit;
         std::optional<uint64_t> desktopFrameHit;
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
         std::optional<Vector3> pointerTarget;
-        const auto pointerRay = ReadRightPointerRay(system);
+        const auto pointerRay = ReadPointerRay(system, DragHand::Right);
         if (pointerRay) {
             vr::VROverlayIntersectionParams_t ray{};
             ray.eOrigin = vr::TrackingUniverseStanding;
@@ -776,8 +788,17 @@ int main(int argc, char** argv) {
                 desktopFrameHit = desktopSurfaces.FrameHitTest(ray);
             }
         }
+        if (const auto leftPointerRay = ReadPointerRay(system, DragHand::Left)) {
+            vr::VROverlayIntersectionParams_t leftRay{};
+            leftRay.eOrigin = vr::TrackingUniverseStanding;
+            leftRay.vSource = {{leftPointerRay->source.x, leftPointerRay->source.y,
+                leftPointerRay->source.z}};
+            leftRay.vDirection = {{leftPointerRay->direction.x, leftPointerRay->direction.y,
+                leftPointerRay->direction.z}};
+            leftDesktopFrameHit = desktopSurfaces.FrameHitTest(leftRay);
+        }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
-        desktopSurfaces.SetHoveredFrame(desktopFrameHit);
+        desktopSurfaces.SetHoveredFrame(desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit);
         if (panelHitFound) {
             vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0035F);
             vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 11);
@@ -847,20 +868,39 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(laserOverlay);
         }
+        if (leftSurfaceGrab.bChanged && leftSurfaceGrab.bState && leftDesktopFrameHit) {
+            if (const auto handPose = ReadControllerPose(system, DragHand::Left)) {
+                if (desktopSurfaces.BeginGrab(*leftDesktopFrameHit,
+                        interfayce::DesktopGrabHand::Left, *handPose)) {
+                    std::cout << "Desktop surface " << *leftDesktopFrameHit
+                              << " grabbed with left hand.\n";
+                }
+            }
+        }
         if (rightSurfaceGrab.bChanged && rightSurfaceGrab.bState && desktopFrameHit) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Right)) {
-                if (desktopSurfaces.BeginGrab(*desktopFrameHit, *handPose)) {
-                    std::cout << "Desktop surface " << *desktopFrameHit << " grabbed.\n";
+                if (desktopSurfaces.BeginGrab(*desktopFrameHit,
+                        interfayce::DesktopGrabHand::Right, *handPose)) {
+                    std::cout << "Desktop surface " << *desktopFrameHit
+                              << " grabbed with right hand.\n";
                 }
+            }
+        }
+        if (leftSurfaceGrab.bState) {
+            if (const auto handPose = ReadControllerPose(system, DragHand::Left)) {
+                desktopSurfaces.UpdateGrab(interfayce::DesktopGrabHand::Left, *handPose);
             }
         }
         if (rightSurfaceGrab.bState) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Right)) {
-                desktopSurfaces.UpdateGrab(*handPose);
+                desktopSurfaces.UpdateGrab(interfayce::DesktopGrabHand::Right, *handPose);
             }
         }
+        if (leftSurfaceGrab.bChanged && !leftSurfaceGrab.bState) {
+            desktopSurfaces.EndGrab(interfayce::DesktopGrabHand::Left);
+        }
         if (rightSurfaceGrab.bChanged && !rightSurfaceGrab.bState) {
-            desktopSurfaces.EndGrab();
+            desktopSurfaces.EndGrab(interfayce::DesktopGrabHand::Right);
         }
         if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
             if (desktopSurfaceHit->captured) {

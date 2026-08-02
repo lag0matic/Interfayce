@@ -35,6 +35,7 @@ struct DesktopSurfaceHit {
 };
 
 enum class DesktopPointerEvent { Move, PrimaryDown, PrimaryUp };
+enum class DesktopGrabHand { Left, Right };
 
 class DesktopPickerTexture {
 public:
@@ -73,9 +74,9 @@ public:
     void Update();
     bool BringToMe(uint64_t id);
     bool Close(uint64_t id);
-    bool BeginGrab(uint64_t id, const vr::HmdMatrix34_t& handTransform);
-    bool UpdateGrab(const vr::HmdMatrix34_t& handTransform);
-    void EndGrab();
+    bool BeginGrab(uint64_t id, DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
+    bool UpdateGrab(DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
+    void EndGrab(DesktopGrabHand hand);
     std::vector<DesktopSurfaceSummary> Summaries() const;
     void Shutdown();
 
@@ -95,6 +96,7 @@ private:
         std::optional<size_t> hoveredSource;
         size_t applicationPage{};
         float aspectRatio{1.6F};
+        float widthMeters{0.92F};
         vr::HmdMatrix34_t transform{};
         bool visible{true};
     };
@@ -102,6 +104,15 @@ private:
     struct GrabState {
         uint64_t id{};
         vr::HmdMatrix34_t handToSurface{};
+        vr::HmdMatrix34_t lastHandTransform{};
+    };
+
+    struct ScaleState {
+        uint64_t id{};
+        float initialSpan{};
+        float initialWidth{};
+        vr::HmdVector3_t initialMidpoint{};
+        vr::HmdMatrix34_t initialSurfaceTransform{};
     };
 
     bool PlaceAtEyeLine(Surface& surface) const;
@@ -113,7 +124,8 @@ private:
     ID3D11Device* device_{};
     uint64_t nextId_{1};
     std::vector<Surface> surfaces_;
-    std::optional<GrabState> activeGrab_;
+    std::array<std::optional<GrabState>, 2> activeGrabs_;
+    std::optional<ScaleState> activeScale_;
 };
 
 }  // namespace interfayce
