@@ -23,7 +23,7 @@ The current offline-verified slice now:
 - forwards right-thumbstick vertical and horizontal wheel input to the captured surface under the controller ray, with a dead zone and proportional speed;
 - spawns one reusable, independent keyboard surface from the wrist Desktop deck; it targets the most recently clicked captured surface and participates in Bring to me, Close, one-hand movement, and two-hand scaling;
 - renders that keyboard as a wide staggered QWERTY layout with functional one-shot Shift/Ctrl/Alt modifiers, and accepts trigger input from independent cyan right-hand and violet left-hand cursor/laser pairs;
-- treats the full keyboard panel, including key gaps and header margins, as a pointer occluder so desktop surfaces behind it cannot steal the aiming beam;
+- treats the full keyboard panel plus a 3.5 cm invisible edge gutter as a pointer occluder, preventing nearby desktop surfaces from stealing the beam while approaching edge keys such as Backspace;
 - provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
 - removes SteamVR's modal keyboard; a non-modal Interfayce keyboard will live on assigned surfaces later.
 
