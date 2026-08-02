@@ -1,0 +1,41 @@
+{
+  "name": "Interfayce Index default",
+  "app_key": "com.lag0matic.interfayce",
+  "controller_type": "knuckles",
+  "description": "Deliberate B-button double-tap and hold for playspace drag.",
+  "options": {},
+  "simulated_actions": [],
+  "bindings": {
+    "/actions/interfayce": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/b",
+          "mode": "button",
+          "inputs": {
+            "double": {
+              "output": "/actions/interfayce/in/left_drag"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/b",
+          "mode": "button",
+          "inputs": {
+            "double": {
+              "output": "/actions/interfayce/in/right_drag"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/interfayce/in/right_ui_click"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "actions": [
+    {
+      "name": "/actions/interfayce/in/left_drag",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/in/right_drag",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/in/right_ui_click",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/out/left_haptic",
+      "type": "vibration",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/out/right_haptic",
+      "type": "vibration",
+      "requirement": "optional"
+    }
+  ],
+  "action_sets": [
+    {
+      "name": "/actions/interfayce",
+      "usage": "leftright"
+    }
+  ],
+  "default_bindings": [
+    {
+      "controller_type": "knuckles",
+      "binding_url": "bindings_knuckles.json"
+    }
+  ],
+  "localization": [
+    {
+      "language_tag": "en_us",
+      "/actions/interfayce": "Interfayce",
+      "/actions/interfayce/in/left_drag": "Left playspace drag",
+      "/actions/interfayce/in/right_drag": "Right playspace drag",
+      "/actions/interfayce/in/right_ui_click": "Right wrist-panel click"
+    }
+  ]
+}

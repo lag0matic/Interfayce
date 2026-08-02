@@ -1,0 +1,17 @@
+{
+  "source": "builtin",
+  "applications": [
+    {
+      "app_key": "com.lag0matic.interfayce",
+      "launch_type": "binary",
+      "binary_path_windows": "run_interfayce.cmd",
+      "is_dashboard_overlay": true,
+      "strings": {
+        "en_us": {
+          "name": "Interfayce",
+          "description": "Personal VR cockpit and deliberate playspace tools."
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "interfayce"
+version = "0.1.0"
+description = "Personal VRChat cockpit groundwork"
+requires-python = ">=3.11"
+license = { text = "Private" }
+readme = "README.md"
+dependencies = [
+    "winrt-Windows.Foundation>=3.2,<4",
+    "winrt-Windows.Foundation.Collections>=3.2,<4",
+    "winrt-Windows.Media.Control>=3.2,<4",
+    "winrt-Windows.Storage.Streams>=3.2,<4",
+    "openvr>=2.12,<3",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

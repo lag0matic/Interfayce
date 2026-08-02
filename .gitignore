@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+native/build/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config.local.*
+
+# Private collaboration context; never publish these with the project.
+user.md
+arden-handoff.md
+
+# Build and editor output
+build/
+dist/
+*.egg-info/
+.vscode/
+.idea/
