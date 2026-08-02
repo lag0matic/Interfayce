@@ -1,5 +1,7 @@
 #pragma once
 
+#include "desktop_surface_registry.h"
+
 #include <openvr.h>
 
 #include <d2d1_1.h>
@@ -7,21 +9,29 @@
 #include <dwrite.h>
 #include <array>
 #include <string>
+#include <vector>
 #include <wrl/client.h>
 
 namespace interfayce {
+
+struct DesktopPanelState {
+    bool showSurfaceList{};
+    std::vector<DesktopSurfaceSummary> surfaces;
+};
 
 class OverlayRenderer {
 public:
     bool Initialize(vr::IVRSystem* system, int deck = 2, const std::wstring& musicLine = L"",
                     const std::wstring& musicArtPath = L"", const std::wstring& rigLine = L"",
-                    const std::array<std::wstring, 8>& rigSlots = {}, bool mountReady = false);
+                    const std::array<std::wstring, 8>& rigSlots = {}, bool mountReady = false,
+                    const DesktopPanelState& desktop = {});
+    ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
 private:
     bool Render(int deck, const std::wstring& musicLine, const std::wstring& musicArtPath,
                 const std::wstring& rigLine, const std::array<std::wstring, 8>& rigSlots,
-                bool mountReady);
+                bool mountReady, const DesktopPanelState& desktop);
 
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;

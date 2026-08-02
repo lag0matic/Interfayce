@@ -12,6 +12,7 @@ struct DesktopSource {
     Kind kind{};
     std::wstring id;
     std::wstring label;
+    std::wstring detail;
     HWND window{};
 };
 

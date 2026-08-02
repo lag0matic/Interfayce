@@ -17,6 +17,7 @@ config.local.*
 # Private collaboration context; never publish these with the project.
 user.md
 arden-handoff.md
+design-references/
 
 # Build and editor output
 build/

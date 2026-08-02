@@ -13,9 +13,10 @@ namespace interfayce {
 
 bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wstring& musicLine,
                                  const std::wstring& musicArtPath, const std::wstring& rigLine,
-                                 const std::array<std::wstring, 8>& rigSlots, bool mountReady) {
+                                 const std::array<std::wstring, 8>& rigSlots, bool mountReady,
+                                 const DesktopPanelState& desktop) {
     if (device_) {
-        return Render(deck, musicLine, musicArtPath, rigLine, rigSlots, mountReady);
+        return Render(deck, musicLine, musicArtPath, rigLine, rigSlots, mountReady, desktop);
     }
     constexpr UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     D3D_FEATURE_LEVEL featureLevel{};
@@ -139,12 +140,12 @@ bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wst
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.18F, 0.85F, 0.95F, 1.0F), &accentBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.09F, 0.17F, 0.23F, 0.96F), &buttonBrush_);
 
-    return Render(deck, musicLine, musicArtPath, rigLine, rigSlots, mountReady);
+    return Render(deck, musicLine, musicArtPath, rigLine, rigSlots, mountReady, desktop);
 }
 
 bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std::wstring& musicArtPath,
                              const std::wstring& rigLine, const std::array<std::wstring, 8>& rigSlots,
-                             bool mountReady) {
+                             bool mountReady, const DesktopPanelState& desktop) {
 
     const auto drawText = [&](std::wstring_view text, IDWriteTextFormat* format, const D2D1_RECT_F rect,
                               ID2D1Brush* brush) {
@@ -194,10 +195,54 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(L"PLAY", labelFormat_.Get(), D2D1::RectF(351, 292, 435, 324), textBrush_.Get());
         drawText(L"NEXT", labelFormat_.Get(), D2D1::RectF(592, 292, 680, 324), textBrush_.Get());
     } else if (deck == 1) {
-        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(42, 246, 350, 322), 10, 10), buttonBrush_.Get());
-        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(414, 246, 722, 322), 10, 10), buttonBrush_.Get());
-        drawText(L"KEYBOARD", labelFormat_.Get(), D2D1::RectF(120, 270, 290, 304), textBrush_.Get());
-        drawText(L"WINDOWS / NEXT", labelFormat_.Get(), D2D1::RectF(470, 270, 680, 304), mutedTextBrush_.Get());
+        if (desktop.showSurfaceList) {
+            d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 110), accentBrush_.Get(), 3.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 146), accentBrush_.Get(), 3.0F);
+            const auto count = std::min<size_t>(desktop.surfaces.size(), 3);
+            for (size_t index = 0; index < count; ++index) {
+                const float top = 166.0F + static_cast<float>(index) * 62.0F;
+                d2dContext_->FillRectangle(D2D1::RectF(42, top, 722, top + 50), buttonBrush_.Get());
+                drawText(desktop.surfaces[index].label, bodyFormat_.Get(),
+                    D2D1::RectF(58, top + 12, 500, top + 42), textBrush_.Get());
+                // Crosshair icon brings a surface to eye line; X destroys only the VR surface.
+                d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(570, top + 25), 13, 13),
+                    accentBrush_.Get(), 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(548, top + 25), D2D1::Point2F(592, top + 25),
+                    accentBrush_.Get(), 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(570, top + 3), D2D1::Point2F(570, top + 47),
+                    accentBrush_.Get(), 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(660, top + 14), D2D1::Point2F(682, top + 36),
+                    mutedTextBrush_.Get(), 2.5F);
+                d2dContext_->DrawLine(D2D1::Point2F(682, top + 14), D2D1::Point2F(660, top + 36),
+                    mutedTextBrush_.Get(), 2.5F);
+            }
+            if (desktop.surfaces.empty()) {
+                drawText(L"No open surfaces", bodyFormat_.Get(), D2D1::RectF(42, 196, 500, 232),
+                    mutedTextBrush_.Get());
+            }
+        } else {
+            const std::array<D2D1_RECT_F, 3> buttons{
+                D2D1::RectF(70, 252, 210, 338),
+                D2D1::RectF(314, 252, 454, 338),
+                D2D1::RectF(558, 252, 698, 338),
+            };
+            for (const auto& rectangle : buttons) {
+                d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(rectangle, 8, 8), buttonBrush_.Get());
+            }
+            // New surface: plus. Current surfaces: stacked windows. Keyboard: key grid.
+            d2dContext_->DrawLine(D2D1::Point2F(140, 276), D2D1::Point2F(140, 314), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(121, 295), D2D1::Point2F(159, 295), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawRectangle(D2D1::RectF(350, 282, 410, 314), textBrush_.Get(), 2.0F);
+            d2dContext_->DrawRectangle(D2D1::RectF(358, 274, 418, 306), mutedTextBrush_.Get(), 2.0F);
+            d2dContext_->DrawRectangle(D2D1::RectF(586, 276, 670, 316), textBrush_.Get(), 2.0F);
+            for (int row = 0; row < 2; ++row) {
+                for (int column = 0; column < 5; ++column) {
+                    const float left = 594.0F + column * 14.0F;
+                    const float top = 283.0F + row * 13.0F;
+                    d2dContext_->FillRectangle(D2D1::RectF(left, top, left + 8.0F, top + 7.0F), mutedTextBrush_.Get());
+                }
+            }
+        }
     } else if (deck == 3) {
         constexpr const wchar_t* slots[] = {
             L"L ELB", L"R ELB", L"CHEST", L"HIP",
@@ -246,6 +291,10 @@ vr::Texture_t OverlayRenderer::Texture() const {
         vr::TextureType_DXGISharedHandle,
         vr::ColorSpace_Auto,
     };
+}
+
+ID3D11Device* OverlayRenderer::Device() const {
+    return device_.Get();
 }
 
 }  // namespace interfayce

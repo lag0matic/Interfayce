@@ -2,6 +2,30 @@
 
 Updated: 2026-08-02
 
+## Desktop surfaces: active branch checkpoint
+
+Branch: `codex/desktop-surfaces`
+
+The current offline-verified slice now:
+
+- filters the display/application inventory to visible user-facing applications, excluding Windows shell hosts such as `explorer.exe`;
+- gives the wrist Desktop deck icon-first controls for New Surface, open-surface management, and keyboard;
+- spawns an independent world-space picker overlay at the current HMD eye line;
+- renders display and application choices in that spawned surface using the shared wrist-panel D3D11 device;
+- tracks each spawned surface independently and supports Bring to me and Close from the wrist list;
+- destroys only the Interfayce VR surface on Close, never the underlying application;
+- includes a non-VR `--desktop-sources` probe for checking the real filtered inventory.
+
+The native sources and a separately named verification executable compile and link successfully while the prior live host remains open. Live VR verification is still pending. Picker pointer input, source assignment/capture, application input forwarding, grip movement, and two-hand scaling are not implemented yet.
+
+Confirmed interaction direction:
+
+- source selection lives inside each newly spawned world surface, not on the wrist;
+- trigger ray interacts with captured content;
+- one-hand grip on the frame moves a surface;
+- gripping with both hands stretches or compacts a surface;
+- the wrist list is the recovery route for lost surfaces.
+
 ## Handoff: current state (desktop work is incomplete)
 
 The native host builds and launches from `native/build/bin/InterfayceOverlay.exe`. Live-tested: session-safe playspace drag/reset, inner-wrist fit, in-world trigger ray interaction, Spotify controls/album art, VRChat OSC announce + clear, Index/Slime batteries, and guarded SlimeVR Full Reset + Body Mount.

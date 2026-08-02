@@ -3,6 +3,7 @@
 
 #include "overlay_renderer.h"
 #include "desktop_surface_manager.h"
+#include "desktop_surface_registry.h"
 
 #include <chrono>
 #include <cstdio>
@@ -99,11 +100,9 @@ std::wstring ReadControllerBatteryLine(vr::IVRSystem* system) {
         + batteryText(vr::TrackedControllerRole_RightHand, L"R");
 }
 
-std::wstring ReadDesktopInventory() {
-    interfayce::DesktopSurfaceManager manager;
-    const auto displays = manager.EnumerateDisplays();
-    const auto windows = manager.EnumerateWindows();
-    return std::to_wstring(displays.size()) + L" displays  /  " + std::to_wstring(windows.size()) + L" windows";
+std::wstring DesktopSurfaceLine(size_t count) {
+    if (count == 0) return L"No open surfaces";
+    return std::to_wstring(count) + (count == 1 ? L" open surface" : L" open surfaces");
 }
 
 struct SlimeRigStatus {
@@ -279,6 +278,17 @@ void DestroyStaleOverlay(const char* key) {
 
 int main(int argc, char** argv) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool desktopSourcesProbe = argc > 1 && std::string_view(argv[1]) == "--desktop-sources";
+    if (desktopSourcesProbe) {
+        interfayce::DesktopSurfaceManager manager;
+        for (const auto& source : manager.EnumerateSources()) {
+            std::wcout << (source.kind == interfayce::DesktopSource::Kind::Display
+                    ? L"DISPLAY\t" : L"APPLICATION\t")
+                       << source.label << L'\t' << source.detail << L'\n';
+        }
+        CoUninitialize();
+        return 0;
+    }
     const bool probeOnly = argc > 1 && std::string_view(argv[1]) == "--probe";
     const bool overlayProbe = argc > 1 && std::string_view(argv[1]) == "--overlay-probe";
     const bool inputCapture = argc > 1 && std::string_view(argv[1]) == "--input-capture";
@@ -461,6 +471,12 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    interfayce::DesktopSurfaceManager desktopSourceManager;
+    interfayce::DesktopSurfaceRegistry desktopSurfaces;
+    if (!rawPanel && !desktopSurfaces.Initialize(system, renderer.Device())) {
+        std::cerr << "Could not initialize desktop surface registry.\n";
+    }
+
     std::cout << "Interfayce overlay host is running.\n";
     bool running = true;
     const bool boundedCapture = inputCapture || dragPreview || temporaryDrag
@@ -476,7 +492,8 @@ int main(int argc, char** argv) {
     bool dragFaulted = false;
     int selectedDeck = 2;
     std::wstring musicLine;
-    std::wstring desktopLine;
+    std::wstring desktopLine = DesktopSurfaceLine(0);
+    interfayce::DesktopPanelState desktopPanel;
     std::wstring rigLine;
     std::array<std::wstring, 8> rigSlots;
     bool mountReady = false;
@@ -543,6 +560,11 @@ int main(int argc, char** argv) {
         bool rigFullResetHit = false;
         bool rigMountResetHit = false;
         bool desktopKeyboardHit = false;
+        bool desktopNewSurfaceHit = false;
+        bool desktopSurfaceListHit = false;
+        bool desktopListBackHit = false;
+        std::optional<size_t> desktopBringIndex;
+        std::optional<size_t> desktopCloseIndex;
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
@@ -560,7 +582,20 @@ int main(int argc, char** argv) {
                 restoreButtonHit = x >= 42.0F && x <= 420.0F && y >= 276.0F && y <= 338.0F;
                 rigFullResetHit = selectedDeck == 3 && x >= 42.0F && x <= 350.0F && y >= 320.0F && y <= 366.0F;
                 rigMountResetHit = selectedDeck == 3 && x >= 414.0F && x <= 722.0F && y >= 320.0F && y <= 366.0F;
-                desktopKeyboardHit = selectedDeck == 1 && x >= 42.0F && x <= 350.0F && y >= 246.0F && y <= 322.0F;
+                if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
+                    desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
+                    if (y >= 166.0F && y < 352.0F) {
+                        const auto row = static_cast<size_t>((y - 166.0F) / 62.0F);
+                        if (row < desktopPanel.surfaces.size() && row < 3) {
+                            if (x >= 530.0F && x <= 616.0F) desktopBringIndex = row;
+                            if (x >= 630.0F && x <= 712.0F) desktopCloseIndex = row;
+                        }
+                    }
+                } else {
+                    desktopNewSurfaceHit = selectedDeck == 1 && x >= 70.0F && x <= 210.0F && y >= 252.0F && y <= 338.0F;
+                    desktopSurfaceListHit = selectedDeck == 1 && x >= 314.0F && x <= 454.0F && y >= 252.0F && y <= 338.0F;
+                    desktopKeyboardHit = selectedDeck == 1 && x >= 558.0F && x <= 698.0F && y >= 252.0F && y <= 338.0F;
+                }
             }
         }
         if (panelHitFound) {
@@ -577,8 +612,11 @@ int main(int argc, char** argv) {
             if (leftController != vr::k_unTrackedDeviceIndexInvalid) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
                     cursorOverlay, leftController, &cursorTransform);
+                const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
+                    || desktopKeyboardHit || desktopNewSurfaceHit || desktopSurfaceListHit
+                    || desktopListBackHit || desktopBringIndex.has_value() || desktopCloseIndex.has_value();
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
-                    restoreButtonHit ? 0.20F : 0.02F, restoreButtonHit ? 1.0F : 0.85F, 1.0F);
+                    actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
             }
         } else {
@@ -590,7 +628,11 @@ int main(int argc, char** argv) {
                 musicLine = ReadSpotifyNowPlaying(projectRoot);
                 RefreshSpotifyArt(projectRoot, musicArtPath);
             }
-            if (requestedDeck == 1) desktopLine = ReadDesktopInventory();
+            if (requestedDeck == 1) {
+                desktopPanel.showSurfaceList = false;
+                desktopPanel.surfaces = desktopSurfaces.Summaries();
+                desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+            }
             if (requestedDeck == 3) {
                 rigLine = ReadControllerBatteryLine(system);
                 const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
@@ -598,7 +640,8 @@ int main(int argc, char** argv) {
                 mountReady = slimeStatus.mountReady;
             }
             if (requestedDeck != selectedDeck && renderer.Initialize(
-                    system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine, musicArtPath.wstring(), rigLine, rigSlots, mountReady)) {
+                    system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
                 selectedDeck = requestedDeck;
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
@@ -611,6 +654,48 @@ int main(int argc, char** argv) {
                 LaunchSpotifyControl(projectRoot, L"toggle");
             } else if (panelX >= 558.0F && panelX <= 698.0F) {
                 LaunchSpotifyControl(projectRoot, L"next");
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopNewSurfaceHit) {
+            const auto sources = desktopSourceManager.EnumerateSources();
+            const auto surfaceId = desktopSurfaces.SpawnPicker(sources);
+            if (surfaceId != 0) {
+                desktopPanel.surfaces = desktopSurfaces.Summaries();
+                desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+                std::cout << "Desktop picker surface " << surfaceId << " spawned with "
+                          << sources.size() << " eligible sources\n";
+                if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else {
+                std::cerr << "Could not spawn desktop picker surface\n";
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceListHit) {
+            desktopPanel.showSurfaceList = true;
+            desktopPanel.surfaces = desktopSurfaces.Summaries();
+            if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopListBackHit) {
+            desktopPanel.showSurfaceList = false;
+            if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopBringIndex) {
+            desktopSurfaces.BringToMe(desktopPanel.surfaces[*desktopBringIndex].id);
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopCloseIndex) {
+            desktopSurfaces.Close(desktopPanel.surfaces[*desktopCloseIndex].id);
+            desktopPanel.surfaces = desktopSurfaces.Summaries();
+            desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+            if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopKeyboardHit) {
             vr::VROverlay()->ShowKeyboardForOverlay(wristOverlay,
@@ -758,6 +843,7 @@ int main(int argc, char** argv) {
 
     restoreBaseline(temporaryBaseline, "temporary drag shutdown");
     restoreBaseline(sessionBaseline, "Interfayce shutdown");
+    desktopSurfaces.Shutdown();
     vr::VROverlay()->DestroyOverlay(wristOverlay);
     vr::VROverlay()->DestroyOverlay(cursorOverlay);
     vr::VR_Shutdown();
