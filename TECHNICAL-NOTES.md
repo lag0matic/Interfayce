@@ -248,6 +248,37 @@ Comms mic button → local microphone capture → local STT → preview / cancel
 
 Command mode and dictation mode must have distinct visible states and must never silently cross-route. Neither mode may enable the VRChat voice microphone. Microphone capture is always deliberately armed and time-bounded.
 
+### Kokoro acknowledgment server
+
+David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. The expected local endpoint is:
+
+```text
+POST http://thearkive.local:7079/v1/audio/speech
+```
+
+Example request:
+
+```json
+{
+  "model": "tts-1",
+  "input": "Playback started.",
+  "voice": "af_heart:35,jf_alpha:20,bf_emma:45",
+  "response_format": "wav",
+  "speed": 1.0
+}
+```
+
+Supported response formats include `wav`, `mp3`, `opus`, `aac`, `flac`, and headerless `pcm`. Use WAV for the first Interfayce acknowledgment path because it is self-describing and easy to play safely; reserve PCM for a later streaming path where reduced startup latency materially helps. Speed is configurable from `0.25` through `4.0`, and `voice` may be one Kokoro voice or a weighted comma-separated blend.
+
+Discovery/health endpoints:
+
+- `GET /health`
+- `GET /v1/models`
+- `GET /voices`
+- `GET /v1/voices`
+
+The base URL, model, voice/blend, response format, speed, and timeout belong in ignored local configuration. TTS is acknowledgment, not the authority that decides whether an action succeeded. A failed or sleeping TTS server must not roll back, block, or misreport a completed Spotify action; the wrist should still show the result visually. Keep acknowledgments short, bound request timeouts, and discard stale queued speech when a newer command supersedes it.
+
 ## Audio routing
 
 Interfayce will own its Windows music-to-VRChat route rather than depend on VAC or Voicemeeter. This is a real driver feature, not a light UI integration, so it must be isolated from the overlay host and built/tested as its own safety-critical component.
