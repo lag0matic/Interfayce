@@ -253,10 +253,16 @@ Vector3 Cross(const Vector3 left, const Vector3 right) {
 }
 
 std::optional<vr::HmdMatrix34_t> LaserTransform(vr::IVRSystem* system,
-                                                const PointerRay& ray, float hitDistance) {
+                                                const Vector3 source, const Vector3 target) {
     constexpr float kTipClearance = 0.025F;
-    const auto direction = Normalize(ray.direction);
-    const auto beamLength = hitDistance - kTipClearance;
+    const Vector3 sourceToTarget{
+        target.x - source.x,
+        target.y - source.y,
+        target.z - source.z,
+    };
+    const auto totalLength = VectorLength(sourceToTarget);
+    const auto direction = Normalize(sourceToTarget);
+    const auto beamLength = totalLength - kTipClearance;
     if (VectorLength(direction) < 0.5F || beamLength <= 0.01F) return std::nullopt;
 
     std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
@@ -266,9 +272,9 @@ std::optional<vr::HmdMatrix34_t> LaserTransform(vr::IVRSystem* system,
     if (!hmd.bPoseIsValid) return std::nullopt;
 
     const Vector3 center{
-        ray.source.x + direction.x * (kTipClearance + beamLength * 0.5F),
-        ray.source.y + direction.y * (kTipClearance + beamLength * 0.5F),
-        ray.source.z + direction.z * (kTipClearance + beamLength * 0.5F),
+        source.x + direction.x * (kTipClearance + beamLength * 0.5F),
+        source.y + direction.y * (kTipClearance + beamLength * 0.5F),
+        source.z + direction.z * (kTipClearance + beamLength * 0.5F),
     };
     const Vector3 towardHeadset{
         hmd.mDeviceToAbsoluteTracking.m[0][3] - center.x,
@@ -726,7 +732,7 @@ int main(int argc, char** argv) {
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
-        float pointerHitDistance = 0.0F;
+        std::optional<Vector3> pointerTarget;
         const auto pointerRay = ReadRightPointerRay(system);
         if (pointerRay) {
             vr::VROverlayIntersectionParams_t ray{};
@@ -735,7 +741,8 @@ int main(int argc, char** argv) {
             ray.vDirection = {{pointerRay->direction.x, pointerRay->direction.y, pointerRay->direction.z}};
             if (vr::VROverlay()->ComputeOverlayIntersection(wristOverlay, &ray, &panelHit)) {
                 panelHitFound = true;
-                pointerHitDistance = panelHit.fDistance;
+                pointerTarget = Vector3{
+                    panelHit.vPoint.v[0], panelHit.vPoint.v[1], panelHit.vPoint.v[2]};
                 const auto x = panelHit.vUVs.v[0] * 768.0F;
                 const auto y = (1.0F - panelHit.vUVs.v[1]) * 384.0F;
                 panelX = x;
@@ -759,7 +766,11 @@ int main(int argc, char** argv) {
             }
             if (!panelHitFound) {
                 desktopSurfaceHit = desktopSurfaces.HitTest(ray);
-                if (desktopSurfaceHit) pointerHitDistance = desktopSurfaceHit->distance;
+                if (desktopSurfaceHit) {
+                    pointerTarget = Vector3{
+                        desktopSurfaceHit->point.v[0], desktopSurfaceHit->point.v[1],
+                        desktopSurfaceHit->point.v[2]};
+                }
             }
         }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
@@ -804,10 +815,16 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(cursorOverlay);
         }
-        if ((panelHitFound || desktopSurfaceHit) && pointerRay) {
-            if (const auto laserTransform = LaserTransform(system, *pointerRay, pointerHitDistance)) {
+        if ((panelHitFound || desktopSurfaceHit) && pointerRay && pointerTarget) {
+            if (const auto laserTransform = LaserTransform(
+                    system, pointerRay->source, *pointerTarget)) {
                 constexpr float kLaserTextureHeightToWidth = 256.0F;
-                const auto beamLength = (std::max)(pointerHitDistance - 0.025F, 0.01F);
+                const Vector3 sourceToTarget{
+                    pointerTarget->x - pointerRay->source.x,
+                    pointerTarget->y - pointerRay->source.y,
+                    pointerTarget->z - pointerRay->source.z,
+                };
+                const auto beamLength = (std::max)(VectorLength(sourceToTarget) - 0.025F, 0.01F);
                 vr::VROverlay()->SetOverlayWidthInMeters(
                     laserOverlay, beamLength / kLaserTextureHeightToWidth);
                 vr::VROverlay()->SetOverlayTransformAbsolute(laserOverlay,
