@@ -8,7 +8,7 @@ Updated: 2026-08-02
 - Draft PR: https://github.com/lag0matic/Interfayce/pull/1
 - Last published feature commit: `09d2ba3 feat: polish VR surfaces and service availability`
 - Native host: `native/build/bin/InterfayceOverlay.exe`
-- Python suite: 27 passing tests
+- Python suite: 34 passing tests
 
 The desktop interaction slice is now **usably complete**. SteamVR is currently shut down intentionally, so the latest cleanup has been compiled and tested offline but not revisited in-headset.
 
@@ -41,7 +41,9 @@ The independent keyboard:
 - The chosen direction is **Orbital Utility**: smoked transparent panels, violet structure, cyan reserved for active state, icons before text, and restrained glow.
 - Music uses circular icon controls and a compact playback activity meter.
 - Music is the startup deck. Its media-session query refreshes asynchronously so helper startup cannot block wrist interaction; the last known state remains visible while it refreshes.
+- Music status, artwork, and transport controls now reuse the resident localhost service. The old two-second `cmd.exe`/Python launch loop was removed because it caused Windows application-start cursor feedback.
 - Playspace shows only baseline/adjusted session state and an abstract origin-reset glyph.
+- A compact gear opens wrist settings. The first live controls are persistent Kokoro output volume and mute; they update the voice service immediately.
 - Selected desktop and keyboard surfaces use subtle violet backlight rather than thick grab bars. Their functional grab regions are visually quiet.
 - The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`.
 
@@ -67,11 +69,12 @@ The independent keyboard:
 ## Larger features intentionally next, not half-started
 
 1. Spotify OAuth for search, play-by-name, and conversational control.
-2. Music mic button feeding local STT, deterministic commands, then a constrained LLM fallback.
+2. Constrained LLM fallback for Music requests beyond the completed local STT and deterministic command path.
 3. A separate Comms mic-button path for previewable VRChat chatbox dictation.
-4. Asynchronous spoken acknowledgments through Kokoro at `http://thearkive.local:5000/v1/audio/speech`.
+4. Broader acknowledgment phrasing atop the completed asynchronous Kokoro path at `http://192.168.4.194:5000/v1/audio/speech`.
 5. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
-6. Active/glanceable/sleeping capture update policies after the current UI and interaction baseline settles.
+6. Desktop settings window for OAuth, integrations, device selection, and diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
+7. Active/glanceable/sleeping capture update policies after the current UI and interaction baseline settles.
 
 ## Verification record
 
@@ -79,7 +82,7 @@ The independent keyboard:
 - `--service-status` is the intended offline capability smoke test.
 - Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
 - Picker selection, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, and wrist recovery controls have passed live VR testing.
-- Python proof-of-concept suite: 27 passing checks.
+- Python proof-of-concept suite: 34 passing checks.
 
 ## North star
 

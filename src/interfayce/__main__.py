@@ -72,6 +72,18 @@ def main() -> None:
     subcommands.add_parser("spotify-current", help="Print the current Spotify artist and title as one tab-separated line.")
     spotify_art = subcommands.add_parser("spotify-art", help="Save the current Spotify thumbnail to a local PNG/JPEG file.")
     spotify_art.add_argument("--output", required=True)
+    voice_service = subcommands.add_parser(
+        "voice-service", help="Run the localhost-only Parakeet voice service."
+    )
+    voice_service.add_argument("--port", default=43817, type=int)
+    voice_service.add_argument("--warm", action="store_true")
+    voice_intent = subcommands.add_parser(
+        "voice-intent", help="Classify one deterministic Music transcript without acting on it."
+    )
+    voice_intent.add_argument("transcript")
+    subcommands.add_parser(
+        "voice-model-status", help="Locate the configured Parakeet model without loading it."
+    )
 
     steamvr_status = subcommands.add_parser(
         "steamvr-status", help="Show Index controller battery state from SteamVR."
@@ -124,6 +136,18 @@ def main() -> None:
             from pathlib import Path
 
             Path(arguments.output).write_bytes(art)
+    elif arguments.command == "voice-service":
+        from .voice_service import serve_voice
+
+        serve_voice(port=arguments.port, warm=arguments.warm)
+    elif arguments.command == "voice-intent":
+        from .voice import parse_music_intent
+
+        print(parse_music_intent(arguments.transcript).kind.value)
+    elif arguments.command == "voice-model-status":
+        from .parakeet_stt import discover_parakeet_model
+
+        print(discover_parakeet_model().directory)
     elif arguments.command == "steamvr-status":
         status = read_index_controller_status()
         if not status.available:

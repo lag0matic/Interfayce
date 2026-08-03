@@ -27,6 +27,8 @@ public:
                     const DesktopPanelState& desktop = {});
     void SetPlayspaceAdjusted(bool adjusted);
     void SetSlimeAvailable(bool available);
+    void SetMusicVoiceStatus(const std::wstring& status, bool active);
+    void SetTtsSettings(int volumePercent, bool muted);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
@@ -55,6 +57,10 @@ private:
     HANDLE sharedTextureHandle_{};
     bool playspaceAdjusted_{};
     bool slimeAvailable_{};
+    std::wstring musicVoiceStatus_{L"VOICE READY"};
+    bool musicVoiceActive_{};
+    int ttsVolumePercent_{85};
+    bool ttsMuted_{};
 };
 
 }  // namespace interfayce

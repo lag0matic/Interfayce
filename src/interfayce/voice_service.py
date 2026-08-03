@@ -1,0 +1,185 @@
+"""Localhost-only resident service for bounded microphone/STT work."""
+
+from __future__ import annotations
+
+import asyncio
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+from pathlib import Path
+import threading
+
+from .kokoro import speak_in_background
+from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
+from .settings import adjust_tts_volume, load_settings, settings_wire_text, toggle_tts_mute
+from .voice import execute_music_intent, parse_music_intent
+from .windows_media import WindowsSpotifyMedia
+
+
+DEFAULT_PORT = 43817
+LOGGER = logging.getLogger("interfayce.voice")
+
+
+def voice_log_path() -> Path:
+    configured = os.environ.get("INTERFAYCE_VOICE_LOG")
+    if configured:
+        return Path(configured).expanduser()
+    local = Path(os.environ.get("LOCALAPPDATA", Path.home()))
+    return local / "Interfayce" / "logs" / "voice-service.log"
+
+
+def configure_logging() -> Path:
+    path = voice_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    LOGGER.handlers.clear()
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.INFO)
+    LOGGER.propagate = False
+    return path
+
+
+def _safe_field(value: str) -> str:
+    return value.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
+class VoiceRuntime:
+    def __init__(self) -> None:
+        self.transcriber = ParakeetTranscriber()
+        self.command_lock = threading.Lock()
+        LOGGER.info("Parakeet model directory: %s; feature_dim=%s; threads=%s",
+            self.transcriber.files.directory, self.transcriber.feature_dim,
+            self.transcriber.threads)
+
+    def warm(self) -> None:
+        try:
+            LOGGER.info("Warming Parakeet model")
+            self.transcriber.warm()
+            LOGGER.info("Parakeet model ready")
+        except Exception:
+            LOGGER.exception("Parakeet warm-up failed")
+
+    def music_command(self) -> str:
+        if not self.command_lock.acquire(blocking=False):
+            return "BUSY\t\tVoice capture is already active."
+        try:
+            try:
+                LOGGER.info("Music microphone capture started")
+                audio = capture_microphone_once()
+                LOGGER.info("Music microphone capture completed: rate=%s width=%s bytes=%s",
+                    getattr(audio, "sample_rate", "?"), getattr(audio, "sample_width", "?"),
+                    len(getattr(audio, "frame_data", b"")))
+            except Exception as error:
+                LOGGER.exception("Microphone capture failed")
+                return f"ERROR\t\t{_safe_field(str(error))}"
+            try:
+                transcript = self.transcriber.transcribe(audio)
+            except Exception as error:
+                LOGGER.exception("Parakeet transcription failed")
+                return f"ERROR\t\t{_safe_field(str(error))}"
+            intent = parse_music_intent(transcript)
+            LOGGER.info("Transcript=%r intent=%s", transcript, intent.kind.value)
+            result = asyncio.run(execute_music_intent(intent))
+            LOGGER.info("Music command succeeded=%s message=%r", result.succeeded, result.message)
+            if result.succeeded:
+                speak_in_background(result.message)
+            state = "OK" if result.succeeded else "NO_MATCH"
+            return f"{state}\t{_safe_field(transcript)}\t{_safe_field(result.message)}"
+        finally:
+            self.command_lock.release()
+
+    def current_music(self) -> str:
+        try:
+            track = asyncio.run(WindowsSpotifyMedia().current_track())
+            return "" if track is None else f"{_safe_field(track.artist)}\t{_safe_field(track.title)}"
+        except Exception:
+            LOGGER.exception("Music status query failed")
+            return ""
+
+    def music_control(self, operation: str) -> bool:
+        media = WindowsSpotifyMedia()
+        actions = {
+            "previous": media.previous_track,
+            "toggle": media.toggle_play_pause,
+            "next": media.next_track,
+        }
+        action = actions.get(operation)
+        if action is None:
+            return False
+        try:
+            return bool(asyncio.run(action()))
+        except Exception:
+            LOGGER.exception("Music control failed: %s", operation)
+            return False
+
+    def music_art(self) -> bytes:
+        try:
+            return asyncio.run(WindowsSpotifyMedia().current_art_bytes()) or b""
+        except Exception:
+            LOGGER.exception("Music artwork query failed")
+            return b""
+
+
+def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
+    log_path = configure_logging()
+    LOGGER.info("Voice service starting on 127.0.0.1:%s; log=%s", port, log_path)
+    runtime = VoiceRuntime()
+
+    class Handler(BaseHTTPRequestHandler):
+        def _reply_bytes(self, status: int, encoded: bytes, content_type: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _reply(self, status: int, body: str) -> None:
+            self._reply_bytes(status, body.encode("utf-8"), "text/plain; charset=utf-8")
+
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/health":
+                self._reply(200, "ready")
+            elif self.path == "/music/current":
+                self._reply(200, runtime.current_music())
+            elif self.path == "/music/art":
+                self._reply_bytes(200, runtime.music_art(), "application/octet-stream")
+            elif self.path == "/settings":
+                self._reply(200, settings_wire_text())
+            else:
+                self._reply(404, "not found")
+
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path == "/listen/music":
+                self._reply(200, runtime.music_command())
+            elif self.path.startswith("/music/control/"):
+                operation = self.path.rsplit("/", 1)[-1]
+                self._reply(200, "ok" if runtime.music_control(operation) else "unavailable")
+            elif self.path == "/settings/tts/volume/up":
+                self._reply(200, settings_wire_text(adjust_tts_volume(0.1)))
+            elif self.path == "/settings/tts/volume/down":
+                self._reply(200, settings_wire_text(adjust_tts_volume(-0.1)))
+            elif self.path == "/settings/tts/mute/toggle":
+                self._reply(200, settings_wire_text(toggle_tts_mute()))
+            elif self.path == "/shutdown":
+                self._reply(200, "stopping")
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+            else:
+                self._reply(404, "not found")
+
+        def log_message(self, _format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    if warm:
+        threading.Thread(target=runtime.warm, name="InterfayceParakeetWarm", daemon=True).start()
+    try:
+        server.serve_forever()
+    finally:
+        LOGGER.info("Voice service stopping")
+        server.server_close()
+
+
+def configured_port() -> int:
+    return int(os.environ.get("INTERFAYCE_VOICE_PORT", str(DEFAULT_PORT)))

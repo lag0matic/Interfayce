@@ -7,6 +7,8 @@
 #include <dxgi1_2.h>
 #include <wincodec.h>
 
+#include <algorithm>
+#include <cmath>
 #include <string_view>
 
 namespace interfayce {
@@ -212,10 +214,12 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     d2dContext_->FillRoundedRectangle(
         D2D1::RoundedRect(D2D1::RectF(16.0F, 16.0F, 752.0F, 82.0F), 10.0F, 10.0F), stripBrush_.Get());
 
-    const std::array<D2D1_RECT_F, 4> tabs{
-        D2D1::RectF(24, 22, 155, 76), D2D1::RectF(164, 22, 315, 76),
-        D2D1::RectF(324, 22, 520, 76), D2D1::RectF(529, 22, 744, 76)};
-    const std::array<const wchar_t*, 4> tabLabels{L"\u266b  MUSIC", L"\u25a3  DESKTOP", L"\u25ce  PLAYSPACE", L"\u25c7  RIG"};
+    const std::array<D2D1_RECT_F, 5> tabs{
+        D2D1::RectF(24, 22, 146, 76), D2D1::RectF(154, 22, 288, 76),
+        D2D1::RectF(296, 22, 476, 76), D2D1::RectF(484, 22, 646, 76),
+        D2D1::RectF(654, 22, 744, 76)};
+    const std::array<const wchar_t*, 5> tabLabels{
+        L"\u266b  MUSIC", L"\u25a3  DESK", L"\u25ce  SPACE", L"\u25c7  RIG", L""};
     for (int index = 0; index < 4; ++index) {
         if (deck == index) {
             d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(tabs[index], 9, 9), activeFillBrush_.Get());
@@ -230,12 +234,26 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             deck == index ? textBrush_.Get() : mutedTextBrush_.Get());
     }
 
-    if (deck != 2) {
+    // Compact orbital gear; it opens settings without spending another text tab.
+    const auto gearBrush = deck == 4 ? accentBrush_.Get() : mutedTextBrush_.Get();
+    const auto gearCenter = D2D1::Point2F(699, 49);
+    d2dContext_->DrawEllipse(D2D1::Ellipse(gearCenter, 11, 11), gearBrush, 2.5F);
+    d2dContext_->DrawEllipse(D2D1::Ellipse(gearCenter, 4, 4), gearBrush, 2.0F);
+    for (int index = 0; index < 8; ++index) {
+        const float angle = static_cast<float>(index) * 3.14159265F / 4.0F;
+        d2dContext_->DrawLine(
+            D2D1::Point2F(gearCenter.x + std::cos(angle) * 13.0F,
+                gearCenter.y + std::sin(angle) * 13.0F),
+            D2D1::Point2F(gearCenter.x + std::cos(angle) * 18.0F,
+                gearCenter.y + std::sin(angle) * 18.0F), gearBrush, 3.0F);
+    }
+
+    if (deck != 2 && deck != 4) {
         drawText(deck == 0 ? L"MUSIC" : deck == 1 ? L"DESKTOP" : L"RIG",
             labelFormat_.Get(), D2D1::RectF(42.0F, 106.0F, 300.0F, 138.0F),
             accentBrush_.Get());
     }
-    if (deck != 2) {
+    if (deck != 2 && deck != 4) {
         drawText(deck == 0 ? (musicLine.empty() ? L"No active track" : musicLine)
                 : deck == 1 ? musicLine
                 : (rigLine.empty() ? L"Controllers unavailable" : rigLine),
@@ -277,6 +295,30 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         d2dContext_->DrawLine(D2D1::Point2F(619, 290), D2D1::Point2F(619, 320), accentBrush_.Get(), 3.5F);
         d2dContext_->DrawLine(D2D1::Point2F(622, 305), D2D1::Point2F(644, 291), accentBrush_.Get(), 3.5F);
         d2dContext_->DrawLine(D2D1::Point2F(622, 305), D2D1::Point2F(644, 319), accentBrush_.Get(), 3.5F);
+        // Voice command microphone, kept separate from the three transport controls.
+        const auto micCenter = D2D1::Point2F(520, 225);
+        d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 27, 27),
+            musicVoiceActive_ ? activeFillBrush_.Get() : buttonBrush_.Get());
+        d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 27, 27),
+            musicVoiceActive_ ? accentBrush_.Get() : structureBrush_.Get(),
+            musicVoiceActive_ ? 2.5F : 1.5F);
+        d2dContext_->DrawRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(512, 209, 528, 229), 8, 8),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(508, 223), D2D1::Point2F(508, 228),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(508, 228), D2D1::Point2F(513, 233),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(513, 233), D2D1::Point2F(527, 233),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(527, 233), D2D1::Point2F(532, 228),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(532, 228), D2D1::Point2F(532, 223),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(520, 234), D2D1::Point2F(520, 240),
+            accentBrush_.Get(), 2.5F);
+        drawText(musicVoiceStatus_, labelFormat_.Get(), D2D1::RectF(396, 246, 560, 268),
+            musicVoiceActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
     } else if (deck == 1) {
         if (desktop.showSurfaceList) {
             d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 110), accentBrush_.Get(), 3.0F);
@@ -357,7 +399,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(mountReady ? L"HOLD  BODY MOUNT" : L"BODY MOUNT / WAIT", labelFormat_.Get(),
             D2D1::RectF(438, 330, 700, 358), mountReady ? textBrush_.Get() : mutedTextBrush_.Get());
         }
-    } else {
+    } else if (deck == 2) {
         const auto stateBrush = playspaceAdjusted_ ? accentBrush_.Get() : structureBrush_.Get();
         const auto controlBounds = D2D1::RectF(68, 154, 330, 346);
         d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(controlBounds, 18, 18),
@@ -406,6 +448,63 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             stateBrush);
         drawText(playspaceAdjusted_ ? L"HOLD ICON TO RESTORE" : L"NO SESSION OFFSET",
             labelFormat_.Get(), D2D1::RectF(426, 285, 720, 326), mutedTextBrush_.Get());
+    } else {
+        drawText(L"VOICE OUTPUT", labelFormat_.Get(), D2D1::RectF(42, 108, 300, 140),
+            accentBrush_.Get());
+        drawText(ttsMuted_ ? L"MUTED" : (std::to_wstring(ttsVolumePercent_) + L"%"),
+            titleFormat_.Get(), D2D1::RectF(42, 150, 280, 202),
+            ttsMuted_ ? mutedTextBrush_.Get() : textBrush_.Get());
+
+        // Thin segmented level meter remains readable without becoming a luminous bar.
+        for (int index = 0; index < 10; ++index) {
+            const float left = 286.0F + static_cast<float>(index) * 39.0F;
+            d2dContext_->FillRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(left, 164, left + 27, 181), 4, 4),
+                !ttsMuted_ && index * 10 < ttsVolumePercent_
+                    ? accentBrush_.Get() : structureDimBrush_.Get());
+        }
+
+        const std::array<D2D1_POINT_2F, 3> centers{
+            D2D1::Point2F(176, 300), D2D1::Point2F(384, 300), D2D1::Point2F(592, 300)};
+        for (size_t index = 0; index < centers.size(); ++index) {
+            d2dContext_->FillEllipse(D2D1::Ellipse(centers[index], 40, 40),
+                index == 1 && ttsMuted_ ? activeFillBrush_.Get() : buttonBrush_.Get());
+            d2dContext_->DrawEllipse(D2D1::Ellipse(centers[index], 40, 40),
+                index == 1 && ttsMuted_ ? accentBrush_.Get() : structureBrush_.Get(), 2.0F);
+            d2dContext_->DrawEllipse(D2D1::Ellipse(centers[index], 47, 47),
+                structureDimBrush_.Get(), 1.0F);
+        }
+        // Minus and plus.
+        d2dContext_->DrawLine(D2D1::Point2F(158, 300), D2D1::Point2F(194, 300),
+            accentBrush_.Get(), 4.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(574, 300), D2D1::Point2F(610, 300),
+            accentBrush_.Get(), 4.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(592, 282), D2D1::Point2F(592, 318),
+            accentBrush_.Get(), 4.0F);
+        // Speaker/mute glyph.
+        d2dContext_->DrawLine(D2D1::Point2F(365, 292), D2D1::Point2F(375, 292),
+            accentBrush_.Get(), 3.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(375, 292), D2D1::Point2F(389, 281),
+            accentBrush_.Get(), 3.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(389, 281), D2D1::Point2F(389, 319),
+            accentBrush_.Get(), 3.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(389, 319), D2D1::Point2F(375, 308),
+            accentBrush_.Get(), 3.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(375, 308), D2D1::Point2F(365, 308),
+            accentBrush_.Get(), 3.0F);
+        if (ttsMuted_) {
+            d2dContext_->DrawLine(D2D1::Point2F(399, 287), D2D1::Point2F(417, 313),
+                accentBrush_.Get(), 3.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(417, 287), D2D1::Point2F(399, 313),
+                accentBrush_.Get(), 3.0F);
+        } else {
+            d2dContext_->DrawLine(D2D1::Point2F(400, 289), D2D1::Point2F(408, 296),
+                accentBrush_.Get(), 2.5F);
+            d2dContext_->DrawLine(D2D1::Point2F(408, 296), D2D1::Point2F(408, 304),
+                accentBrush_.Get(), 2.5F);
+            d2dContext_->DrawLine(D2D1::Point2F(408, 304), D2D1::Point2F(400, 311),
+                accentBrush_.Get(), 2.5F);
+        }
     }
     if (FAILED(d2dContext_->EndDraw())) {
         return false;
@@ -432,6 +531,16 @@ void OverlayRenderer::SetPlayspaceAdjusted(bool adjusted) {
 
 void OverlayRenderer::SetSlimeAvailable(bool available) {
     slimeAvailable_ = available;
+}
+
+void OverlayRenderer::SetMusicVoiceStatus(const std::wstring& status, bool active) {
+    musicVoiceStatus_ = status;
+    musicVoiceActive_ = active;
+}
+
+void OverlayRenderer::SetTtsSettings(int volumePercent, bool muted) {
+    ttsVolumePercent_ = (std::max)(0, (std::min)(100, volumePercent));
+    ttsMuted_ = muted;
 }
 
 }  // namespace interfayce

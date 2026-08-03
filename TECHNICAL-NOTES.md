@@ -239,10 +239,10 @@ Command mode and dictation mode must have distinct visible states and must never
 
 ### Kokoro acknowledgment server
 
-David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. Port `5000` was live-verified on 2026-08-02; the older `7079` note is wrong. Keep the base URL configurable, but use the local hostname as the personal default:
+David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. Port `5000` was live-verified on 2026-08-02; the older `7079` note is wrong. Keep the base URL configurable. Use the verified IPv4 address as the personal default because Python requests through `thearkive.local` took roughly 66 seconds despite the same server generating a short response in under a second over IPv4:
 
 ```text
-POST http://thearkive.local:5000/v1/audio/speech
+POST http://192.168.4.194:5000/v1/audio/speech
 ```
 
 Example request:
@@ -275,6 +275,10 @@ The confirmed health response from `GET http://192.168.4.194:5000/health` is:
 A live WAV request using `af_heart` completed in about 11.1 seconds and produced a valid 208,844-byte file. That timing may include server/model warmup, but it confirms that synthesis must run asynchronously. Show action completion on the wrist immediately, then play the spoken acknowledgment when it arrives. Do not hold the command UI in a busy state for the duration of TTS generation.
 
 The base URL, model, voice/blend, response format, speed, and timeout belong in ignored local configuration. TTS is acknowledgment, not the authority that decides whether an action succeeded. A failed or sleeping TTS server must not roll back, block, or misreport a completed Spotify action; the wrist should still show the result visually. Keep acknowledgments short, bound request timeouts, and discard stale queued speech when a newer command supersedes it.
+
+Non-secret runtime preferences are persisted in `%LOCALAPPDATA%\Interfayce\settings.json`. The first settings are TTS volume, mute, and speed; volume and mute are exposed through the wrist gear deck. Kokoro reloads them immediately before synthesis/playback so a wrist change applies without restarting the service. The future desktop settings window owns endpoint/device selection and integration setup. OAuth refresh tokens and API keys must be stored with Windows credential protection and never written to this JSON file or rendered in VR.
+
+The native Music deck queries the resident localhost service for media state and artwork. Do not restore the old pattern of spawning `cmd.exe` and Python for each two-second refresh: Windows displayed recurring application-start cursor feedback even though the child windows used `CREATE_NO_WINDOW`.
 
 ## Audio routing
 
