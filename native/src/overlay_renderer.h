@@ -28,6 +28,7 @@ public:
     void SetPlayspaceAdjusted(bool adjusted);
     void SetSlimeAvailable(bool available);
     void SetMusicVoiceStatus(const std::wstring& status, bool active);
+    void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetTtsSettings(int volumePercent, bool muted);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
@@ -59,6 +60,9 @@ private:
     bool slimeAvailable_{};
     std::wstring musicVoiceStatus_{L"VOICE READY"};
     bool musicVoiceActive_{};
+    std::wstring commsStatus_{L"IDLE"};
+    std::wstring commsTranscript_;
+    bool commsActive_{};
     int ttsVolumePercent_{85};
     bool ttsMuted_{};
 };

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import threading
 
+from .comms import CommsDictation
 from .kokoro import speak_in_background
 from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interpret_music_request
@@ -52,6 +53,7 @@ class VoiceRuntime:
     def __init__(self) -> None:
         self.transcriber = ParakeetTranscriber()
         self.command_lock = threading.Lock()
+        self.comms = CommsDictation(self.transcriber, self.command_lock)
         LOGGER.info("Parakeet model directory: %s; feature_dim=%s; threads=%s",
             self.transcriber.files.directory, self.transcriber.feature_dim,
             self.transcriber.threads)
@@ -139,6 +141,19 @@ class VoiceRuntime:
             LOGGER.exception("Music artwork query failed")
             return b""
 
+    def comms_status(self) -> str:
+        return self.comms.snapshot().wire_text()
+
+    def toggle_comms(self) -> str:
+        return self.comms.toggle().wire_text()
+
+    def clear_comms(self) -> str:
+        try:
+            return self.comms.clear().wire_text()
+        except Exception as error:
+            LOGGER.exception("Comms chatbox clear failed")
+            return f"ERROR\t{_safe_field(str(error))}"
+
 
 def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
     log_path = configure_logging()
@@ -165,6 +180,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply_bytes(200, runtime.music_art(), "application/octet-stream")
             elif self.path == "/settings":
                 self._reply(200, settings_wire_text())
+            elif self.path == "/comms/status":
+                self._reply(200, runtime.comms_status())
             else:
                 self._reply(404, "not found")
 
@@ -174,6 +191,10 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
             elif self.path.startswith("/music/control/"):
                 operation = self.path.rsplit("/", 1)[-1]
                 self._reply(200, "ok" if runtime.music_control(operation) else "unavailable")
+            elif self.path == "/comms/toggle":
+                self._reply(200, runtime.toggle_comms())
+            elif self.path == "/comms/clear":
+                self._reply(200, runtime.clear_comms())
             elif self.path == "/settings/tts/volume/up":
                 self._reply(200, settings_wire_text(adjust_tts_volume(0.1)))
             elif self.path == "/settings/tts/volume/down":

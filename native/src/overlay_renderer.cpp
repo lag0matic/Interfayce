@@ -215,13 +215,15 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         D2D1::RoundedRect(D2D1::RectF(16.0F, 16.0F, 752.0F, 82.0F), 10.0F, 10.0F), stripBrush_.Get());
 
     const std::array<D2D1_RECT_F, 5> tabs{
-        D2D1::RectF(24, 22, 146, 76), D2D1::RectF(154, 22, 288, 76),
-        D2D1::RectF(296, 22, 476, 76), D2D1::RectF(484, 22, 646, 76),
-        D2D1::RectF(654, 22, 744, 76)};
+        D2D1::RectF(24, 22, 126, 76), D2D1::RectF(132, 22, 250, 76),
+        D2D1::RectF(256, 22, 356, 76), D2D1::RectF(362, 22, 482, 76),
+        D2D1::RectF(488, 22, 610, 76)};
     const std::array<const wchar_t*, 5> tabLabels{
-        L"\u266b  MUSIC", L"\u25a3  DESK", L"\u25ce  SPACE", L"\u25c7  RIG", L""};
-    for (int index = 0; index < 4; ++index) {
-        if (deck == index) {
+        L"\u266b MUSIC", L"\u25c9 COMMS", L"\u25a3 DESK", L"\u25ce SPACE", L"\u25c7 RIG"};
+    const std::array<int, 5> tabDecks{0, 5, 1, 2, 3};
+    for (size_t index = 0; index < tabs.size(); ++index) {
+        const bool selected = deck == tabDecks[index];
+        if (selected) {
             d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(tabs[index], 9, 9), activeFillBrush_.Get());
             d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(tabs[index], 9, 9), accentBrush_.Get(), 2.0F);
         } else {
@@ -231,7 +233,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(tabLabels[index], labelFormat_.Get(),
             D2D1::RectF(tabs[index].left + 12, tabs[index].top + 15,
                 tabs[index].right - 8, tabs[index].bottom - 6),
-            deck == index ? textBrush_.Get() : mutedTextBrush_.Get());
+            selected ? textBrush_.Get() : mutedTextBrush_.Get());
     }
 
     // Compact orbital gear; it opens settings without spending another text tab.
@@ -248,12 +250,12 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 gearCenter.y + std::sin(angle) * 18.0F), gearBrush, 3.0F);
     }
 
-    if (deck != 2 && deck != 4) {
+    if (deck != 2 && deck != 4 && deck != 5) {
         drawText(deck == 0 ? L"MUSIC" : deck == 1 ? L"DESKTOP" : L"RIG",
             labelFormat_.Get(), D2D1::RectF(42.0F, 106.0F, 300.0F, 138.0F),
             accentBrush_.Get());
     }
-    if (deck != 2 && deck != 4) {
+    if (deck != 2 && deck != 4 && deck != 5) {
         drawText(deck == 0 ? (musicLine.empty() ? L"No active track" : musicLine)
                 : deck == 1 ? musicLine
                 : (rigLine.empty() ? L"Controllers unavailable" : rigLine),
@@ -450,6 +452,55 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             stateBrush);
         drawText(playspaceAdjusted_ ? L"HOLD ICON TO RESTORE" : L"NO SESSION OFFSET",
             labelFormat_.Get(), D2D1::RectF(426, 285, 720, 326), mutedTextBrush_.Get());
+    } else if (deck == 5) {
+        const auto stateBrush = commsActive_ ? accentBrush_.Get() : structureBrush_.Get();
+        drawText(L"COMMS", labelFormat_.Get(), D2D1::RectF(42, 108, 260, 140),
+            accentBrush_.Get());
+        drawText(commsTranscript_.empty() ? L"Voice transcription will appear here"
+                : commsTranscript_, bodyFormat_.Get(), D2D1::RectF(42, 150, 726, 202),
+            commsTranscript_.empty() ? mutedTextBrush_.Get() : textBrush_.Get());
+
+        const auto micCenter = D2D1::Point2F(270, 280);
+        d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 58, 58),
+            commsActive_ ? activeFillBrush_.Get() : buttonBrush_.Get());
+        d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 58, 58), stateBrush,
+            commsActive_ ? 3.0F : 2.0F);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 67, 67),
+            structureDimBrush_.Get(), 1.0F);
+        d2dContext_->DrawRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(253, 246, 287, 286), 17, 17),
+            stateBrush, 4.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(244, 274), D2D1::Point2F(244, 286),
+            stateBrush, 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(244, 286), D2D1::Point2F(255, 297),
+            stateBrush, 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(255, 297), D2D1::Point2F(285, 297),
+            stateBrush, 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(285, 297), D2D1::Point2F(296, 286),
+            stateBrush, 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(296, 286), D2D1::Point2F(296, 274),
+            stateBrush, 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(270, 298), D2D1::Point2F(270, 313),
+            stateBrush, 3.5F);
+
+        const auto clearCenter = D2D1::Point2F(560, 280);
+        d2dContext_->FillEllipse(D2D1::Ellipse(clearCenter, 45, 45), buttonBrush_.Get());
+        d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 45, 45), structureBrush_.Get(), 2.0F);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 53, 53), structureDimBrush_.Get(), 1.0F);
+        // Empty chatbox pulse: an erased speech cell, kept icon-only.
+        d2dContext_->DrawRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(538, 258, 582, 290), 7, 7),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(548, 290), D2D1::Point2F(542, 301),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(542, 301), D2D1::Point2F(558, 291),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(536, 304), D2D1::Point2F(584, 256),
+            accentBrush_.Get(), 3.5F);
+
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(49, 355), 5, 5), stateBrush);
+        drawText(commsStatus_, labelFormat_.Get(), D2D1::RectF(64, 344, 724, 374),
+            commsActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
     } else {
         drawText(L"VOICE OUTPUT", labelFormat_.Get(), D2D1::RectF(42, 108, 300, 140),
             accentBrush_.Get());
@@ -538,6 +589,13 @@ void OverlayRenderer::SetSlimeAvailable(bool available) {
 void OverlayRenderer::SetMusicVoiceStatus(const std::wstring& status, bool active) {
     musicVoiceStatus_ = status;
     musicVoiceActive_ = active;
+}
+
+void OverlayRenderer::SetCommsStatus(const std::wstring& status,
+                                     const std::wstring& transcript, bool active) {
+    commsStatus_ = status;
+    commsTranscript_ = transcript;
+    commsActive_ = active;
 }
 
 void OverlayRenderer::SetTtsSettings(int volumePercent, bool muted) {

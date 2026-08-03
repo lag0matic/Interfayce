@@ -212,6 +212,30 @@ std::wstring VoiceStatusFromResponse(const std::wstring& response) {
     return response.empty() ? L"VOICE ERROR" : response;
 }
 
+struct CommsState {
+    std::wstring status{L"IDLE"};
+    std::wstring transcript;
+    bool active{};
+};
+
+std::optional<CommsState> ParseCommsState(const std::string& response) {
+    if (response.empty()) return std::nullopt;
+    const auto separator = response.find('\t');
+    CommsState state;
+    state.status = Utf8ToWide(response.substr(0, separator));
+    if (separator != std::string::npos) {
+        state.transcript = Utf8ToWide(response.substr(separator + 1));
+    }
+    state.active = state.status == L"LISTENING" || state.status == L"SENT"
+        || state.status == L"STOPPING";
+    return state;
+}
+
+std::optional<CommsState> RequestCommsState(std::string_view method, std::string_view path) {
+    const auto response = LocalHttpRequest(method, path, std::chrono::milliseconds(750));
+    return response ? ParseCommsState(*response) : std::nullopt;
+}
+
 void LaunchSpotifyControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
     static_cast<void>(projectRoot);
     std::string operationPath;
@@ -620,6 +644,7 @@ int main(int argc, char** argv) {
     renderer.SetSlimeAvailable(slimeAvailable);
     renderer.SetMusicVoiceStatus(
         voiceServiceAvailable ? L"VOICE READY" : L"VOICE WARMING", false);
+    renderer.SetCommsStatus(voiceServiceAvailable ? L"IDLE" : L"VOICE WARMING", L"", false);
     TtsSettingsState ttsSettings;
     if (voiceServiceAvailable) {
         if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
@@ -823,6 +848,8 @@ int main(int argc, char** argv) {
     std::future<std::wstring> musicPoll;
     std::future<std::wstring> musicVoiceCommand;
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
+    CommsState commsState;
+    auto nextCommsPoll = std::chrono::steady_clock::now();
     auto nextRigPoll = std::chrono::steady_clock::now();
     bool restoreHoldActive = false;
     bool rigResetHoldActive = false;
@@ -910,6 +937,8 @@ int main(int argc, char** argv) {
         bool desktopSurfaceListHit = false;
         bool desktopListBackHit = false;
         bool musicMicHit = false;
+        bool commsMicHit = false;
+        bool commsClearHit = false;
         bool ttsVolumeDownHit = false;
         bool ttsMuteHit = false;
         bool ttsVolumeUpHit = false;
@@ -940,6 +969,10 @@ int main(int argc, char** argv) {
                     && x >= 68.0F && x <= 330.0F && y >= 154.0F && y <= 346.0F;
                 musicMicHit = selectedDeck == 0
                     && x >= 480.0F && x <= 560.0F && y >= 190.0F && y <= 260.0F;
+                commsMicHit = selectedDeck == 5
+                    && x >= 195.0F && x <= 345.0F && y >= 205.0F && y <= 355.0F;
+                commsClearHit = selectedDeck == 5
+                    && x >= 495.0F && x <= 625.0F && y >= 215.0F && y <= 345.0F;
                 ttsVolumeDownHit = selectedDeck == 4
                     && x >= 126.0F && x <= 226.0F && y >= 250.0F && y <= 350.0F;
                 ttsMuteHit = selectedDeck == 4
@@ -1146,8 +1179,9 @@ int main(int argc, char** argv) {
                 std::cerr << "Could not start selected desktop capture\n";
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && panelHitFound && panelY <= 82.0F) {
-            const int requestedDeck = panelX < 150.0F ? 0 : panelX < 292.0F ? 1
-                : panelX < 480.0F ? 2 : panelX < 650.0F ? 3 : 4;
+            const int requestedDeck = panelX < 129.0F ? 0 : panelX < 253.0F ? 5
+                : panelX < 359.0F ? 1 : panelX < 485.0F ? 2
+                : panelX < 613.0F ? 3 : 4;
             if (requestedDeck == 0) {
                 spotifyAvailable = IsProcessRunning(L"Spotify.exe");
                 if (spotifyAvailable) {
@@ -1184,6 +1218,14 @@ int main(int argc, char** argv) {
                 if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
                 renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
             }
+            if (requestedDeck == 5) {
+                if (const auto current = RequestCommsState("GET", "/comms/status")) {
+                    commsState = *current;
+                    renderer.SetCommsStatus(
+                        commsState.status, commsState.transcript, commsState.active);
+                }
+                nextCommsPoll = std::chrono::steady_clock::now();
+            }
             if (requestedDeck != selectedDeck && renderer.Initialize(
                     system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
                     requestedDeck == 0 && !spotifyAvailable ? L"" : musicArtPath.wstring(),
@@ -1209,6 +1251,27 @@ int main(int argc, char** argv) {
                     const auto updatedTexture = renderer.Texture();
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState
+                   && (commsMicHit || commsClearHit)) {
+            voiceServiceAvailable = IsLocalTcpPortOpen(
+                kVoiceServicePort, std::chrono::milliseconds(75));
+            if (!voiceServiceAvailable) {
+                LaunchVoiceService(projectRoot);
+                commsState = {L"VOICE WARMING", L"", false};
+            } else if (const auto changed = RequestCommsState(
+                    "POST", commsMicHit ? "/comms/toggle" : "/comms/clear")) {
+                commsState = *changed;
+            } else {
+                commsState = {L"COMMS ERROR", L"Voice service did not respond", false};
+            }
+            renderer.SetCommsStatus(
+                commsState.status, commsState.transcript, commsState.active);
+            nextCommsPoll = std::chrono::steady_clock::now();
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState
                    && (ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit)) {
@@ -1396,6 +1459,22 @@ int main(int argc, char** argv) {
                     spotifyAvailable = true;
                     musicPoll = std::async(std::launch::async,
                         [projectRoot] { return ReadSpotifyNowPlaying(projectRoot); });
+                }
+            }
+        }
+        if (selectedDeck == 5 && std::chrono::steady_clock::now() >= nextCommsPoll) {
+            nextCommsPoll = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+            if (const auto current = RequestCommsState("GET", "/comms/status")) {
+                if (current->status != commsState.status
+                    || current->transcript != commsState.transcript) {
+                    commsState = *current;
+                    renderer.SetCommsStatus(
+                        commsState.status, commsState.transcript, commsState.active);
+                    if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                            rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
                 }
             }
         }

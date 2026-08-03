@@ -237,13 +237,15 @@ The LLM returns a constrained intent and arguments; it does not receive arbitrar
 
 The current router uses DeepInfra's OpenAI-compatible chat-completions endpoint at `https://api.deepinfra.com/v1/openai`, model `deepseek-ai/DeepSeek-V4-Flash`, and temperature `0.65`. It may emit only the enumerated Music actions for playback search, transport, status, volume, mute, or no action. The API key is stored as a Windows DPAPI-protected blob at `%LOCALAPPDATA%\Interfayce\secure\llm-api-key.dpapi`; it must never enter the settings JSON, logs, wrist UI, or repository.
 
-VRChat textbox dictation is a separate Comms-deck path:
+VRChat textbox dictation is implemented as a separate Comms-deck path:
 
 ```text
-Comms mic button → local microphone capture → local STT → preview / cancel / send → VRChat OSC chatbox
+Comms mic toggle → repeated bounded microphone capture → local STT → immediate VRChat OSC chatbox send
 ```
 
 Command mode and dictation mode must have distinct visible states and must never silently cross-route. Neither mode may enable the VRChat voice microphone. Microphone capture is always deliberately armed and time-bounded.
+
+The live Comms deck intentionally has only two actions: toggle continuous phrase dictation and send the existing empty-message chatbox clear pulse. Completed Parakeet utterances are capped at 144 characters and sent immediately; the most recent text and capture state remain visible on the wrist. Music and Comms share a non-blocking capture lock, so one mode refuses to start while the other owns the microphone.
 
 ### Kokoro acknowledgment server
 

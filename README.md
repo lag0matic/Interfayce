@@ -13,7 +13,7 @@ It is intentionally personal-use-first. We are building the useful little shipbo
 
 ## Current build
 
-The native C++20 host now provides the inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, SlimeVR rig status and recovery, and independently movable interactive desktop/application surfaces with an ambidextrous VR keyboard.
+The native C++20 host now provides the inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable interactive desktop/application surfaces with an ambidextrous VR keyboard.
 
 The Python support code can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
 
@@ -99,7 +99,7 @@ python -m interfayce steamvr-baseline
 
 ## Near-term work
 
-1. Add the separate Comms-dictation microphone flow using local STT, with preview/cancel/send through VRChat OSC.
-2. Add process-specific music capture and virtual-microphone routing.
-3. Add the desktop settings window for integration credentials, endpoints, devices, and diagnostics.
-4. Add active/glanceable/sleeping update policies, wrist visibility fading, and final UI polish.
+1. Add wrist visibility fading and the final feature-complete UI polish pass.
+2. Add the desktop settings window for integration credentials, endpoints, devices, and diagnostics.
+3. Add active/glanceable/sleeping capture update policies.
+4. Add process-specific music capture and virtual-microphone routing.

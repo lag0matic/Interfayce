@@ -8,7 +8,7 @@ Updated: 2026-08-03
 - Draft PR: https://github.com/lag0matic/Interfayce/pull/1
 - Last published feature commit: `09d2ba3 feat: polish VR surfaces and service availability`
 - Native host: `native/build/bin/InterfayceOverlay.exe`
-- Python suite: 51 passing tests
+- Python suite: 55 passing tests
 
 The desktop interaction slice is now **usably complete**. Spotify OAuth, constrained conversational Music control, local STT, and Kokoro acknowledgments have also passed live in-headset testing.
 
@@ -49,6 +49,8 @@ The independent keyboard:
 - Conversational play requests canonicalize artist names through Spotify, then require confident title and artist matches before playback. Ambiguous or unrelated search results fail closed.
 - Spoken Music controls now cover search/play, transport, status, Spotify volume, mute, and unmute. Both successes and safe command failures receive short asynchronous Kokoro acknowledgments.
 - The Music response line has its own full-width strip at the bottom of the deck, clear of the transport controls.
+- Comms is a deliberately separate wrist deck with one continuous-dictation mic toggle and one clear-chatbox control. Each completed local Parakeet phrase is sent immediately through VRChat OSC, while the latest transcript and capture state remain visible on the wrist.
+- Comms and Music share an explicit capture lock, so dictation can never be mistaken for a Spotify command or steal an already-active microphone session. Chatbox messages are bounded to VRChat's 144-character limit.
 - Selected desktop and keyboard surfaces use subtle violet backlight rather than thick grab bars. Their functional grab regions are visually quiet.
 - The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`.
 
@@ -73,10 +75,10 @@ The independent keyboard:
 
 ## Larger features intentionally next, not half-started
 
-1. A separate Comms mic-button path for previewable VRChat chatbox dictation.
-2. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
-3. Desktop settings window for OAuth, integrations, device selection, and diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
-4. Active/glanceable/sleeping capture update policies, wrist visibility/fade behavior, and the final feature-complete UI polish pass.
+1. Wrist visibility/fade behavior and the final feature-complete UI polish pass.
+2. Desktop settings window for OAuth, integrations, device selection, and diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
+3. Active/glanceable/sleeping capture update policies.
+4. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
 
 ## Verification record
 
@@ -85,7 +87,8 @@ The independent keyboard:
 - Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
 - Picker selection, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, and wrist recovery controls have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
-- Python proof-of-concept suite: 51 passing checks.
+- Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.
+- Python proof-of-concept suite: 55 passing checks.
 
 ## North star
 
