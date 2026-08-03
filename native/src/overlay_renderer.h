@@ -25,6 +25,8 @@ public:
                     const std::wstring& musicArtPath = L"", const std::wstring& rigLine = L"",
                     const std::array<std::wstring, 8>& rigSlots = {}, bool mountReady = false,
                     const DesktopPanelState& desktop = {});
+    void SetPlayspaceAdjusted(bool adjusted);
+    void SetSlimeAvailable(bool available);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
@@ -46,8 +48,13 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> textBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> mutedTextBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> accentBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> structureBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> structureDimBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> activeFillBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> buttonBrush_;
     HANDLE sharedTextureHandle_{};
+    bool playspaceAdjusted_{};
+    bool slimeAvailable_{};
 };
 
 }  // namespace interfayce

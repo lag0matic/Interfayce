@@ -9,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -17,6 +18,7 @@ constexpr UINT kPickerHeight = 640;
 constexpr UINT kKeyboardWidth = 1200;
 constexpr UINT kKeyboardHeight = 440;
 constexpr float kFrameAspectRatio = 128.0F;
+constexpr float kGlowAspectRatio = 16.0F;
 
 struct KeyboardKeyDefinition {
     D2D1_RECT_F bounds{};
@@ -285,12 +287,14 @@ bool DesktopPickerTexture::Initialize(ID3D11Device* device, UINT width, UINT hei
         || FAILED(writeFactory->CreateTextFormat(L"Bahnschrift", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 16.0F, L"en-us", &detailFormat_))) return false;
 
-    context_->CreateSolidColorBrush(D2D1::ColorF(0.015F, 0.030F, 0.050F, 0.92F), &panelBrush_);
-    context_->CreateSolidColorBrush(D2D1::ColorF(0.035F, 0.070F, 0.100F, 0.94F), &surfaceBrush_);
-    context_->CreateSolidColorBrush(D2D1::ColorF(0.90F, 0.96F, 0.98F, 1.0F), &textBrush_);
-    context_->CreateSolidColorBrush(D2D1::ColorF(0.46F, 0.64F, 0.72F, 1.0F), &mutedBrush_);
-    context_->CreateSolidColorBrush(D2D1::ColorF(0.12F, 0.82F, 0.96F, 1.0F), &cyanBrush_);
-    context_->CreateSolidColorBrush(D2D1::ColorF(0.48F, 0.28F, 0.96F, 1.0F), &violetBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.012F, 0.020F, 0.038F, 0.94F), &panelBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.028F, 0.042F, 0.078F, 0.97F), &surfaceBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.90F, 0.94F, 0.98F, 1.0F), &textBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.46F, 0.53F, 0.65F, 1.0F), &mutedBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.15F, 0.87F, 0.95F, 1.0F), &cyanBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.46F, 0.32F, 0.91F, 1.0F), &violetBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.27F, 0.20F, 0.52F, 0.78F), &violetDimBrush_);
+    context_->CreateSolidColorBrush(D2D1::ColorF(0.035F, 0.24F, 0.30F, 0.96F), &activeFillBrush_);
     return true;
 }
 
@@ -302,43 +306,71 @@ bool DesktopPickerTexture::Render(const std::vector<DesktopSource>& sources,
         context_->DrawText(text.data(), static_cast<UINT32>(text.size()), format, rectangle, brush,
             D2D1_DRAW_TEXT_OPTIONS_CLIP);
     };
+    const auto drawCornerFrame = [&](const D2D1_RECT_F rect, ID2D1Brush* brush, float stroke) {
+        constexpr float corner = 18.0F;
+        constexpr float segment = 54.0F;
+        const std::array<std::pair<D2D1_POINT_2F, D2D1_POINT_2F>, 12> lines{{
+            {D2D1::Point2F(rect.left + corner, rect.top), D2D1::Point2F(rect.left + corner + segment, rect.top)},
+            {D2D1::Point2F(rect.left, rect.top + corner), D2D1::Point2F(rect.left + corner, rect.top)},
+            {D2D1::Point2F(rect.left, rect.top + corner), D2D1::Point2F(rect.left, rect.top + corner + segment)},
+            {D2D1::Point2F(rect.right - corner - segment, rect.top), D2D1::Point2F(rect.right - corner, rect.top)},
+            {D2D1::Point2F(rect.right - corner, rect.top), D2D1::Point2F(rect.right, rect.top + corner)},
+            {D2D1::Point2F(rect.right, rect.top + corner), D2D1::Point2F(rect.right, rect.top + corner + segment)},
+            {D2D1::Point2F(rect.left, rect.bottom - corner - segment), D2D1::Point2F(rect.left, rect.bottom - corner)},
+            {D2D1::Point2F(rect.left, rect.bottom - corner), D2D1::Point2F(rect.left + corner, rect.bottom)},
+            {D2D1::Point2F(rect.left + corner, rect.bottom), D2D1::Point2F(rect.left + corner + segment, rect.bottom)},
+            {D2D1::Point2F(rect.right, rect.bottom - corner - segment), D2D1::Point2F(rect.right, rect.bottom - corner)},
+            {D2D1::Point2F(rect.right, rect.bottom - corner), D2D1::Point2F(rect.right - corner, rect.bottom)},
+            {D2D1::Point2F(rect.right - corner - segment, rect.bottom), D2D1::Point2F(rect.right - corner, rect.bottom)},
+        }};
+        for (const auto& line : lines) context_->DrawLine(line.first, line.second, brush, stroke);
+    };
     const auto drawSource = [&](const DesktopSource& source, size_t sourceIndex,
                                 float left, float top, float right) {
         const auto bounds = D2D1::RectF(left, top, right, top + 74.0F);
-        context_->FillRectangle(bounds, surfaceBrush_.Get());
-        context_->DrawRectangle(bounds, hoveredSource == sourceIndex
-                ? (source.kind == DesktopSource::Kind::Display ? cyanBrush_.Get() : violetBrush_.Get())
-                : mutedBrush_.Get(), hoveredSource == sourceIndex ? 3.0F : 1.0F);
+        const bool hovered = hoveredSource == sourceIndex;
+        context_->FillRoundedRectangle(D2D1::RoundedRect(bounds, 8, 8),
+            hovered ? activeFillBrush_.Get() : surfaceBrush_.Get());
+        context_->DrawRoundedRectangle(D2D1::RoundedRect(bounds, 8, 8),
+            hovered ? cyanBrush_.Get() : violetDimBrush_.Get(), hovered ? 3.0F : 1.0F);
         const auto icon = D2D1::RectF(left + 18.0F, top + 20.0F, left + 54.0F, top + 45.0F);
-        context_->DrawRectangle(icon, source.kind == DesktopSource::Kind::Display
-                ? cyanBrush_.Get() : violetBrush_.Get(), 2.0F);
+        context_->DrawRoundedRectangle(D2D1::RoundedRect(icon, 3, 3),
+            hovered ? cyanBrush_.Get() : violetBrush_.Get(), 2.0F);
         if (source.kind == DesktopSource::Kind::Display) {
             context_->DrawLine(D2D1::Point2F(left + 28.0F, top + 51.0F),
-                D2D1::Point2F(left + 44.0F, top + 51.0F), cyanBrush_.Get(), 2.0F);
+                D2D1::Point2F(left + 44.0F, top + 51.0F), violetBrush_.Get(), 2.0F);
         } else {
             context_->DrawLine(D2D1::Point2F(left + 18.0F, top + 27.0F),
-                D2D1::Point2F(left + 54.0F, top + 27.0F), violetBrush_.Get(), 2.0F);
+                D2D1::Point2F(left + 54.0F, top + 27.0F),
+                hovered ? cyanBrush_.Get() : violetBrush_.Get(), 2.0F);
         }
         drawText(source.label, itemFormat_.Get(), D2D1::RectF(left + 72.0F, top + 13.0F,
             right - 14.0F, top + 43.0F), textBrush_.Get());
         drawText(source.detail, detailFormat_.Get(), D2D1::RectF(left + 72.0F, top + 44.0F,
             right - 14.0F, top + 68.0F), mutedBrush_.Get());
+        // Direct-action affordance: selecting the tile immediately turns this picker into the source.
+        context_->DrawLine(D2D1::Point2F(right - 33, top + 27),
+            D2D1::Point2F(right - 17, top + 37), hovered ? cyanBrush_.Get() : mutedBrush_.Get(), 2.0F);
+        context_->DrawLine(D2D1::Point2F(right - 17, top + 37),
+            D2D1::Point2F(right - 33, top + 47), hovered ? cyanBrush_.Get() : mutedBrush_.Get(), 2.0F);
     };
 
     context_->BeginDraw();
     context_->Clear(D2D1::ColorF(0, 0));
-    context_->FillRectangle(D2D1::RectF(4.0F, 4.0F, 1020.0F, 636.0F), panelBrush_.Get());
-    context_->DrawRectangle(D2D1::RectF(4.0F, 4.0F, 1020.0F, 636.0F), cyanBrush_.Get(), 1.5F);
+    const auto panelBounds = D2D1::RectF(4.0F, 4.0F, 1020.0F, 636.0F);
+    context_->FillRoundedRectangle(D2D1::RoundedRect(panelBounds, 14, 14), panelBrush_.Get());
+    context_->DrawRoundedRectangle(D2D1::RoundedRect(panelBounds, 14, 14), violetDimBrush_.Get(), 1.0F);
+    drawCornerFrame(panelBounds, violetBrush_.Get(), 2.0F);
     context_->DrawLine(D2D1::Point2F(4.0F, 92.0F), D2D1::Point2F(1020.0F, 92.0F),
         violetBrush_.Get(), 2.0F);
-    drawText(L"Choose a source", titleFormat_.Get(), D2D1::RectF(34.0F, 27.0F, 600.0F, 75.0F),
+    drawText(L"SOURCE SELECT", titleFormat_.Get(), D2D1::RectF(34.0F, 27.0F, 600.0F, 75.0F),
         textBrush_.Get());
-    drawText(L"DISPLAY", detailFormat_.Get(), D2D1::RectF(34.0F, 112.0F, 300.0F, 140.0F),
-        cyanBrush_.Get());
+    drawText(L"DISPLAYS", detailFormat_.Get(), D2D1::RectF(34.0F, 112.0F, 300.0F, 140.0F),
+        violetBrush_.Get());
     const auto applicationCount = static_cast<size_t>(std::count_if(sources.begin(), sources.end(),
         [](const auto& source) { return source.kind == DesktopSource::Kind::Window; }));
     const auto applicationPages = (std::max<size_t>)(1, (applicationCount + 4) / 5);
-    const auto applicationHeader = L"APPLICATION   " + std::to_wstring(applicationPage + 1)
+    const auto applicationHeader = L"APPLICATIONS   " + std::to_wstring(applicationPage + 1)
         + L"/" + std::to_wstring(applicationPages);
     drawText(applicationHeader, detailFormat_.Get(), D2D1::RectF(526.0F, 112.0F, 800.0F, 140.0F),
         violetBrush_.Get());
@@ -362,17 +394,18 @@ bool DesktopPickerTexture::Render(const std::vector<DesktopSource>& sources,
     if (applicationRow == 0) drawText(L"No eligible applications", itemFormat_.Get(),
         D2D1::RectF(526.0F, 164.0F, 990.0F, 202.0F), mutedBrush_.Get());
     if (applicationPages > 1) {
-        context_->DrawLine(D2D1::Point2F(866, 595), D2D1::Point2F(846, 608), violetBrush_.Get(), 3.0F);
-        context_->DrawLine(D2D1::Point2F(846, 608), D2D1::Point2F(866, 621), violetBrush_.Get(), 3.0F);
-        context_->DrawLine(D2D1::Point2F(950, 595), D2D1::Point2F(970, 608), violetBrush_.Get(), 3.0F);
-        context_->DrawLine(D2D1::Point2F(970, 608), D2D1::Point2F(950, 621), violetBrush_.Get(), 3.0F);
+        context_->DrawLine(D2D1::Point2F(866, 595), D2D1::Point2F(846, 608), cyanBrush_.Get(), 3.0F);
+        context_->DrawLine(D2D1::Point2F(846, 608), D2D1::Point2F(866, 621), cyanBrush_.Get(), 3.0F);
+        context_->DrawLine(D2D1::Point2F(950, 595), D2D1::Point2F(970, 608), cyanBrush_.Get(), 3.0F);
+        context_->DrawLine(D2D1::Point2F(970, 608), D2D1::Point2F(950, 621), cyanBrush_.Get(), 3.0F);
     }
     return SUCCEEDED(context_->EndDraw());
 }
 
 bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool shifted,
                                           bool controlled, bool altered,
-                                          std::optional<size_t> hoveredKey) {
+                                          std::optional<size_t> hoveredKey,
+                                          std::optional<size_t> pressedKey) {
     if (!context_ || !target_) return false;
     (void)hoveredKey;
     const auto drawText = [&](std::wstring_view text, IDWriteTextFormat* format,
@@ -382,24 +415,47 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
     };
     context_->BeginDraw();
     context_->Clear(D2D1::ColorF(0, 0, 0, 0));
-    context_->FillRectangle(D2D1::RectF(4, 4, 1196, 436), panelBrush_.Get());
-    context_->DrawRectangle(D2D1::RectF(4, 4, 1196, 436), cyanBrush_.Get(), 2.0F);
+    const auto panelBounds = D2D1::RectF(4, 4, 1196, 436);
+    context_->FillRoundedRectangle(D2D1::RoundedRect(panelBounds, 14, 14), panelBrush_.Get());
+    context_->DrawRoundedRectangle(D2D1::RoundedRect(panelBounds, 14, 14),
+        violetDimBrush_.Get(), 1.0F);
+    constexpr float corner = 18.0F;
+    constexpr float segment = 70.0F;
+    for (const auto& line : std::array<std::pair<D2D1_POINT_2F, D2D1_POINT_2F>, 12>{{
+             {D2D1::Point2F(4 + corner, 4), D2D1::Point2F(4 + corner + segment, 4)},
+             {D2D1::Point2F(4, 4 + corner), D2D1::Point2F(4 + corner, 4)},
+             {D2D1::Point2F(4, 4 + corner), D2D1::Point2F(4, 4 + corner + segment)},
+             {D2D1::Point2F(1196 - corner - segment, 4), D2D1::Point2F(1196 - corner, 4)},
+             {D2D1::Point2F(1196 - corner, 4), D2D1::Point2F(1196, 4 + corner)},
+             {D2D1::Point2F(1196, 4 + corner), D2D1::Point2F(1196, 4 + corner + segment)},
+             {D2D1::Point2F(4, 436 - corner - segment), D2D1::Point2F(4, 436 - corner)},
+             {D2D1::Point2F(4, 436 - corner), D2D1::Point2F(4 + corner, 436)},
+             {D2D1::Point2F(4 + corner, 436), D2D1::Point2F(4 + corner + segment, 436)},
+             {D2D1::Point2F(1196, 436 - corner - segment), D2D1::Point2F(1196, 436 - corner)},
+             {D2D1::Point2F(1196, 436 - corner), D2D1::Point2F(1196 - corner, 436)},
+             {D2D1::Point2F(1196 - corner - segment, 436), D2D1::Point2F(1196 - corner, 436)},
+         }}) {
+        context_->DrawLine(line.first, line.second, violetBrush_.Get(), 2.0F);
+    }
     drawText(L"KEYBOARD", titleFormat_.Get(), D2D1::RectF(24, 14, 260, 54), textBrush_.Get());
     const std::wstring targetLine = targetLabel.empty()
         ? L"Target: click a captured surface first" : L"Target: " + targetLabel;
     drawText(targetLine, detailFormat_.Get(), D2D1::RectF(280, 22, 1176, 54),
-        targetLabel.empty() ? mutedBrush_.Get() : cyanBrush_.Get());
-    context_->DrawLine(D2D1::Point2F(24, 60), D2D1::Point2F(1176, 60), violetBrush_.Get(), 2.0F);
+        targetLabel.empty() ? mutedBrush_.Get() : violetBrush_.Get());
+    context_->DrawLine(D2D1::Point2F(24, 60), D2D1::Point2F(1176, 60),
+        violetBrush_.Get(), 2.0F);
 
     const auto keys = KeyboardLayout(shifted);
     for (size_t index = 0; index < keys.size(); ++index) {
         const auto& key = keys[index];
+        const bool pressed = pressedKey && *pressedKey == index;
         const bool modifierSelected = (key.togglesShift && shifted)
             || (key.togglesControl && controlled) || (key.togglesAlt && altered);
         context_->FillRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
-            modifierSelected ? violetBrush_.Get() : surfaceBrush_.Get());
+            (modifierSelected || pressed) ? activeFillBrush_.Get() : surfaceBrush_.Get());
         context_->DrawRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
-            mutedBrush_.Get(), 1.0F);
+            pressed ? cyanBrush_.Get() : modifierSelected ? violetBrush_.Get() : violetDimBrush_.Get(),
+            pressed ? 3.0F : modifierSelected ? 2.0F : 1.0F);
         drawText(key.label, itemFormat_.Get(),
             D2D1::RectF(key.bounds.left + 8, key.bounds.top + 18,
                 key.bounds.right - 8, key.bounds.bottom - 8), textBrush_.Get());
@@ -434,7 +490,8 @@ bool DesktopSurfaceRegistry::CreateFrameOverlays(Surface& surface) const {
         vr::VROverlay()->SetOverlayInputMethod(
             surface.frameOverlays[index], vr::VROverlayInputMethod_None);
         vr::VROverlay()->SetOverlaySortOrder(surface.frameOverlays[index], 21);
-        vr::VROverlay()->SetOverlayAlpha(surface.frameOverlays[index], 0.78F);
+        // The overlays remain full-sized grab targets but are visually dormant until aimed at.
+        vr::VROverlay()->SetOverlayAlpha(surface.frameOverlays[index], 0.001F);
 
         const bool horizontal = index < 2;
         const uint32_t width = horizontal ? kLongEdge : 1;
@@ -442,14 +499,50 @@ bool DesktopSurfaceRegistry::CreateFrameOverlays(Surface& surface) const {
         std::array<uint8_t, kLongEdge * 4> pixels{};
         for (uint32_t pixelIndex = 0; pixelIndex < kLongEdge; ++pixelIndex) {
             const auto pixel = pixelIndex * 4U;
-            const bool violet = index >= 2;
-            pixels[pixel + 0] = violet ? 128 : 40;
-            pixels[pixel + 1] = violet ? 74 : 230;
-            pixels[pixel + 2] = 255;
-            pixels[pixel + 3] = 255;
+            pixels[pixel + 0] = 118;
+            pixels[pixel + 1] = 82;
+            pixels[pixel + 2] = 232;
+            pixels[pixel + 3] = 150;
         }
         if (vr::VROverlay()->SetOverlayRaw(surface.frameOverlays[index], pixels.data(),
                 width, height, 4) != vr::VROverlayError_None) return false;
+
+        const auto glowKey = surface.overlayKey + ".glow." + std::to_string(index);
+        vr::VROverlayHandle_t staleGlow = vr::k_ulOverlayHandleInvalid;
+        if (vr::VROverlay()->FindOverlay(glowKey.c_str(), &staleGlow) == vr::VROverlayError_None) {
+            vr::VROverlay()->DestroyOverlay(staleGlow);
+        }
+        if (vr::VROverlay()->CreateOverlay(glowKey.c_str(), "Interfayce Surface Glow",
+                &surface.glowOverlays[index]) != vr::VROverlayError_None) return false;
+        vr::VROverlay()->SetOverlayInputMethod(
+            surface.glowOverlays[index], vr::VROverlayInputMethod_None);
+        vr::VROverlay()->SetOverlaySortOrder(surface.glowOverlays[index], 19);
+        vr::VROverlay()->SetOverlayAlpha(surface.glowOverlays[index], 0.0F);
+
+        constexpr uint32_t kGlowLongEdge = 256;
+        constexpr uint32_t kGlowShortEdge = 16;
+        const uint32_t glowWidth = horizontal ? kGlowLongEdge : kGlowShortEdge;
+        const uint32_t glowHeight = horizontal ? kGlowShortEdge : kGlowLongEdge;
+        std::vector<uint8_t> glowPixels(glowWidth * glowHeight * 4U);
+        for (uint32_t y = 0; y < glowHeight; ++y) {
+            for (uint32_t x = 0; x < glowWidth; ++x) {
+                const auto across = horizontal ? static_cast<float>(y) : static_cast<float>(x);
+                const auto along = horizontal ? static_cast<float>(x) : static_cast<float>(y);
+                const auto acrossCenter = static_cast<float>(kGlowShortEdge - 1U) * 0.5F;
+                const auto acrossFade = (std::max)(0.0F,
+                    1.0F - std::abs(across - acrossCenter) / (acrossCenter + 0.5F));
+                const auto endFade = (std::min)(1.0F,
+                    (std::min)(along, static_cast<float>(kGlowLongEdge - 1U) - along) / 18.0F);
+                const auto intensity = acrossFade * acrossFade * endFade;
+                const auto pixel = (y * glowWidth + x) * 4U;
+                glowPixels[pixel + 0] = 118;
+                glowPixels[pixel + 1] = 82;
+                glowPixels[pixel + 2] = 232;
+                glowPixels[pixel + 3] = static_cast<uint8_t>(90.0F * intensity);
+            }
+        }
+        if (vr::VROverlay()->SetOverlayRaw(surface.glowOverlays[index], glowPixels.data(),
+                glowWidth, glowHeight, 4) != vr::VROverlayError_None) return false;
     }
     return true;
 }
@@ -461,7 +554,8 @@ bool DesktopSurfaceRegistry::UpdateFrameOverlays(const Surface& surface) const {
     const auto verticalHeight = surfaceHeight;
     const auto verticalWidth = verticalHeight / kFrameAspectRatio;
     for (size_t index = 0; index < surface.frameOverlays.size(); ++index) {
-        if (surface.frameOverlays[index] == vr::k_ulOverlayHandleInvalid) return false;
+        if (surface.frameOverlays[index] == vr::k_ulOverlayHandleInvalid
+            || surface.glowOverlays[index] == vr::k_ulOverlayHandleInvalid) return false;
         vr::HmdMatrix34_t local{};
         local.m[0][0] = 1.0F;
         local.m[1][1] = 1.0F;
@@ -481,6 +575,28 @@ bool DesktopSurfaceRegistry::UpdateFrameOverlays(const Surface& surface) const {
         const auto transform = Multiply(surface.transform, local);
         if (vr::VROverlay()->SetOverlayTransformAbsolute(surface.frameOverlays[index],
                 vr::TrackingUniverseStanding, &transform) != vr::VROverlayError_None) return false;
+
+        vr::HmdMatrix34_t glowLocal{};
+        glowLocal.m[0][0] = 1.0F;
+        glowLocal.m[1][1] = 1.0F;
+        glowLocal.m[2][2] = 1.0F;
+        glowLocal.m[2][3] = -0.006F;
+        if (index < 2) {
+            const auto glowWidth = surface.widthMeters + 0.040F;
+            const auto glowHeight = glowWidth / kGlowAspectRatio;
+            glowLocal.m[1][3] = (index == 0 ? 1.0F : -1.0F)
+                * (surfaceHeight * 0.5F + glowHeight * 0.10F);
+            vr::VROverlay()->SetOverlayWidthInMeters(surface.glowOverlays[index], glowWidth);
+        } else {
+            const auto glowHeight = surfaceHeight + 0.040F;
+            const auto glowWidth = glowHeight / kGlowAspectRatio;
+            glowLocal.m[0][3] = (index == 2 ? -1.0F : 1.0F)
+                * (surface.widthMeters * 0.5F + glowWidth * 0.10F);
+            vr::VROverlay()->SetOverlayWidthInMeters(surface.glowOverlays[index], glowWidth);
+        }
+        const auto glowTransform = Multiply(surface.transform, glowLocal);
+        if (vr::VROverlay()->SetOverlayTransformAbsolute(surface.glowOverlays[index],
+                vr::TrackingUniverseStanding, &glowTransform) != vr::VROverlayError_None) return false;
     }
     return true;
 }
@@ -489,6 +605,10 @@ void DesktopSurfaceRegistry::DestroySurfaceOverlays(Surface& surface) const {
     for (auto& frame : surface.frameOverlays) {
         if (frame != vr::k_ulOverlayHandleInvalid) vr::VROverlay()->DestroyOverlay(frame);
         frame = vr::k_ulOverlayHandleInvalid;
+    }
+    for (auto& glow : surface.glowOverlays) {
+        if (glow != vr::k_ulOverlayHandleInvalid) vr::VROverlay()->DestroyOverlay(glow);
+        glow = vr::k_ulOverlayHandleInvalid;
     }
     if (surface.overlay != vr::k_ulOverlayHandleInvalid) {
         vr::VROverlay()->DestroyOverlay(surface.overlay);
@@ -524,6 +644,7 @@ uint64_t DesktopSurfaceRegistry::SpawnPicker(const std::vector<DesktopSource>& s
         return 0;
     }
     for (const auto frame : surface.frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+    for (const auto glow : surface.glowOverlays) vr::VROverlay()->ShowOverlay(glow);
     surfaces_.push_back(std::move(surface));
     return surfaces_.back().id;
 }
@@ -569,6 +690,7 @@ uint64_t DesktopSurfaceRegistry::SpawnKeyboard() {
         return 0;
     }
     for (const auto frame : surface.frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+    for (const auto glow : surface.glowOverlays) vr::VROverlay()->ShowOverlay(glow);
     surfaces_.push_back(std::move(surface));
     return surfaces_.back().id;
 }
@@ -605,7 +727,8 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
 }
 
 std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
-        const vr::VROverlayIntersectionParams_t& ray) const {
+        const vr::VROverlayIntersectionParams_t& ray,
+        float edgeToleranceMeters) const {
     std::optional<KeyboardSurfaceHit> nearest;
     for (const auto& surface : surfaces_) {
         if (!surface.visible || !surface.keyboard) continue;
@@ -635,9 +758,10 @@ std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
         const auto localX = dot(localDelta, horizontal);
         const auto localY = dot(localDelta, vertical);
         const auto surfaceHeight = surface.widthMeters / surface.aspectRatio;
-        constexpr float kPointerGutterMeters = 0.035F;
-        if (std::abs(localX) > surface.widthMeters * 0.5F + kPointerGutterMeters
-            || std::abs(localY) > surfaceHeight * 0.5F + kPointerGutterMeters) continue;
+        if (localX < -surface.widthMeters * 0.5F - edgeToleranceMeters
+            || localX > surface.widthMeters * 0.5F + edgeToleranceMeters
+            || localY < -surfaceHeight * 0.5F - edgeToleranceMeters
+            || localY > surfaceHeight * 0.5F + edgeToleranceMeters) continue;
         const auto u = localX / surface.widthMeters + 0.5F;
         const auto v = localY / surfaceHeight + 0.5F;
         std::optional<size_t> keyIndex;
@@ -770,6 +894,8 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
         keyboard->keyboardControlled = false;
         keyboard->keyboardAltered = false;
     }
+    keyboard->pressedKey = *hit.keyIndex;
+    keyboard->keyFlashUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(115);
     std::wstring targetLabel;
     if (focusedSurfaceId_) {
         const auto target = std::find_if(surfaces_.begin(), surfaces_.end(),
@@ -778,7 +904,7 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
     }
     return keyboard->texture->RenderKeyboard(
         targetLabel, keyboard->keyboardShifted, keyboard->keyboardControlled,
-        keyboard->keyboardAltered, keyboard->hoveredKey);
+        keyboard->keyboardAltered, keyboard->hoveredKey, keyboard->pressedKey);
 }
 
 std::optional<vr::HmdMatrix34_t> DesktopSurfaceRegistry::CursorTransform(
@@ -841,13 +967,29 @@ void DesktopSurfaceRegistry::SetHoveredFrame(std::optional<uint64_t> id) {
                 return grab && grab->id == surface.id;
             });
         for (const auto frame : surface.frameOverlays) {
-            vr::VROverlay()->SetOverlayAlpha(frame, highlighted ? 1.0F : 0.78F);
+            vr::VROverlay()->SetOverlayAlpha(frame, 0.001F);
+        }
+        for (const auto glow : surface.glowOverlays) {
+            vr::VROverlay()->SetOverlayAlpha(glow, highlighted ? 0.42F : 0.0F);
         }
     }
 }
 
 void DesktopSurfaceRegistry::Update() {
     for (auto& surface : surfaces_) {
+        if (surface.keyboard && surface.pressedKey
+            && std::chrono::steady_clock::now() >= surface.keyFlashUntil) {
+            surface.pressedKey.reset();
+            std::wstring targetLabel;
+            if (focusedSurfaceId_) {
+                const auto target = std::find_if(surfaces_.begin(), surfaces_.end(),
+                    [this](const auto& candidate) { return candidate.id == *focusedSurfaceId_; });
+                if (target != surfaces_.end() && target->capture) targetLabel = target->label;
+            }
+            surface.texture->RenderKeyboard(targetLabel, surface.keyboardShifted,
+                surface.keyboardControlled, surface.keyboardAltered,
+                surface.hoveredKey, std::nullopt);
+        }
         if (!surface.capture) continue;
         const auto result = surface.capture->Update();
         if (result == DesktopCapture::UpdateResult::TextureChanged) {
@@ -897,6 +1039,7 @@ bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
     found->visible = vr::VROverlay()->ShowOverlay(found->overlay) == vr::VROverlayError_None;
     if (found->visible) {
         for (const auto frame : found->frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+        for (const auto glow : found->glowOverlays) vr::VROverlay()->ShowOverlay(glow);
     }
     return found->visible;
 }

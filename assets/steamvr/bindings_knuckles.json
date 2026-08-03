@@ -7,6 +7,16 @@
   "simulated_actions": [],
   "bindings": {
     "/actions/interfayce": {
+      "haptics": [
+        {
+          "output": "/actions/interfayce/out/left_haptic",
+          "path": "/user/hand/left/output/haptic"
+        },
+        {
+          "output": "/actions/interfayce/out/right_haptic",
+          "path": "/user/hand/right/output/haptic"
+        }
+      ],
       "sources": [
         {
           "path": "/user/hand/left/input/b",

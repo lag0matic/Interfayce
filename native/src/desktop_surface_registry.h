@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <array>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -52,7 +53,8 @@ public:
                 std::optional<size_t> hoveredSource = std::nullopt, size_t applicationPage = 0);
     bool RenderKeyboard(const std::wstring& targetLabel, bool shifted, bool controlled = false,
                         bool altered = false,
-                        std::optional<size_t> hoveredKey = std::nullopt);
+                        std::optional<size_t> hoveredKey = std::nullopt,
+                        std::optional<size_t> pressedKey = std::nullopt);
     vr::Texture_t Texture() const;
 
 private:
@@ -68,6 +70,8 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> mutedBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> cyanBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> violetBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> violetDimBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> activeFillBrush_;
     HANDLE sharedHandle_{};
 };
 
@@ -78,7 +82,8 @@ public:
     uint64_t SpawnKeyboard();
     std::optional<DesktopSurfaceHit> HitTest(const vr::VROverlayIntersectionParams_t& ray) const;
     std::optional<KeyboardSurfaceHit> KeyboardHitTest(
-        const vr::VROverlayIntersectionParams_t& ray) const;
+        const vr::VROverlayIntersectionParams_t& ray,
+        float edgeToleranceMeters = 0.008F) const;
     std::optional<uint64_t> FrameHitTest(const vr::VROverlayIntersectionParams_t& ray) const;
     bool ActivateHit(const DesktopSurfaceHit& hit);
     bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
@@ -109,6 +114,9 @@ private:
         std::array<vr::VROverlayHandle_t, 4> frameOverlays{
             vr::k_ulOverlayHandleInvalid, vr::k_ulOverlayHandleInvalid,
             vr::k_ulOverlayHandleInvalid, vr::k_ulOverlayHandleInvalid};
+        std::array<vr::VROverlayHandle_t, 4> glowOverlays{
+            vr::k_ulOverlayHandleInvalid, vr::k_ulOverlayHandleInvalid,
+            vr::k_ulOverlayHandleInvalid, vr::k_ulOverlayHandleInvalid};
         std::unique_ptr<DesktopPickerTexture> texture;
         std::unique_ptr<DesktopCapture> capture;
         std::vector<DesktopSource> sources;
@@ -120,6 +128,8 @@ private:
         bool keyboardControlled{};
         bool keyboardAltered{};
         std::optional<size_t> hoveredKey;
+        std::optional<size_t> pressedKey;
+        std::chrono::steady_clock::time_point keyFlashUntil{};
         float aspectRatio{1.6F};
         float widthMeters{0.92F};
         vr::HmdMatrix34_t transform{};

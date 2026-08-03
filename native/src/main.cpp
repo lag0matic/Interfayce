@@ -1,4 +1,7 @@
+#include <WinSock2.h>
+#include <WS2tcpip.h>
 #include <Windows.h>
+#include <TlHelp32.h>
 #include <openvr.h>
 
 #include "overlay_renderer.h"
@@ -27,6 +30,8 @@ constexpr char kRightUiClickActionPath[] = "/actions/interfayce/in/right_ui_clic
 constexpr char kLeftSurfaceGrabActionPath[] = "/actions/interfayce/in/left_surface_grab";
 constexpr char kRightSurfaceGrabActionPath[] = "/actions/interfayce/in/right_surface_grab";
 constexpr char kRightSurfaceScrollActionPath[] = "/actions/interfayce/in/right_surface_scroll";
+constexpr char kLeftHapticActionPath[] = "/actions/interfayce/out/left_haptic";
+constexpr char kRightHapticActionPath[] = "/actions/interfayce/out/right_haptic";
 constexpr char kWristOverlayKey[] = "com.lag0matic.interfayce.wrist.panel";
 constexpr char kCursorOverlayKey[] = "com.lag0matic.interfayce.wrist.cursor";
 constexpr char kLaserOverlayKey[] = "com.lag0matic.interfayce.pointer.laser";
@@ -44,6 +49,59 @@ struct Vector3 {
 
 std::filesystem::path ExecutableDirectory(char* executablePath) {
     return std::filesystem::absolute(executablePath).parent_path();
+}
+
+bool IsProcessRunning(std::wstring_view executableName) {
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    bool found = false;
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (_wcsicmp(entry.szExeFile, std::wstring(executableName).c_str()) == 0) {
+                found = true;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return found;
+}
+
+bool IsLocalTcpPortOpen(uint16_t port, std::chrono::milliseconds timeout) {
+    WSADATA winsock{};
+    if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return false;
+    const SOCKET socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socketHandle == INVALID_SOCKET) {
+        WSACleanup();
+        return false;
+    }
+    u_long nonBlocking = 1;
+    ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(port);
+    bool connected = connect(socketHandle, reinterpret_cast<sockaddr*>(&address),
+        sizeof(address)) == 0;
+    if (!connected && WSAGetLastError() == WSAEWOULDBLOCK) {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(socketHandle, &writable);
+        timeval wait{};
+        wait.tv_sec = static_cast<long>(timeout.count() / 1000);
+        wait.tv_usec = static_cast<long>((timeout.count() % 1000) * 1000);
+        if (select(0, nullptr, &writable, nullptr, &wait) > 0) {
+            int socketError = 0;
+            int length = sizeof(socketError);
+            connected = getsockopt(socketHandle, SOL_SOCKET, SO_ERROR,
+                reinterpret_cast<char*>(&socketError), &length) == 0 && socketError == 0;
+        }
+    }
+    closesocket(socketHandle);
+    WSACleanup();
+    return connected;
 }
 
 void LaunchSpotifyControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
@@ -458,6 +516,10 @@ int main(int argc, char** argv) {
     const auto projectRoot = directory.parent_path().parent_path().parent_path();
     const auto musicArtPath = projectRoot / "native" / "build" / "spotify-art.jpg";
     const auto actionManifest = directory / "assets" / "steamvr" / "actions.json";
+    bool slimeAvailable = IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
+    bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
+    std::cout << "startup capabilities: SlimeVR=" << (slimeAvailable ? "available" : "offline")
+              << " Spotify=" << (spotifyAvailable ? "running" : "offline") << '\n';
     vr::VRApplications()->IdentifyApplication(GetCurrentProcessId(), kAppKey);
     const auto actionError = vr::VRInput()->SetActionManifestPath(actionManifest.string().c_str());
     if (actionError != vr::VRInputError_None) {
@@ -478,6 +540,8 @@ int main(int argc, char** argv) {
     vr::VRActionHandle_t leftSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightSurfaceScrollAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t leftHapticAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t rightHapticAction = vr::k_ulInvalidActionHandle;
     const auto leftHandleError = vr::VRInput()->GetActionHandle(kLeftDragActionPath, &leftDragAction);
     const auto rightHandleError = vr::VRInput()->GetActionHandle(kRightDragActionPath, &rightDragAction);
     const auto leftUiClickError = vr::VRInput()->GetActionHandle(
@@ -490,8 +554,13 @@ int main(int argc, char** argv) {
         kRightSurfaceGrabActionPath, &rightSurfaceGrabAction);
     const auto rightSurfaceScrollError = vr::VRInput()->GetActionHandle(
         kRightSurfaceScrollActionPath, &rightSurfaceScrollAction);
+    const auto leftHapticError = vr::VRInput()->GetActionHandle(
+        kLeftHapticActionPath, &leftHapticAction);
+    const auto rightHapticError = vr::VRInput()->GetActionHandle(
+        kRightHapticActionPath, &rightHapticAction);
 
     interfayce::OverlayRenderer renderer;
+    renderer.SetSlimeAvailable(slimeAvailable);
     if (!rawPanel && !renderer.Initialize(system)) {
         std::cerr << "Could not initialize the Interfayce D3D11 panel texture.\n";
         vr::VR_Shutdown();
@@ -508,6 +577,8 @@ int main(int argc, char** argv) {
                 && leftSurfaceGrabError == vr::VRInputError_None
                 && rightSurfaceGrabError == vr::VRInputError_None
                 && rightSurfaceScrollError == vr::VRInputError_None
+                && leftHapticError == vr::VRInputError_None
+                && rightHapticError == vr::VRInputError_None
             ? 0
             : 1;
     }
@@ -727,6 +798,7 @@ int main(int argc, char** argv) {
     Vector3 previewOffset{};
     std::optional<vr::HmdMatrix34_t> temporaryBaseline;
     std::optional<vr::HmdMatrix34_t> sessionBaseline;
+    bool playspaceAdjusted = false;
     bool dragFaulted = false;
     int selectedDeck = 2;
     std::wstring musicLine;
@@ -746,8 +818,6 @@ int main(int argc, char** argv) {
     double verticalScrollRemainder = 0.0;
     double horizontalScrollRemainder = 0.0;
     auto lastScrollUpdate = std::chrono::steady_clock::now();
-    bool rightKeyboardPointerLatched = false;
-    std::optional<std::chrono::steady_clock::time_point> rightKeyboardExitStarted;
     auto* chaperone = vr::VRChaperoneSetup();
     const auto restoreBaseline = [&](std::optional<vr::HmdMatrix34_t>& baseline, const char* reason) {
         if (baseline) {
@@ -848,9 +918,12 @@ int main(int argc, char** argv) {
                 const auto y = (1.0F - panelHit.vUVs.v[1]) * 384.0F;
                 panelX = x;
                 panelY = y;
-                restoreButtonHit = x >= 42.0F && x <= 420.0F && y >= 276.0F && y <= 338.0F;
-                rigFullResetHit = selectedDeck == 3 && x >= 42.0F && x <= 350.0F && y >= 320.0F && y <= 366.0F;
-                rigMountResetHit = selectedDeck == 3 && x >= 414.0F && x <= 722.0F && y >= 320.0F && y <= 366.0F;
+                restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
+                    && x >= 68.0F && x <= 330.0F && y >= 154.0F && y <= 346.0F;
+                rigFullResetHit = slimeAvailable && selectedDeck == 3
+                    && x >= 42.0F && x <= 350.0F && y >= 320.0F && y <= 366.0F;
+                rigMountResetHit = slimeAvailable && selectedDeck == 3
+                    && x >= 414.0F && x <= 722.0F && y >= 320.0F && y <= 366.0F;
                 if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
                     desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
                     if (y >= 166.0F && y < 352.0F) {
@@ -890,24 +963,15 @@ int main(int argc, char** argv) {
             leftDesktopFrameHit = desktopSurfaces.FrameHitTest(leftRay);
             leftKeyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(leftRay);
         }
-        const auto pointerHandoffNow = std::chrono::steady_clock::now();
-        if (keyboardSurfaceHit) {
-            rightKeyboardPointerLatched = true;
-            rightKeyboardExitStarted.reset();
-        } else if (rightKeyboardPointerLatched) {
-            if (!rightKeyboardExitStarted) rightKeyboardExitStarted = pointerHandoffNow;
-            constexpr auto kKeyboardPointerHandoff = std::chrono::milliseconds(350);
-            if (pointerHandoffNow - *rightKeyboardExitStarted < kKeyboardPointerHandoff) {
-                desktopSurfaceHit.reset();
-            } else {
-                rightKeyboardPointerLatched = false;
-                rightKeyboardExitStarted.reset();
-            }
-        }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
         desktopSurfaces.SetHoveredKeyboard(
             keyboardSurfaceHit ? keyboardSurfaceHit : leftKeyboardSurfaceHit);
-        desktopSurfaces.SetHoveredFrame(desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit);
+        std::optional<uint64_t> highlightedSurface;
+        if (keyboardSurfaceHit) highlightedSurface = keyboardSurfaceHit->id;
+        else if (leftKeyboardSurfaceHit) highlightedSurface = leftKeyboardSurfaceHit->id;
+        else if (desktopSurfaceHit) highlightedSurface = desktopSurfaceHit->id;
+        else highlightedSurface = desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit;
+        desktopSurfaces.SetHoveredFrame(highlightedSurface);
         if (panelHitFound) {
             vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0035F);
             vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 11);
@@ -970,27 +1034,8 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(cursorOverlay);
         }
-        if ((panelHitFound || keyboardSurfaceHit || desktopSurfaceHit) && pointerRay && pointerTarget) {
-            if (const auto laserTransform = LaserTransform(
-                    system, pointerRay->source, *pointerTarget)) {
-                constexpr float kLaserTextureHeightToWidth = 256.0F;
-                const Vector3 sourceToTarget{
-                    pointerTarget->x - pointerRay->source.x,
-                    pointerTarget->y - pointerRay->source.y,
-                    pointerTarget->z - pointerRay->source.z,
-                };
-                const auto beamLength = (std::max)(VectorLength(sourceToTarget) - 0.025F, 0.01F);
-                vr::VROverlay()->SetOverlayWidthInMeters(
-                    laserOverlay, beamLength / kLaserTextureHeightToWidth);
-                vr::VROverlay()->SetOverlayTransformAbsolute(laserOverlay,
-                    vr::TrackingUniverseStanding, &*laserTransform);
-                vr::VROverlay()->ShowOverlay(laserOverlay);
-            } else {
-                vr::VROverlay()->HideOverlay(laserOverlay);
-            }
-        } else {
-            vr::VROverlay()->HideOverlay(laserOverlay);
-        }
+        // Surface dots provide sufficient aim feedback without a depth-changing beam.
+        vr::VROverlay()->HideOverlay(laserOverlay);
         if (leftKeyboardSurfaceHit) {
             if (const auto cursorTransform = desktopSurfaces.KeyboardCursorTransform(
                     *leftKeyboardSurfaceHit)) {
@@ -1006,27 +1051,7 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(leftCursorOverlay);
         }
-        if (leftKeyboardSurfaceHit && leftPointerRay && leftPointerTarget) {
-            if (const auto laserTransform = LaserTransform(
-                    system, leftPointerRay->source, *leftPointerTarget)) {
-                constexpr float kLaserTextureHeightToWidth = 256.0F;
-                const Vector3 sourceToTarget{
-                    leftPointerTarget->x - leftPointerRay->source.x,
-                    leftPointerTarget->y - leftPointerRay->source.y,
-                    leftPointerTarget->z - leftPointerRay->source.z,
-                };
-                const auto beamLength = (std::max)(VectorLength(sourceToTarget) - 0.025F, 0.01F);
-                vr::VROverlay()->SetOverlayWidthInMeters(
-                    leftLaserOverlay, beamLength / kLaserTextureHeightToWidth);
-                vr::VROverlay()->SetOverlayTransformAbsolute(leftLaserOverlay,
-                    vr::TrackingUniverseStanding, &*laserTransform);
-                vr::VROverlay()->ShowOverlay(leftLaserOverlay);
-            } else {
-                vr::VROverlay()->HideOverlay(leftLaserOverlay);
-            }
-        } else {
-            vr::VROverlay()->HideOverlay(leftLaserOverlay);
-        }
+        vr::VROverlay()->HideOverlay(leftLaserOverlay);
         if (leftSurfaceGrab.bChanged && leftSurfaceGrab.bState && leftDesktopFrameHit) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Left)) {
                 if (desktopSurfaces.BeginGrab(*leftDesktopFrameHit,
@@ -1062,10 +1087,18 @@ int main(int argc, char** argv) {
             desktopSurfaces.EndGrab(interfayce::DesktopGrabHand::Right);
         }
         if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit) {
-            desktopSurfaces.ActivateKeyboardHit(*leftKeyboardSurfaceHit);
+            if (desktopSurfaces.ActivateKeyboardHit(*leftKeyboardSurfaceHit)) {
+                vr::VRInput()->TriggerHapticVibrationAction(
+                    leftHapticAction, 0.0F, 0.035F, 115.0F, 0.22F,
+                    vr::k_ulInvalidInputValueHandle);
+            }
         }
         if (rightUiClick.bChanged && rightUiClick.bState && keyboardSurfaceHit && !panelHitFound) {
-            desktopSurfaces.ActivateKeyboardHit(*keyboardSurfaceHit);
+            if (desktopSurfaces.ActivateKeyboardHit(*keyboardSurfaceHit)) {
+                vr::VRInput()->TriggerHapticVibrationAction(
+                    rightHapticAction, 0.0F, 0.035F, 115.0F, 0.22F,
+                    vr::k_ulInvalidInputValueHandle);
+            }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
             if (desktopSurfaceHit->captured) {
                 if (desktopSurfaces.SendPointerEvent(*desktopSurfaceHit,
@@ -1083,8 +1116,13 @@ int main(int argc, char** argv) {
         } else if (rightUiClick.bChanged && rightUiClick.bState && panelHitFound && panelY <= 82.0F) {
             const int requestedDeck = panelX < 155.0F ? 0 : panelX < 315.0F ? 1 : panelX < 520.0F ? 2 : 3;
             if (requestedDeck == 0) {
-                musicLine = ReadSpotifyNowPlaying(projectRoot);
-                RefreshSpotifyArt(projectRoot, musicArtPath);
+                spotifyAvailable = IsProcessRunning(L"Spotify.exe");
+                if (spotifyAvailable) {
+                    musicLine = ReadSpotifyNowPlaying(projectRoot);
+                    RefreshSpotifyArt(projectRoot, musicArtPath);
+                } else {
+                    musicLine = L"Spotify is not running";
+                }
             }
             if (requestedDeck == 1) {
                 desktopPanel.showSurfaceList = false;
@@ -1093,20 +1131,33 @@ int main(int argc, char** argv) {
             }
             if (requestedDeck == 3) {
                 rigLine = ReadControllerBatteryLine(system);
-                const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
-                rigSlots = slimeStatus.slots;
-                mountReady = slimeStatus.mountReady;
+                if (slimeAvailable
+                    && !IsLocalTcpPortOpen(21110, std::chrono::milliseconds(100))) {
+                    slimeAvailable = false;
+                    renderer.SetSlimeAvailable(false);
+                }
+                if (slimeAvailable) {
+                    const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
+                    rigSlots = slimeStatus.slots;
+                    mountReady = slimeStatus.mountReady;
+                } else {
+                    rigSlots = {};
+                    mountReady = false;
+                }
             }
             if (requestedDeck != selectedDeck && renderer.Initialize(
                     system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
-                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    requestedDeck == 0 && !spotifyAvailable ? L"" : musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
                 selectedDeck = requestedDeck;
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && selectedDeck == 0
                    && panelY >= 272.0F && panelY <= 338.0F) {
-            if (panelX >= 70.0F && panelX <= 210.0F) {
+            if (!spotifyAvailable) {
+                // Controls remain inert while no Spotify media session can exist.
+            } else if (panelX >= 70.0F && panelX <= 210.0F) {
                 LaunchSpotifyControl(projectRoot, L"previous");
             } else if (panelX >= 314.0F && panelX <= 454.0F) {
                 LaunchSpotifyControl(projectRoot, L"toggle");
@@ -1219,6 +1270,18 @@ int main(int argc, char** argv) {
         }
         if (selectedDeck == 0 && std::chrono::steady_clock::now() >= nextMusicPoll) {
             nextMusicPoll = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            const bool spotifyRunningNow = IsProcessRunning(L"Spotify.exe");
+            if (!spotifyRunningNow) {
+                spotifyAvailable = false;
+                const std::wstring unavailable = L"Spotify is not running";
+                if (musicLine != unavailable && renderer.Initialize(system, selectedDeck,
+                        unavailable, L"", rigLine, rigSlots, mountReady, desktopPanel)) {
+                    musicLine = unavailable;
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else {
+            spotifyAvailable = true;
             const auto updatedMusicLine = ReadSpotifyNowPlaying(projectRoot);
             if (updatedMusicLine != musicLine && renderer.Initialize(system, selectedDeck, updatedMusicLine)) {
                 musicLine = updatedMusicLine;
@@ -1227,9 +1290,23 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
+            }
         }
-        if (selectedDeck == 3 && std::chrono::steady_clock::now() >= nextRigPoll) {
+        if (selectedDeck == 3 && slimeAvailable
+            && std::chrono::steady_clock::now() >= nextRigPoll) {
             nextRigPoll = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            if (!IsLocalTcpPortOpen(21110, std::chrono::milliseconds(100))) {
+                slimeAvailable = false;
+                renderer.SetSlimeAvailable(false);
+                rigSlots = {};
+                mountReady = false;
+                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        ReadControllerBatteryLine(system), rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+                continue;
+            }
             const auto updatedRigLine = ReadControllerBatteryLine(system);
             const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
             const auto updatedRigSlots = slimeStatus.slots;
@@ -1247,6 +1324,14 @@ int main(int argc, char** argv) {
             const auto heldFor = std::chrono::steady_clock::now() - restoreHoldStarted;
             if (restoreButtonHit && heldFor >= std::chrono::milliseconds(750)) {
                 restoreBaseline(sessionBaseline, "wrist restore control");
+                previewOffset = {};
+                playspaceAdjusted = false;
+                renderer.SetPlayspaceAdjusted(false);
+                if (selectedDeck == 2 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
             } else {
                 std::cout << "wrist restore cancelled: hold for 0.75 seconds\n";
             }
@@ -1316,6 +1401,17 @@ int main(int argc, char** argv) {
                 previewOffset.z += currentPosition->z - lastDragPosition->z;
             }
             lastDragPosition = currentPosition;
+            const bool adjustedNow = std::abs(previewOffset.x) > 0.002F
+                || std::abs(previewOffset.y) > 0.002F || std::abs(previewOffset.z) > 0.002F;
+            if (adjustedNow != playspaceAdjusted) {
+                playspaceAdjusted = adjustedNow;
+                renderer.SetPlayspaceAdjusted(playspaceAdjusted);
+                if (selectedDeck == 2 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
             if ((temporaryDrag || sessionDrag) && (temporaryBaseline || sessionBaseline)) {
                 constexpr float kMaximumTemporaryDragMeters = 2.0F;
                 if (std::abs(previewOffset.x) > kMaximumTemporaryDragMeters
@@ -1324,6 +1420,9 @@ int main(int argc, char** argv) {
                     std::cerr << "session drag cancelled: implausible offset\n";
                     restoreBaseline(temporaryBaseline, "temporary drag");
                     restoreBaseline(sessionBaseline, "session drag");
+                    previewOffset = {};
+                    playspaceAdjusted = false;
+                    renderer.SetPlayspaceAdjusted(false);
                     dragFaulted = true;
                 } else {
                     const auto& baseline = sessionDrag ? *sessionBaseline : *temporaryBaseline;
