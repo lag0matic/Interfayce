@@ -301,6 +301,27 @@ bool DesktopPickerTexture::Initialize(ID3D11Device* device, UINT width, UINT hei
 bool DesktopPickerTexture::Render(const std::vector<DesktopSource>& sources,
                                   std::optional<size_t> hoveredSource, size_t applicationPage) {
     if (!context_) return false;
+    const bool iconCacheMatches = iconSourceIds_.size() == sources.size()
+        && std::equal(iconSourceIds_.begin(), iconSourceIds_.end(), sources.begin(),
+            [](const std::wstring& id, const DesktopSource& source) { return id == source.id; });
+    if (!iconCacheMatches) {
+        iconSourceIds_.clear();
+        sourceIcons_.clear();
+        iconSourceIds_.reserve(sources.size());
+        sourceIcons_.reserve(sources.size());
+        const auto properties = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        for (const auto& source : sources) {
+            iconSourceIds_.push_back(source.id);
+            Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
+            if (source.kind == DesktopSource::Kind::Window
+                && source.iconBgra.size() == 32U * 32U * 4U) {
+                context_->CreateBitmap(D2D1::SizeU(32, 32), source.iconBgra.data(), 32U * 4U,
+                    &properties, &bitmap);
+            }
+            sourceIcons_.push_back(std::move(bitmap));
+        }
+    }
     const auto drawText = [&](std::wstring_view text, IDWriteTextFormat* format,
                               const D2D1_RECT_F& rectangle, ID2D1Brush* brush) {
         context_->DrawText(text.data(), static_cast<UINT32>(text.size()), format, rectangle, brush,
@@ -334,12 +355,20 @@ bool DesktopPickerTexture::Render(const std::vector<DesktopSource>& sources,
         context_->DrawRoundedRectangle(D2D1::RoundedRect(bounds, 8, 8),
             hovered ? cyanBrush_.Get() : violetDimBrush_.Get(), hovered ? 3.0F : 1.0F);
         const auto icon = D2D1::RectF(left + 18.0F, top + 20.0F, left + 54.0F, top + 45.0F);
-        context_->DrawRoundedRectangle(D2D1::RoundedRect(icon, 3, 3),
-            hovered ? cyanBrush_.Get() : violetBrush_.Get(), 2.0F);
+        bool drewApplicationIcon = false;
+        if (sourceIndex < sourceIcons_.size() && sourceIcons_[sourceIndex]) {
+                context_->DrawBitmap(sourceIcons_[sourceIndex].Get(),
+                    D2D1::RectF(left + 16.0F, top + 13.0F, left + 60.0F, top + 57.0F));
+                drewApplicationIcon = true;
+        }
+        if (!drewApplicationIcon) {
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(icon, 3, 3),
+                hovered ? cyanBrush_.Get() : violetBrush_.Get(), 2.0F);
+        }
         if (source.kind == DesktopSource::Kind::Display) {
             context_->DrawLine(D2D1::Point2F(left + 28.0F, top + 51.0F),
                 D2D1::Point2F(left + 44.0F, top + 51.0F), violetBrush_.Get(), 2.0F);
-        } else {
+        } else if (!drewApplicationIcon) {
             context_->DrawLine(D2D1::Point2F(left + 18.0F, top + 27.0F),
                 D2D1::Point2F(left + 54.0F, top + 27.0F),
                 hovered ? cyanBrush_.Get() : violetBrush_.Get(), 2.0F);
@@ -375,31 +404,48 @@ bool DesktopPickerTexture::Render(const std::vector<DesktopSource>& sources,
     drawText(applicationHeader, detailFormat_.Get(), D2D1::RectF(526.0F, 112.0F, 800.0F, 140.0F),
         violetBrush_.Get());
 
-    size_t displayRow = 0;
-    size_t applicationRow = 0;
-    size_t seenApplications = 0;
+    std::vector<size_t> displayIndices;
+    std::vector<size_t> applicationIndices;
     for (size_t index = 0; index < sources.size(); ++index) {
-        const auto& source = sources[index];
-        if (source.kind == DesktopSource::Kind::Display && displayRow < 5) {
-            drawSource(source, index, 34.0F,
-                148.0F + static_cast<float>(displayRow++) * 86.0F, 498.0F);
-        } else if (source.kind == DesktopSource::Kind::Window
-                   && seenApplications++ >= applicationPage * 5 && applicationRow < 5) {
-            drawSource(source, index, 526.0F,
-                148.0F + static_cast<float>(applicationRow++) * 86.0F, 990.0F);
-        }
+        if (sources[index].kind == DesktopSource::Kind::Display) displayIndices.push_back(index);
+        if (sources[index].kind == DesktopSource::Kind::Window) applicationIndices.push_back(index);
     }
-    if (displayRow == 0) drawText(L"No displays available", itemFormat_.Get(),
+    const auto displayRows = (std::min<size_t>)(5, displayIndices.size());
+    for (size_t row = 0; row < displayRows; ++row) {
+        const auto index = displayIndices[row];
+        drawSource(sources[index], index, 34.0F,
+            148.0F + static_cast<float>(row) * 86.0F, 498.0F);
+    }
+    const auto applicationStart = applicationPage * 5;
+    const auto applicationRows = applicationStart >= applicationIndices.size()
+        ? 0U : (std::min<size_t>)(5, applicationIndices.size() - applicationStart);
+    for (size_t row = 0; row < applicationRows; ++row) {
+        const auto index = applicationIndices[applicationStart + row];
+        drawSource(sources[index], index, 526.0F,
+            148.0F + static_cast<float>(row) * 86.0F, 990.0F);
+    }
+    if (displayRows == 0) drawText(L"No displays available", itemFormat_.Get(),
         D2D1::RectF(34.0F, 164.0F, 498.0F, 202.0F), mutedBrush_.Get());
-    if (applicationRow == 0) drawText(L"No eligible applications", itemFormat_.Get(),
+    if (applicationRows == 0) drawText(L"No eligible applications", itemFormat_.Get(),
         D2D1::RectF(526.0F, 164.0F, 990.0F, 202.0F), mutedBrush_.Get());
     if (applicationPages > 1) {
-        context_->DrawLine(D2D1::Point2F(866, 595), D2D1::Point2F(846, 608), cyanBrush_.Get(), 3.0F);
-        context_->DrawLine(D2D1::Point2F(846, 608), D2D1::Point2F(866, 621), cyanBrush_.Get(), 3.0F);
-        context_->DrawLine(D2D1::Point2F(950, 595), D2D1::Point2F(970, 608), cyanBrush_.Get(), 3.0F);
-        context_->DrawLine(D2D1::Point2F(970, 608), D2D1::Point2F(950, 621), cyanBrush_.Get(), 3.0F);
+        context_->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(820, 101, 900, 143), 7, 7), surfaceBrush_.Get());
+        context_->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(910, 101, 990, 143), 7, 7), surfaceBrush_.Get());
+        context_->DrawRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(820, 101, 900, 143), 7, 7), violetDimBrush_.Get(), 1.0F);
+        context_->DrawRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(910, 101, 990, 143), 7, 7), violetDimBrush_.Get(), 1.0F);
+        context_->DrawLine(D2D1::Point2F(870, 109), D2D1::Point2F(850, 122), cyanBrush_.Get(), 3.0F);
+        context_->DrawLine(D2D1::Point2F(850, 122), D2D1::Point2F(870, 135), cyanBrush_.Get(), 3.0F);
+        context_->DrawLine(D2D1::Point2F(940, 109), D2D1::Point2F(960, 122), cyanBrush_.Get(), 3.0F);
+        context_->DrawLine(D2D1::Point2F(960, 122), D2D1::Point2F(940, 135), cyanBrush_.Get(), 3.0F);
     }
-    return SUCCEEDED(context_->EndDraw());
+    const auto drawResult = context_->EndDraw();
+    if (FAILED(drawResult)) return false;
+    context_->Flush();
+    return true;
 }
 
 bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool shifted,
@@ -625,6 +671,16 @@ uint64_t DesktopSurfaceRegistry::SpawnPicker(const std::vector<DesktopSource>& s
     surface.sources = sources;
     surface.texture = std::make_unique<DesktopPickerTexture>();
     if (!surface.texture->Initialize(device_) || !surface.texture->Render(sources)) return 0;
+    const auto applicationCount = static_cast<size_t>(std::count_if(sources.begin(), sources.end(),
+        [](const auto& source) { return source.kind == DesktopSource::Kind::Window; }));
+    const auto pageCount = (std::max<size_t>)(1, (applicationCount + 4) / 5);
+    for (size_t page = 1; page < pageCount; ++page) {
+        auto pageTexture = std::make_unique<DesktopPickerTexture>();
+        if (!pageTexture->Initialize(device_) || !pageTexture->Render(sources, std::nullopt, page)) {
+            return 0;
+        }
+        surface.additionalPickerPages.push_back(std::move(pageTexture));
+    }
     vr::VROverlayHandle_t staleOverlay = vr::k_ulOverlayHandleInvalid;
     if (vr::VROverlay()->FindOverlay(surface.overlayKey.c_str(), &staleOverlay)
         == vr::VROverlayError_None) {
@@ -716,9 +772,9 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
                 surface.sources.end(), [](const auto& source) {
                     return source.kind == DesktopSource::Kind::Window;
                 }));
-            if (!hit.sourceIndex && applicationCount > 5 && y >= 580.0F && y <= 632.0F) {
+            if (!hit.sourceIndex && applicationCount > 5 && y >= 96.0F && y <= 148.0F) {
                 if (x >= 820.0F && x <= 900.0F) hit.pageDelta = -1;
-                if (x >= 920.0F && x <= 1000.0F) hit.pageDelta = 1;
+                if (x >= 910.0F && x <= 990.0F) hit.pageDelta = 1;
             }
         }
         if (!nearest || hit.distance < nearest->distance) nearest = hit;
@@ -848,17 +904,31 @@ bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [&hit](const auto& surface) { return surface.id == hit.id; });
     if (found == surfaces_.end() || found->capture) return false;
-    if (hit.pageDelta != 0) {
+    const auto hitX = hit.u * static_cast<float>(kPickerWidth);
+    const auto hitY = (1.0F - hit.v) * static_cast<float>(kPickerHeight);
+    int pageDelta = hit.pageDelta;
+    if (pageDelta == 0 && hitY >= 90.0F && hitY <= 154.0F) {
+        if (hitX >= 805.0F && hitX <= 905.0F) pageDelta = -1;
+        if (hitX >= 905.0F && hitX <= 1005.0F) pageDelta = 1;
+    }
+    if (pageDelta != 0) {
         const auto applicationCount = static_cast<size_t>(std::count_if(found->sources.begin(),
             found->sources.end(), [](const auto& source) {
                 return source.kind == DesktopSource::Kind::Window;
             }));
         const auto pageCount = (std::max<size_t>)(1, (applicationCount + 4) / 5);
         const auto current = static_cast<int>(found->applicationPage);
-        found->applicationPage = static_cast<size_t>((current + hit.pageDelta
+        found->applicationPage = static_cast<size_t>((current + pageDelta
             + static_cast<int>(pageCount)) % static_cast<int>(pageCount));
         found->hoveredSource.reset();
-        return found->texture->Render(found->sources, std::nullopt, found->applicationPage);
+        const auto* selectedTexture = found->applicationPage == 0
+            ? found->texture.get()
+            : found->applicationPage - 1 < found->additionalPickerPages.size()
+                ? found->additionalPickerPages[found->applicationPage - 1].get() : nullptr;
+        if (selectedTexture == nullptr) return false;
+        const auto pickerTexture = selectedTexture->Texture();
+        return vr::VROverlay()->SetOverlayTexture(found->overlay, &pickerTexture)
+            == vr::VROverlayError_None;
     }
     if (!hit.sourceIndex || *hit.sourceIndex >= found->sources.size()) return false;
     auto capture = std::make_unique<DesktopCapture>();
@@ -993,9 +1063,12 @@ void DesktopSurfaceRegistry::SetHoveredHit(const std::optional<DesktopSurfaceHit
     for (auto& surface : surfaces_) {
         if (surface.capture) continue;
         const auto nextHover = hit && hit->id == surface.id ? hit->sourceIndex : std::nullopt;
-        if (nextHover == surface.hoveredSource) continue;
+        // The picker is a compositor-shared texture. Clearing and repainting it
+        // for every tiny ray transition lets SteamVR occasionally sample the
+        // cleared frame, which presents as the whole application list blinking.
+        // Keep hover as hit-test state only; the controller dot is the stable
+        // visual indicator, and the texture changes only for real content/page updates.
         surface.hoveredSource = nextHover;
-        surface.texture->Render(surface.sources, surface.hoveredSource, surface.applicationPage);
     }
 }
 
@@ -1052,6 +1125,7 @@ void DesktopSurfaceRegistry::Update() {
             if (focusedSurfaceId_ && *focusedSurfaceId_ == surface.id) focusedSurfaceId_.reset();
             surface.assignedSource.reset();
             surface.label = L"Choose source";
+            surface.applicationPage = 0;
             surface.aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
             surface.texture->Render(surface.sources);
             const auto texture = surface.texture->Texture();
@@ -1090,6 +1164,51 @@ bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
         for (const auto glow : found->glowOverlays) vr::VROverlay()->ShowOverlay(glow);
     }
     return found->visible;
+}
+
+bool DesktopSurfaceRegistry::ReturnToPicker(
+        uint64_t id, const std::vector<DesktopSource>& sources) {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [id](const auto& surface) { return surface.id == id; });
+    if (found == surfaces_.end() || found->keyboard) return false;
+    for (auto& grab : activeGrabs_) {
+        if (grab && grab->id == id) grab.reset();
+    }
+    if (activeScale_ && activeScale_->id == id) activeScale_.reset();
+    if (found->capture) found->capture->Stop();
+    found->capture.reset();
+    found->sources = sources;
+    found->assignedSource.reset();
+    found->hoveredSource.reset();
+    found->applicationPage = 0;
+    found->label = L"Choose source";
+    found->aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
+    if (focusedSurfaceId_ && *focusedSurfaceId_ == id) {
+        focusedSurfaceId_.reset();
+        for (auto& surface : surfaces_) {
+            if (surface.keyboard) {
+                surface.texture->RenderKeyboard(L"", surface.keyboardShifted,
+                    surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
+            }
+        }
+    }
+    if (!found->texture->Render(found->sources)) return false;
+    found->additionalPickerPages.clear();
+    const auto applicationCount = static_cast<size_t>(std::count_if(
+        found->sources.begin(), found->sources.end(), [](const auto& source) {
+            return source.kind == DesktopSource::Kind::Window;
+        }));
+    const auto pageCount = (std::max<size_t>)(1, (applicationCount + 4) / 5);
+    for (size_t page = 1; page < pageCount; ++page) {
+        auto pageTexture = std::make_unique<DesktopPickerTexture>();
+        if (!pageTexture->Initialize(device_)
+            || !pageTexture->Render(found->sources, std::nullopt, page)) return false;
+        found->additionalPickerPages.push_back(std::move(pageTexture));
+    }
+    const auto texture = found->texture->Texture();
+    if (vr::VROverlay()->SetOverlayTexture(found->overlay, &texture)
+        != vr::VROverlayError_None) return false;
+    return UpdateFrameOverlays(*found);
 }
 
 bool DesktopSurfaceRegistry::Close(uint64_t id) {
@@ -1201,7 +1320,8 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
     std::vector<DesktopSurfaceSummary> summaries;
     summaries.reserve(surfaces_.size());
     for (const auto& surface : surfaces_) {
-        summaries.push_back({surface.id, surface.label, surface.visible});
+        summaries.push_back({surface.id, surface.label, surface.visible,
+            !surface.keyboard && surface.capture != nullptr});
     }
     return summaries;
 }

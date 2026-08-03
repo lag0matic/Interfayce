@@ -31,7 +31,7 @@ add_executable(InterfayceOverlay
     src/overlay_renderer.cpp
 )
 target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
-target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi windowsapp windowscodecs ws2_32)
+target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32)
 
 set(INTERFAYCE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)

@@ -23,6 +23,7 @@ struct DesktopSurfaceSummary {
     uint64_t id{};
     std::wstring label;
     bool visible{};
+    bool reusable{};
 };
 
 struct DesktopSurfaceHit {
@@ -72,6 +73,8 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> violetBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> violetDimBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> activeFillBrush_;
+    std::vector<std::wstring> iconSourceIds_;
+    std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap>> sourceIcons_;
     HANDLE sharedHandle_{};
 };
 
@@ -101,6 +104,7 @@ public:
     void SetHoveredFrame(std::optional<uint64_t> id);
     void Update();
     bool BringToMe(uint64_t id);
+    bool ReturnToPicker(uint64_t id, const std::vector<DesktopSource>& sources);
     bool Close(uint64_t id);
     bool BeginGrab(uint64_t id, DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
     bool UpdateGrab(DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
@@ -121,6 +125,7 @@ private:
             vr::k_ulOverlayHandleInvalid, vr::k_ulOverlayHandleInvalid,
             vr::k_ulOverlayHandleInvalid, vr::k_ulOverlayHandleInvalid};
         std::unique_ptr<DesktopPickerTexture> texture;
+        std::vector<std::unique_ptr<DesktopPickerTexture>> additionalPickerPages;
         std::unique_ptr<DesktopCapture> capture;
         std::vector<DesktopSource> sources;
         std::optional<size_t> assignedSource;

@@ -432,6 +432,49 @@ vr::HmdMatrix34_t MultiplyTransforms(const vr::HmdMatrix34_t& left, const vr::Hm
     return result;
 }
 
+struct WristPresentation {
+    float gaze{};
+    float facing{};
+    float distance{};
+};
+
+std::optional<WristPresentation> ReadWristPresentation(
+        vr::IVRSystem* system, const vr::HmdMatrix34_t& wristTransform) {
+    const auto leftController = system->GetTrackedDeviceIndexForControllerRole(
+        vr::TrackedControllerRole_LeftHand);
+    if (leftController == vr::k_unTrackedDeviceIndexInvalid) return std::nullopt;
+    std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
+    system->GetDeviceToAbsoluteTrackingPose(
+        vr::TrackingUniverseStanding, 0.0F, poses.data(), static_cast<uint32_t>(poses.size()));
+    const auto& hmd = poses[vr::k_unTrackedDeviceIndex_Hmd];
+    const auto& hand = poses[leftController];
+    if (!hmd.bPoseIsValid || !hand.bPoseIsValid
+        || hmd.eTrackingResult != vr::TrackingResult_Running_OK
+        || hand.eTrackingResult != vr::TrackingResult_Running_OK) {
+        return std::nullopt;
+    }
+    const auto panel = MultiplyTransforms(hand.mDeviceToAbsoluteTracking, wristTransform);
+    const Vector3 hmdPosition{hmd.mDeviceToAbsoluteTracking.m[0][3],
+        hmd.mDeviceToAbsoluteTracking.m[1][3], hmd.mDeviceToAbsoluteTracking.m[2][3]};
+    const Vector3 panelPosition{panel.m[0][3], panel.m[1][3], panel.m[2][3]};
+    Vector3 hmdToPanel{panelPosition.x - hmdPosition.x,
+        panelPosition.y - hmdPosition.y, panelPosition.z - hmdPosition.z};
+    const float distance = std::sqrt(hmdToPanel.x * hmdToPanel.x
+        + hmdToPanel.y * hmdToPanel.y + hmdToPanel.z * hmdToPanel.z);
+    if (distance < 0.001F) return std::nullopt;
+    hmdToPanel.x /= distance;
+    hmdToPanel.y /= distance;
+    hmdToPanel.z /= distance;
+    const Vector3 hmdForward{-hmd.mDeviceToAbsoluteTracking.m[0][2],
+        -hmd.mDeviceToAbsoluteTracking.m[1][2], -hmd.mDeviceToAbsoluteTracking.m[2][2]};
+    const Vector3 panelNormal{panel.m[0][2], panel.m[1][2], panel.m[2][2]};
+    const float gaze = hmdForward.x * hmdToPanel.x + hmdForward.y * hmdToPanel.y
+        + hmdForward.z * hmdToPanel.z;
+    const float facing = std::abs(panelNormal.x * hmdToPanel.x
+        + panelNormal.y * hmdToPanel.y + panelNormal.z * hmdToPanel.z);
+    return WristPresentation{gaze, facing, distance};
+}
+
 struct PointerRay {
     Vector3 source;
     Vector3 direction;
@@ -698,6 +741,7 @@ int main(int argc, char** argv) {
     // uses its own action-driven controller ray so the panel works in-world.
     vr::VROverlay()->SetOverlayInputMethod(wristOverlay, vr::VROverlayInputMethod_None);
     vr::VROverlay()->SetOverlaySortOrder(wristOverlay, 10);
+    vr::VROverlay()->SetOverlayAlpha(wristOverlay, rawPanel || headsetPanel ? 1.0F : 0.0F);
     if (vr::VROverlay()->CreateOverlay(kCursorOverlayKey, "Interfayce wrist cursor", &cursorOverlay)
         != vr::VROverlayError_None) {
         std::cerr << "Could not create Interfayce wrist cursor overlay.\n";
@@ -860,6 +904,9 @@ int main(int argc, char** argv) {
     double verticalScrollRemainder = 0.0;
     double horizontalScrollRemainder = 0.0;
     auto lastScrollUpdate = std::chrono::steady_clock::now();
+    float wristAlpha = rawPanel || headsetPanel ? 1.0F : 0.0F;
+    bool wristPresented = rawPanel || headsetPanel;
+    auto lastWristFadeUpdate = std::chrono::steady_clock::now();
     auto* chaperone = vr::VRChaperoneSetup();
     const auto restoreBaseline = [&](std::optional<vr::HmdMatrix34_t>& baseline, const char* reason) {
         if (baseline) {
@@ -877,6 +924,30 @@ int main(int argc, char** argv) {
         }
         if (!wristAttached) {
             wristAttached = attachWristOverlay();
+        }
+        const auto wristFadeNow = std::chrono::steady_clock::now();
+        const float wristFadeSeconds = static_cast<float>((std::min)(
+            std::chrono::duration<double>(wristFadeNow - lastWristFadeUpdate).count(), 0.05));
+        lastWristFadeUpdate = wristFadeNow;
+        if (!rawPanel && !headsetPanel) {
+            if (const auto presentation = ReadWristPresentation(system, wristTransform)) {
+                if (wristPresented) {
+                    wristPresented = presentation->gaze >= 0.68F
+                        && presentation->facing >= 0.28F && presentation->distance <= 1.20F;
+                } else {
+                    wristPresented = presentation->gaze >= 0.80F
+                        && presentation->facing >= 0.48F && presentation->distance <= 1.00F;
+                }
+            } else {
+                wristPresented = false;
+            }
+            const float targetAlpha = wristPresented ? 1.0F : 0.0F;
+            const float fadeDuration = wristPresented ? 0.16F : 0.30F;
+            const float fadeStep = wristFadeSeconds / fadeDuration;
+            wristAlpha = targetAlpha > wristAlpha
+                ? (std::min)(targetAlpha, wristAlpha + fadeStep)
+                : (std::max)(targetAlpha, wristAlpha - fadeStep);
+            vr::VROverlay()->SetOverlayAlpha(wristOverlay, wristAlpha);
         }
         vr::VRActiveActionSet_t activeSet{};
         activeSet.ulActionSet = actionSet;
@@ -943,6 +1014,7 @@ int main(int argc, char** argv) {
         bool ttsMuteHit = false;
         bool ttsVolumeUpHit = false;
         std::optional<size_t> desktopBringIndex;
+        std::optional<size_t> desktopReuseIndex;
         std::optional<size_t> desktopCloseIndex;
         std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
         std::optional<interfayce::KeyboardSurfaceHit> keyboardSurfaceHit;
@@ -959,7 +1031,8 @@ int main(int argc, char** argv) {
             ray.eOrigin = vr::TrackingUniverseStanding;
             ray.vSource = {{pointerRay->source.x, pointerRay->source.y, pointerRay->source.z}};
             ray.vDirection = {{pointerRay->direction.x, pointerRay->direction.y, pointerRay->direction.z}};
-            if (vr::VROverlay()->ComputeOverlayIntersection(wristOverlay, &ray, &panelHit)) {
+            if (wristAlpha >= 0.30F
+                && vr::VROverlay()->ComputeOverlayIntersection(wristOverlay, &ray, &panelHit)) {
                 panelHitFound = true;
                 const auto x = panelHit.vUVs.v[0] * 768.0F;
                 const auto y = (1.0F - panelHit.vUVs.v[1]) * 384.0F;
@@ -988,8 +1061,10 @@ int main(int argc, char** argv) {
                     if (y >= 166.0F && y < 352.0F) {
                         const auto row = static_cast<size_t>((y - 166.0F) / 62.0F);
                         if (row < desktopPanel.surfaces.size() && row < 3) {
-                            if (x >= 530.0F && x <= 616.0F) desktopBringIndex = row;
-                            if (x >= 630.0F && x <= 712.0F) desktopCloseIndex = row;
+                            if (x >= 492.0F && x <= 558.0F
+                                && desktopPanel.surfaces[row].reusable) desktopReuseIndex = row;
+                            if (x >= 566.0F && x <= 632.0F) desktopBringIndex = row;
+                            if (x >= 640.0F && x <= 712.0F) desktopCloseIndex = row;
                         }
                     }
                 } else {
@@ -1058,7 +1133,9 @@ int main(int argc, char** argv) {
                     cursorOverlay, leftController, &cursorTransform);
                 const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
                     || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
-                    || desktopListBackHit || desktopBringIndex.has_value() || desktopCloseIndex.has_value()
+                    || desktopListBackHit || desktopBringIndex.has_value()
+                    || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
+                    || musicMicHit || commsMicHit || commsClearHit
                     || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit;
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
                     actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
@@ -1345,6 +1422,17 @@ int main(int argc, char** argv) {
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopBringIndex) {
             desktopSurfaces.BringToMe(desktopPanel.surfaces[*desktopBringIndex].id);
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopReuseIndex) {
+            const auto sources = desktopSourceManager.EnumerateSources();
+            desktopSurfaces.ReturnToPicker(
+                desktopPanel.surfaces[*desktopReuseIndex].id, sources);
+            desktopPanel.surfaces = desktopSurfaces.Summaries();
+            desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+            if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopCloseIndex) {
             desktopSurfaces.Close(desktopPanel.surfaces[*desktopCloseIndex].id);
             desktopPanel.surfaces = desktopSurfaces.Summaries();

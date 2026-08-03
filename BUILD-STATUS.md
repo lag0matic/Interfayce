@@ -52,7 +52,9 @@ The independent keyboard:
 - Comms is a deliberately separate wrist deck with one continuous-dictation mic toggle and one clear-chatbox control. Each completed local Parakeet phrase is sent immediately through VRChat OSC, while the latest transcript and capture state remain visible on the wrist.
 - Comms and Music share an explicit capture lock, so dictation can never be mistaken for a Spotify command or steal an already-active microphone session. Chatbox messages are bounded to VRChat's 144-character limit.
 - Selected desktop and keyboard surfaces use subtle violet backlight rather than thick grab bars. Their functional grab regions are visually quiet.
-- The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`.
+- The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`. A gaze-and-presentation gate now gives it a fast fade-in, slower fade-out, and hysteresis so it disappears out of view without flickering or stealing hidden clicks.
+- Desktop source pickers show native Windows application icons. Their application pages are pre-rendered and switched as persistent GPU textures, avoiding shared-texture hover flicker and runtime page blanks.
+- Current Windows rows include a reuse action that stops only Interfayce's capture and returns the existing VR surface to a freshly populated picker while preserving its session position and size.
 
 ## Startup capability gates
 
@@ -85,7 +87,7 @@ The independent keyboard:
 - Native Release build succeeds with SteamVR stopped.
 - `--service-status` is the intended offline capability smoke test.
 - Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
-- Picker selection, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, and wrist recovery controls have passed live VR testing.
+- Picker selection and paging, application icons, surface reuse, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, wrist recovery controls, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
 - Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.
 - Python proof-of-concept suite: 55 passing checks.

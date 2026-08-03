@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@ struct DesktopSource {
     std::wstring id;
     std::wstring label;
     std::wstring detail;
+    std::vector<uint8_t> iconBgra;
     HWND window{};
     HMONITOR monitor{};
 };

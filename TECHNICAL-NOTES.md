@@ -48,6 +48,8 @@ Interaction is intentionally geometric rather than magnetic. Each hand casts its
 
 Use deliberate Index force-grip thresholds for movement so resting fingers do not grab surfaces while typing. One-hand grip preserves the grab offset; two-hand grip scales around the controller midpoint. Keyboard and captured surfaces use the same session-only placement model. Position and size persistence is explicitly unwanted because the useful layout changes between sessions.
 
+Application picker rows use icons extracted from the owning Windows executable. Picker content is immutable while aiming—the controller dot supplies hover feedback—because repainting a compositor-shared texture for every ray transition produced visible cleared frames. Multi-page application lists are pre-rendered into persistent picker textures and page turns switch handles, rather than repainting or allocating at click time. A captured surface can be returned to a freshly inventoried picker without moving/resizing it or closing its source application.
+
 At host startup, capability checks must be bounded and native. SlimeVR is probed once at `127.0.0.1:21110`; if absent, its trackers and reset controls stay unavailable for the play session. Spotify presence is read from the process list before invoking any slower media helper. The `--service-status` diagnostic performs these checks without initializing SteamVR.
 
 ## Wrist cockpit and utility deck
@@ -74,6 +76,8 @@ Keep the panel hidden/sleeping until both are plausibly true:
 2. the panel's facing direction is inside a comfortable HMD gaze cone.
 
 Use different show/hide thresholds plus a brief fade (rather than a single threshold) so normal hand motion does not cause popping. Once hidden, stop submitting texture changes unless the selected deck's state becomes dirty. The visibility gate is presentation-only: controller action polling and safe playspace movement must remain available regardless of whether the panel is visible.
+
+The implemented first pass combines HMD gaze alignment, panel facing, and distance with separate enter/exit thresholds. It fades in quickly and out more slowly; wrist hit testing is disabled once the panel is mostly transparent. Live testing found the behavior natural without changing the fitted `InnerLeftWristTransform()`.
 
 ### Battery time remaining
 
