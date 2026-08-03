@@ -25,7 +25,7 @@ SteamVR/OpenVR is the first practical target. An adapter boundary keeps Linux/Op
 
 The first SteamVR adapter uses OpenVR's left/right controller roles and the `Prop_DeviceBatteryPercentage_Float` / `Prop_DeviceIsCharging_Bool` properties. It feeds the Index controller readings into the same rig battery model as SlimeVR, but remains separate from the eventual native overlay/playspace implementation.
 
-Before any transform write, Interfayce reads and snapshots SteamVR's working standing-origin matrix through `VRChaperoneSetup`. That immutable session baseline is the prerequisite for safe drag, undo, floor adjustments, and restore-session-baseline behavior.
+Before any transform write, Interfayce reads and snapshots SteamVR's working standing-origin matrix through `VRChaperoneSetup`. That immutable session baseline is the prerequisite for safe drag and restore-session-baseline behavior.
 
 ## Resource budget
 
@@ -130,38 +130,17 @@ OVRAS's good feel comes from a few concrete mechanics, verified against its curr
 - Each live movement writes only the SteamVR **working** standing origin and calls `ShowWorkingSetPreview`; it does not commit the working copy every frame.
 - OVRAS has optional frame skipping for comfort, gravity, collision-bound handling, profiles, and turn mechanics. Those are not required for Interfayce's first drag implementation.
 
-Interfayce's first native drag should therefore use the same rising-edge/per-frame-delta model, a valid-pose guard, a much tighter personal hard bound, working-set preview while held, one explicit commit on release, plus session-baseline restore and undo. Keep the native transform path entirely separate from the eventual wrist UI.
+Interfayce's native drag uses the same rising-edge/per-frame-delta model, a valid-pose guard, a tight personal hard bound, and working-set preview while held. Release keeps the temporary working transform for the Interfayce session; it never commits SteamVR's working copy. Keep the native transform path entirely separate from the wrist UI.
 
 The wrist utility deck will include a hold-to-confirm **Restore session baseline** control. It calls the same exact-baseline restore path used when Interfayce exits. It must not use HMD position, "recenter", or any inferred transform; the only safe default is the immutable session baseline captured before Interfayce moved anything.
 
 The project now includes a minimal, unregistered Index action manifest and default binding under `assets/steamvr/`. It maps only B-button `double` to left/right drag actions and deliberately leaves a normal B click alone. Registering an app/action manifest with SteamVR and opening a binding test is a separate, user-visible step; do not do that silently.
 
-### Floor reset: keep the good part, improve the fragile part
+### No floor or HMD recenter controls
 
-OVRAS's floor fix is a small measurement workflow:
+Floor calibration and recentering are explicitly out of scope. Interfayce treats SteamVR's persisted room setup as truth and must never replace it with a center inferred from the headset. The Playspace control restores the exact immutable transform captured at Interfayce startup; it is not a generic recenter or factory reset.
 
-1. Put a controller on the floor and start the operation.
-2. Validate that both controllers are tracked; use the lower one as reference.
-3. Sample 25 frames to settle orientation/pose noise.
-4. Apply a Y-axis origin correction; its separate "recenter" variation also applies X/Z.
-5. Offer undo, then reset transient offsets.
-
-For Index controllers, OVRAS applies fixed hardware/orientation correction values. Interfayce should keep the validation, multi-frame sampling, explicit success/failure feedback, and undo—but derive or calibrate any Beyond/Index-specific correction from David's actual setup rather than inheriting magic constants.
-
-Initial Interfayce floor-control scope:
-
-- **Set floor:** controller-on-floor, stable multi-frame measurement, Y only.
-- **Set floor + center:** same measurement plus X/Z recentering.
-- **Undo last floor operation:** one clearly available reversal.
-- **Restore session baseline:** guarded escape hatch for a bad experiment.
-
-Defer chaperone-profile editing, gravity, redirected walking, and automatic boundary behaviors until the core transforms are proven reliable.
-
-### David's initial Index floor-reference calibration
-
-Use the right or left Index controller placed **controls-up** as the canonical floor pose, matching David's existing habit. Live read-only samples on 2026-08-02 were stable to 0.1 mm across 25 frames. The tracked controller origin was approximately **3.7 cm below** the standing-floor plane in the controls-up pose; the back-down pose was approximately 4.5 cm below it. The 8 mm orientation difference is real but small.
-
-This is a personal calibration reference, not a universal Index magic constant. The actual floor operation must re-sample, require a stable pose, show a preview, and offer a single-operation undo before committing any SteamVR origin change.
+Session drag writes only the temporary working standing-origin transform and never calls `CommitWorkingCopy`. Normal shutdown restores the startup snapshot. If the process crashes before restoration, restarting SteamVR remains the reliable recovery path because Interfayce has not overwritten the persisted room configuration. A small watchdog may later improve crash recovery without broadening transform authority.
 
 ## SlimeVR
 

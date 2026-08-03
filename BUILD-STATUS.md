@@ -20,6 +20,7 @@ Live-tested behavior:
 - Selecting a source converts that picker into a live Windows Graphics Capture surface.
 - Trigger input forwards pointer movement and primary clicks to captured content.
 - The aiming guide is a small surface dot only. The old laser overlays and beam math have been removed because the beams gave misleading depth cues between nearby surfaces.
+- The left controller now receives its own violet aim dot across desktop content and the narrow grab edge, without gaining desktop mouse-click authority.
 - Either controller can grab a surface using deliberate Index force-grip input. One hand moves it; both hands stretch or compact it around their midpoint.
 - The wrist list can bring a lost surface back or close its Interfayce overlay without closing the underlying application.
 - Right-thumbstick scrolling forwards vertical and horizontal wheel input when VRChat does not consume that axis.
@@ -39,6 +40,7 @@ The independent keyboard:
 
 - The chosen direction is **Orbital Utility**: smoked transparent panels, violet structure, cyan reserved for active state, icons before text, and restrained glow.
 - Music uses circular icon controls and a compact playback activity meter.
+- Music is the startup deck. Its media-session query refreshes asynchronously so helper startup cannot block wrist interaction; the last known state remains visible while it refreshes.
 - Playspace shows only baseline/adjusted session state and an abstract origin-reset glyph.
 - Selected desktop and keyboard surfaces use subtle violet backlight rather than thick grab bars. Their functional grab regions are visually quiet.
 - The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`.
@@ -57,6 +59,7 @@ The independent keyboard:
 - `OverlayRenderer` retains one D3D11/DXGI shared texture and repaints it in place. Do not recreate GPU devices or overlay textures for ordinary panel updates.
 - Keep `InnerLeftWristTransform()` unchanged unless David explicitly starts another live fitting pass.
 - Right trigger is UI click. Index B double-tap/hold is playspace drag only.
+- Playspace movement may write only SteamVR's temporary working standing origin. Reset and normal shutdown restore the immutable startup snapshot; never call `CommitWorkingCopy`, infer a center from the HMD, or add floor/recenter controls without an explicit new decision.
 - Closing a VR desktop surface must never close its source application.
 - Do not reintroduce a magnetic target halo, timed surface handoff, or visual laser without a new live interaction reason.
 - SlimeVR Node adapters are development-only and currently rely on a temporary reference checkout; vendor and version-pin the SolarXR protocol before packaging.

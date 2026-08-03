@@ -726,6 +726,54 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
     return nearest;
 }
 
+std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::SurfaceAimHitTest(
+        const vr::VROverlayIntersectionParams_t& ray,
+        float edgeToleranceMeters) const {
+    std::optional<DesktopSurfaceHit> nearest;
+    const auto dot = [](const vr::HmdVector3_t& left, const vr::HmdVector3_t& right) {
+        return left.v[0] * right.v[0] + left.v[1] * right.v[1] + left.v[2] * right.v[2];
+    };
+    for (const auto& surface : surfaces_) {
+        if (!surface.visible || surface.keyboard) continue;
+        const vr::HmdVector3_t source = ray.vSource;
+        const vr::HmdVector3_t direction = ray.vDirection;
+        const vr::HmdVector3_t center = Translation(surface.transform);
+        const vr::HmdVector3_t normal{{surface.transform.m[0][2], surface.transform.m[1][2],
+            surface.transform.m[2][2]}};
+        const auto denominator = dot(direction, normal);
+        if (std::abs(denominator) < 0.0001F) continue;
+        const vr::HmdVector3_t centerDelta{{center.v[0] - source.v[0],
+            center.v[1] - source.v[1], center.v[2] - source.v[2]}};
+        const auto rayParameter = dot(centerDelta, normal) / denominator;
+        if (rayParameter <= 0.0F) continue;
+        const vr::HmdVector3_t point{{source.v[0] + direction.v[0] * rayParameter,
+            source.v[1] + direction.v[1] * rayParameter,
+            source.v[2] + direction.v[2] * rayParameter}};
+        const vr::HmdVector3_t localDelta{{point.v[0] - center.v[0],
+            point.v[1] - center.v[1], point.v[2] - center.v[2]}};
+        const vr::HmdVector3_t horizontal{{surface.transform.m[0][0], surface.transform.m[1][0],
+            surface.transform.m[2][0]}};
+        const vr::HmdVector3_t vertical{{surface.transform.m[0][1], surface.transform.m[1][1],
+            surface.transform.m[2][1]}};
+        const auto localX = dot(localDelta, horizontal);
+        const auto localY = dot(localDelta, vertical);
+        const auto surfaceHeight = surface.widthMeters / (std::max)(surface.aspectRatio, 0.1F);
+        if (localX < -surface.widthMeters * 0.5F - edgeToleranceMeters
+            || localX > surface.widthMeters * 0.5F + edgeToleranceMeters
+            || localY < -surfaceHeight * 0.5F - edgeToleranceMeters
+            || localY > surfaceHeight * 0.5F + edgeToleranceMeters) continue;
+
+        DesktopSurfaceHit hit{};
+        hit.id = surface.id;
+        hit.captured = surface.capture != nullptr;
+        hit.distance = rayParameter * std::sqrt(dot(direction, direction));
+        hit.u = std::clamp(localX / surface.widthMeters + 0.5F, 0.0F, 1.0F);
+        hit.v = std::clamp(localY / surfaceHeight + 0.5F, 0.0F, 1.0F);
+        if (!nearest || hit.distance < nearest->distance) nearest = hit;
+    }
+    return nearest;
+}
+
 std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters) const {

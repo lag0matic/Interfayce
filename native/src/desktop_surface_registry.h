@@ -81,6 +81,9 @@ public:
     uint64_t SpawnPicker(const std::vector<DesktopSource>& sources);
     uint64_t SpawnKeyboard();
     std::optional<DesktopSurfaceHit> HitTest(const vr::VROverlayIntersectionParams_t& ray) const;
+    std::optional<DesktopSurfaceHit> SurfaceAimHitTest(
+        const vr::VROverlayIntersectionParams_t& ray,
+        float edgeToleranceMeters = 0.008F) const;
     std::optional<KeyboardSurfaceHit> KeyboardHitTest(
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters = 0.008F) const;

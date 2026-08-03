@@ -13,6 +13,7 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <future>
 #include <iostream>
 #include <optional>
 #include <string_view>
@@ -449,6 +450,8 @@ int main(int argc, char** argv) {
     const auto actionManifest = directory / "assets" / "steamvr" / "actions.json";
     bool slimeAvailable = IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
     bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
+    const std::wstring initialMusicLine = spotifyAvailable
+        ? L"Loading Spotify..." : L"Spotify is not running";
     std::cout << "startup capabilities: SlimeVR=" << (slimeAvailable ? "available" : "offline")
               << " Spotify=" << (spotifyAvailable ? "running" : "offline") << '\n';
     vr::VRApplications()->IdentifyApplication(GetCurrentProcessId(), kAppKey);
@@ -492,7 +495,8 @@ int main(int argc, char** argv) {
 
     interfayce::OverlayRenderer renderer;
     renderer.SetSlimeAvailable(slimeAvailable);
-    if (!rawPanel && !renderer.Initialize(system)) {
+    if (!rawPanel && !renderer.Initialize(system, 0, initialMusicLine,
+            spotifyAvailable ? musicArtPath.wstring() : L"")) {
         std::cerr << "Could not initialize the Interfayce D3D11 panel texture.\n";
         vr::VR_Shutdown();
         return 1;
@@ -678,14 +682,15 @@ int main(int argc, char** argv) {
     std::optional<vr::HmdMatrix34_t> sessionBaseline;
     bool playspaceAdjusted = false;
     bool dragFaulted = false;
-    int selectedDeck = 2;
-    std::wstring musicLine;
+    int selectedDeck = 0;
+    std::wstring musicLine = initialMusicLine;
     std::wstring desktopLine = DesktopSurfaceLine(0);
     interfayce::DesktopPanelState desktopPanel;
     std::wstring rigLine;
     std::array<std::wstring, 8> rigSlots;
     bool mountReady = false;
     auto nextMusicPoll = std::chrono::steady_clock::now();
+    std::future<std::wstring> musicPoll;
     auto nextRigPoll = std::chrono::steady_clock::now();
     bool restoreHoldActive = false;
     bool rigResetHoldActive = false;
@@ -776,6 +781,7 @@ int main(int argc, char** argv) {
         std::optional<size_t> desktopCloseIndex;
         std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
         std::optional<interfayce::KeyboardSurfaceHit> keyboardSurfaceHit;
+        std::optional<interfayce::DesktopSurfaceHit> leftDesktopSurfaceHit;
         std::optional<interfayce::KeyboardSurfaceHit> leftKeyboardSurfaceHit;
         std::optional<uint64_t> leftDesktopFrameHit;
         std::optional<uint64_t> desktopFrameHit;
@@ -837,7 +843,15 @@ int main(int argc, char** argv) {
             leftRay.vDirection = {{leftPointerRay->direction.x, leftPointerRay->direction.y,
                 leftPointerRay->direction.z}};
             leftDesktopFrameHit = desktopSurfaces.FrameHitTest(leftRay);
+            leftDesktopSurfaceHit = desktopSurfaces.SurfaceAimHitTest(leftRay);
             leftKeyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(leftRay);
+            if (leftDesktopSurfaceHit && leftKeyboardSurfaceHit) {
+                if (leftKeyboardSurfaceHit->distance < leftDesktopSurfaceHit->distance) {
+                    leftDesktopSurfaceHit.reset();
+                } else {
+                    leftKeyboardSurfaceHit.reset();
+                }
+            }
         }
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
         desktopSurfaces.SetHoveredKeyboard(
@@ -846,6 +860,7 @@ int main(int argc, char** argv) {
         if (keyboardSurfaceHit) highlightedSurface = keyboardSurfaceHit->id;
         else if (leftKeyboardSurfaceHit) highlightedSurface = leftKeyboardSurfaceHit->id;
         else if (desktopSurfaceHit) highlightedSurface = desktopSurfaceHit->id;
+        else if (leftDesktopSurfaceHit) highlightedSurface = leftDesktopSurfaceHit->id;
         else highlightedSurface = desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit;
         desktopSurfaces.SetHoveredFrame(highlightedSurface);
         if (panelHitFound) {
@@ -904,6 +919,16 @@ int main(int argc, char** argv) {
         if (leftKeyboardSurfaceHit) {
             if (const auto cursorTransform = desktopSurfaces.KeyboardCursorTransform(
                     *leftKeyboardSurfaceHit)) {
+                vr::VROverlay()->SetOverlayWidthInMeters(leftCursorOverlay, 0.0055F);
+                vr::VROverlay()->SetOverlayTransformAbsolute(leftCursorOverlay,
+                    vr::TrackingUniverseStanding, &*cursorTransform);
+                vr::VROverlay()->ShowOverlay(leftCursorOverlay);
+            } else {
+                vr::VROverlay()->HideOverlay(leftCursorOverlay);
+            }
+        } else if (leftDesktopSurfaceHit) {
+            if (const auto cursorTransform = desktopSurfaces.CursorTransform(
+                    *leftDesktopSurfaceHit)) {
                 vr::VROverlay()->SetOverlayWidthInMeters(leftCursorOverlay, 0.0055F);
                 vr::VROverlay()->SetOverlayTransformAbsolute(leftCursorOverlay,
                     vr::TrackingUniverseStanding, &*cursorTransform);
@@ -980,8 +1005,10 @@ int main(int argc, char** argv) {
             if (requestedDeck == 0) {
                 spotifyAvailable = IsProcessRunning(L"Spotify.exe");
                 if (spotifyAvailable) {
-                    musicLine = ReadSpotifyNowPlaying(projectRoot);
-                    RefreshSpotifyArt(projectRoot, musicArtPath);
+                    if (musicLine.empty() || musicLine == L"Spotify is not running") {
+                        musicLine = L"Loading Spotify...";
+                    }
+                    nextMusicPoll = std::chrono::steady_clock::now();
                 } else {
                     musicLine = L"Spotify is not running";
                 }
@@ -1130,28 +1157,38 @@ int main(int argc, char** argv) {
             verticalScrollRemainder = 0.0;
             horizontalScrollRemainder = 0.0;
         }
-        if (selectedDeck == 0 && std::chrono::steady_clock::now() >= nextMusicPoll) {
-            nextMusicPoll = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            const bool spotifyRunningNow = IsProcessRunning(L"Spotify.exe");
-            if (!spotifyRunningNow) {
-                spotifyAvailable = false;
-                const std::wstring unavailable = L"Spotify is not running";
-                if (musicLine != unavailable && renderer.Initialize(system, selectedDeck,
-                        unavailable, L"", rigLine, rigSlots, mountReady, desktopPanel)) {
-                    musicLine = unavailable;
+        if (selectedDeck == 0) {
+            const auto musicNow = std::chrono::steady_clock::now();
+            if (musicPoll.valid()
+                && musicPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                const auto updatedMusicLine = musicPoll.get();
+                nextMusicPoll = musicNow + std::chrono::seconds(2);
+                if (updatedMusicLine != musicLine
+                    && renderer.Initialize(system, selectedDeck, updatedMusicLine)) {
+                    musicLine = updatedMusicLine;
+                    RefreshSpotifyArt(projectRoot, musicArtPath);
+                    renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring());
                     const auto updatedTexture = renderer.Texture();
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
-            } else {
-            spotifyAvailable = true;
-            const auto updatedMusicLine = ReadSpotifyNowPlaying(projectRoot);
-            if (updatedMusicLine != musicLine && renderer.Initialize(system, selectedDeck, updatedMusicLine)) {
-                musicLine = updatedMusicLine;
-                RefreshSpotifyArt(projectRoot, musicArtPath);
-                renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring());
-                const auto updatedTexture = renderer.Texture();
-                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
+            if (!musicPoll.valid() && musicNow >= nextMusicPoll) {
+                const bool spotifyRunningNow = IsProcessRunning(L"Spotify.exe");
+                if (!spotifyRunningNow) {
+                    spotifyAvailable = false;
+                    nextMusicPoll = musicNow + std::chrono::seconds(2);
+                    const std::wstring unavailable = L"Spotify is not running";
+                    if (musicLine != unavailable && renderer.Initialize(system, selectedDeck,
+                            unavailable, L"", rigLine, rigSlots, mountReady, desktopPanel)) {
+                        musicLine = unavailable;
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                } else {
+                    spotifyAvailable = true;
+                    musicPoll = std::async(std::launch::async,
+                        [projectRoot] { return ReadSpotifyNowPlaying(projectRoot); });
+                }
             }
         }
         if (selectedDeck == 3 && slimeAvailable
