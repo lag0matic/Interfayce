@@ -46,7 +46,8 @@ class CommsDictationTests(unittest.TestCase):
         comms = CommsDictation(FakeTranscriber(), threading.Lock(), capture=capture, osc=osc)
         self.assertEqual(comms.toggle().state, "LISTENING")
         deadline = time.monotonic() + 1.0
-        while not osc.messages and time.monotonic() < deadline:
+        while (not osc.messages or comms.snapshot().state != "SENT") \
+                and time.monotonic() < deadline:
             time.sleep(0.005)
         self.assertEqual(osc.messages, ["hello from vr"])
         self.assertEqual(comms.snapshot().state, "SENT")

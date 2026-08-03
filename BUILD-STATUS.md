@@ -6,9 +6,10 @@ Updated: 2026-08-03
 
 - Branch: `codex/desktop-surfaces`
 - Draft PR: https://github.com/lag0matic/Interfayce/pull/1
-- Last published feature commit: `09d2ba3 feat: polish VR surfaces and service availability`
+- Checkpoint scope: feature-complete personal build and first installer
 - Native host: `native/build/bin/InterfayceOverlay.exe`
-- Python suite: 57 passing tests
+- Native audio engine: `native/build/bin/InterfayceAudioEngine.exe`
+- Python suite: 61 passing tests
 
 The desktop interaction slice is now **usably complete**. Spotify OAuth, constrained conversational Music control, local STT, and Kokoro acknowledgments have also passed live in-headset testing.
 
@@ -39,7 +40,7 @@ The independent keyboard:
 ## Wrist and visual state
 
 - The chosen direction is **Orbital Utility**: smoked transparent panels, violet structure, cyan reserved for active state, icons before text, and restrained glow.
-- Music uses circular icon controls and a compact playback activity meter.
+- Music uses circular icon controls; the decorative static playback meter was removed.
 - Music is the startup deck. Its media-session query refreshes asynchronously so helper startup cannot block wrist interaction; the last known state remains visible while it refreshes.
 - Music status, artwork, and transport controls now reuse the resident localhost service. The old two-second `cmd.exe`/Python launch loop was removed because it caused Windows application-start cursor feedback.
 - Playspace shows only baseline/adjusted session state and an abstract origin-reset glyph.
@@ -67,6 +68,33 @@ The independent keyboard:
 - `--desktop-capture-probe` verifies receipt of a real GPU frame without SteamVR.
 - `--shutdown` asks a running host to exit through its normal session-baseline cleanup path.
 
+## Audio routing
+
+- The first-party user-mode audio engine is now a separate native executable rather than part of the SteamVR overlay host.
+- `InterfayceAudioEngine.exe --probe-spotify 5` finds Spotify's root process and captures its complete process tree through Windows process-loopback WASAPI at 48 kHz, stereo, 16-bit PCM.
+- Live positive control captured 239,520 frames in five seconds, approximately 99% audibly active, with zero discontinuities.
+- Live negative control targeted Explorer while Spotify continued rendering. It captured the same real-time frame cadence but 0% audible frames, demonstrating that unrelated desktop audio did not leak into the target stream.
+- Spotify continued playing through its existing physical output throughout both tests; the probe changes no endpoints or system routing.
+- Windows SDK/WDK 10.0.28000, the Visual Studio 2026 driver integration, Inf2Cat, StampInf, SignTool, and DevCon are installed. A clean x64 build of Microsoft's stock SysVAD kernel driver completed WDK validation and produced a test-signed `.sys`; nothing was installed or loaded.
+- The experimental Interfayce virtual-audio package built, validated, and passed an end-to-end development test, but Microsoft production-signing economics made it inappropriate for this personal deployment.
+- The test driver, Driver Store package, and development certificates were completely removed. Every Windows loader and hibernation-resume entry has test-signing disabled, and the machine returned to a clean normal boot.
+- Production-signed VB-CABLE now supplies only the persistent playback/capture endpoint pair. `InterfayceAudioEngine.exe --broadcast-spotify` connects the proven process-specific capture path to the exact `CABLE Input (VB-Audio Virtual Cable)` endpoint and fails closed rather than falling back to a physical output.
+- A live VB-CABLE proof delivered 240,000 virtual-microphone frames over five seconds with 99.04% active Spotify audio while the eight-second process capture reported zero discontinuities. With the engine stopped, a two-second cable capture had zero samples above the audible threshold.
+- Music now has a separate orbital broadcast control, off by default, with starting/live/failure/off status. It owns the isolated engine through a kill-on-close Windows job and a graceful stop event; overlay exit or failure returns VB-CABLE to silence.
+- `--broadcast-controller-probe` passed offline: the engine reached `BROADCAST LIVE`, accepted a graceful stop, and left no child process behind.
+- The wrist broadcast gate passed live VRChat testing with `CABLE Output (VB-Audio Virtual Cable)` selected. Initial low level was traced to the ordinary input-volume control; after correction, measured cable output matched the raw Spotify capture and VRChat received audio.
+- Broadcast boost is persistent and adjustable from 0 through 24 dB in 3 dB steps. The audio engine applies the gain only to the VB-CABLE route and uses a soft limiter; normal Spotify listening volume is untouched.
+
+## Settings and packaging
+
+- The desktop settings window now owns General and Integrations tabs: input/output devices, TTS level/mute/speed, haptics, broadcast gain, Kokoro endpoint/model/voice, Spotify OAuth, and the constrained LLM provider.
+- LLM fallback has an enforced enable toggle. Fresh installs are disabled and blank; when disabled, the client does not read a key or contact a network endpoint.
+- Spotify tokens and the LLM key remain DPAPI-protected. No personal endpoint, client ID, device name, settings JSON, or credential blob is embedded in the source or installer payload.
+- Spotify song announcements now run inside the resident service lifecycle instead of depending on an orphanable `spotify-watch` process.
+- The selected orbital-aperture identity ships as SVG, 1024 px PNG, multi-resolution ICO, native executable resources, shortcuts, and installer branding.
+- `packaging/build-installer.ps1` produces a self-contained, per-user Inno Setup package. It bundles the static-runtime native host, PyInstaller voice service, pinned SolarXR protocol commit, and isolated Node runtime.
+- The staged support service passed local health/settings startup and graceful-shutdown checks. The 236.2 MB payload compresses to a 73.6 MB installer and contains no personal literals or private configuration files.
+
 ## Constraints to preserve
 
 - `OverlayRenderer` retains one D3D11/DXGI shared texture and repaints it in place. Do not recreate GPU devices or overlay textures for ordinary panel updates.
@@ -77,23 +105,22 @@ The independent keyboard:
 - Do not reintroduce a magnetic target halo, timed surface handoff, or visual laser without a new live interaction reason.
 - SlimeVR Node adapters are development-only and currently rely on a temporary reference checkout; vendor and version-pin the SolarXR protocol before packaging.
 
-## Larger features intentionally next, not half-started
+## Larger features intentionally deferred
 
-1. Wrist visibility/fade behavior and the final feature-complete UI polish pass.
-2. Expand the completed desktop runtime-settings window with OAuth/integration setup and deeper diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
-3. Active/glanceable/sleeping capture update policies.
-4. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
+1. Active/glanceable/sleeping capture update policies.
+2. Additional diagnostics or visual polish only when live use identifies a concrete need.
 
 ## Verification record
 
 - Native Release build succeeds with SteamVR stopped.
+- The isolated audio engine builds and captures Spotify-only PCM with a clean unrelated-process negative control.
 - `--service-status` is the intended offline capability smoke test.
 - Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
 - Picker selection and paging, application icons, surface reuse, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, wrist recovery controls, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
 - Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.
 - Desktop microphone selection, TTS wrist mirroring, haptic strength, on-demand single-instance launch, and state-aware Music transport glyphs have passed live testing.
-- Python proof-of-concept suite: 57 passing checks.
+- Python proof-of-concept suite: 61 passing checks.
 
 ## North star
 

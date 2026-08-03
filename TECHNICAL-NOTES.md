@@ -239,7 +239,7 @@ Music mic button → local microphone capture → local STT
 
 The LLM returns a constrained intent and arguments; it does not receive arbitrary authority to operate the computer. Explicit commands such as pause and next bypass it for speed. Unrecognized natural requests, including volume phrasing, go through the constrained router and are locally validated before execution. Track metadata, captured application text, and other untrusted strings are data, never instructions.
 
-The current router uses DeepInfra's OpenAI-compatible chat-completions endpoint at `https://api.deepinfra.com/v1/openai`, model `deepseek-ai/DeepSeek-V4-Flash`, and temperature `0.65`. It may emit only the enumerated Music actions for playback search, transport, status, volume, mute, or no action. The API key is stored as a Windows DPAPI-protected blob at `%LOCALAPPDATA%\Interfayce\secure\llm-api-key.dpapi`; it must never enter the settings JSON, logs, wrist UI, or repository.
+The current router uses a user-configured OpenAI-compatible chat-completions endpoint, model, and temperature. It may emit only the enumerated Music actions for playback search, transport, status, volume, mute, or no action. The provider URL and model are non-secret local preferences; the API key is stored as a Windows DPAPI-protected blob at `%LOCALAPPDATA%\Interfayce\secure\llm-api-key.dpapi` and must never enter the settings JSON, logs, wrist UI, or repository. Fresh installations leave the provider blank and LLM fallback disabled.
 
 VRChat textbox dictation is implemented as a separate Comms-deck path:
 
@@ -253,10 +253,10 @@ The live Comms deck intentionally has only two actions: toggle continuous phrase
 
 ### Kokoro acknowledgment server
 
-David's existing Kokoro server exposes an OpenAI-style TTS API on the separate Arkive machine. Port `5000` was live-verified on 2026-08-02; the older `7079` note is wrong. Keep the base URL configurable. Use the verified IPv4 address as the personal default because Python requests through `thearkive.local` took roughly 66 seconds despite the same server generating a short response in under a second over IPv4:
+David's existing Kokoro server exposes an OpenAI-style TTS API on a separate LAN machine. Its complete speech endpoint is stored only in the local settings profile; fresh installations leave it blank. Direct IPv4 was materially faster than local-name resolution during testing, but neither address belongs in source or packaged defaults:
 
 ```text
-POST http://192.168.4.194:5000/v1/audio/speech
+POST {configured Kokoro speech endpoint}
 ```
 
 Example request:
@@ -280,7 +280,7 @@ Discovery/health endpoints:
 - `GET /voices`
 - `GET /v1/voices`
 
-The confirmed health response from `GET http://192.168.4.194:5000/health` is:
+The confirmed health response from the configured server's `/health` route is:
 
 ```json
 {"service":"Kokoro TTS Server (OpenAI Compatible)","status":"ok"}
@@ -297,6 +297,14 @@ Non-secret runtime preferences are persisted in `%LOCALAPPDATA%\Interfayce\setti
 The first desktop settings window is now live and opens only through the wrist Settings deck's monitor/launch icon (or the explicit diagnostic command). A Windows named mutex makes it single-instance. It owns the shared Music/Comms microphone selection, TTS volume/mute, and haptic amplitude; the native host refreshes this small resident-service settings packet without spawning helpers. Integration credentials and endpoint/device diagnostics remain the next expansion, while secrets continue to use DPAPI rather than JSON.
 
 The native Music deck queries the resident localhost service for media state and artwork. Do not restore the old pattern of spawning `cmd.exe` and Python for each two-second refresh: Windows displayed recurring application-start cursor feedback even though the child windows used `CREATE_NO_WINDOW`.
+
+## Installed runtime boundary
+
+Development builds may still launch the support package through the repository's Python environment. Installed builds instead launch `service/InterfayceService.exe`, a windowless PyInstaller one-directory runtime containing only the libraries required for local STT, audio, Windows media sessions, OAuth, and settings. Optional SpeechRecognition cloud/Whisper/Torch integrations are explicitly excluded.
+
+The native executables use the static MSVC runtime and resolve all writable artwork/cache output under `%LOCALAPPDATA%\Interfayce\cache`; installed files are never treated as writable state. The SteamVR manifest uses a path relative to its own installed directory. SlimeVR helpers use a pinned SolarXR protocol build and bundled Node executable rather than a developer checkout or a machine-specific path.
+
+The Inno Setup package installs per-user under `%LOCALAPPDATA%\Programs\Interfayce`, requires no elevation, and deliberately preserves `%LOCALAPPDATA%\Interfayce` during uninstall/upgrade. The build stage is audited for known personal literals plus `settings.json` and `.dpapi` files before release.
 
 ## Audio routing
 
@@ -317,6 +325,18 @@ Interfayce virtual microphone endpoint -> selected as VRChat input
 ```
 
 This keeps local listening independent, captures Spotify rather than all desktop audio, and makes the virtual microphone emit silence whenever the broadcast gate/VR session is off. Windows process-loopback capture supports targeting a specific process tree on Windows 10 build 20348 and later. A custom virtual capture endpoint still requires a kernel-mode audio driver; Microsoft SysVAD is the appropriate learning/reference architecture. The driver cannot be casually created and removed while VRChat is running, because that would invalidate VRChat's selected input device. Instead, install it once, keep it dormant, and only run the user-mode capture/injection path when explicitly enabled.
+
+The first user-mode slice is implemented as the separate `InterfayceAudioEngine.exe`; WASAPI capture does not live in the SteamVR overlay process. Its offline Spotify probe resolves the root `Spotify.exe` process and includes the child tree, normalizing capture to 48 kHz stereo 16-bit PCM. A five-second live run delivered 239,520 frames with no discontinuities. A simultaneous isolation control against Explorer delivered the same frame cadence with zero audibly active frames while Spotify remained audible through the normal headphones. No default endpoint, application route, or SteamVR setting is modified.
+
+The current machine now has matching Windows SDK/WDK 10.0.28000, Visual Studio Build Tools 2026 driver integration, Inf2Cat, StampInf, SignTool, and DevCon. Microsoft's stock x64 SysVAD kernel project builds, validates, and receives a local test signature when invoked through the 64-bit MSBuild host. The full sample solution's optional APO projects additionally depend on WIL, which Interfayce's minimal endpoint driver does not need. Do not interpret this verified build toolchain as approval to enable test-signing or install a driver.
+
+Interfayce's minimal driver is derived from Microsoft's Simple Audio Sample and retains its Microsoft Sample License. It exposes fixed 48 kHz stereo signed-16-bit feed and microphone endpoints, published by Windows as `Speakers (Interfayce Virtual Audio)` and `Microphone Array (Interfayce Virtual Audio)`. Render frames enter a spinlock-protected, bounded half-second kernel ring; microphone reads drain it and zero-fill every underrun. The user-mode engine requires the exact Interfayce render identity and refuses to start if it is absent, so it cannot silently route captured Spotify audio to headphones or another physical device.
+
+The custom driver passed a live simultaneous test, but it is retained only as an experimental reference because Microsoft production signing is disproportionate for this personal project. Its root device, Driver Store package, and development certificates were removed, and test-signing was disabled on both the normal Windows loader and its separate hibernation-resume loader. The deployed route uses production-signed VB-CABLE as the deliberately dumb endpoint pair: Interfayce writes only to exact MMDevice identity `CABLE Input (VB-Audio Virtual Cable)`, and VRChat selects `CABLE Output (VB-Audio Virtual Cable)`. Process selection, broadcast authority, fail-closed behavior, and silence gating remain owned by Interfayce rather than the cable driver. A live VB-CABLE proof delivered 240,000 frames over five seconds with 99.04% active Spotify audio and no process-capture discontinuities; with the engine stopped, a two-second output capture contained no samples above the audible threshold.
+
+The Music deck owns broadcast as an explicit, session-only gate that always starts off. Its orbital transmitter control launches `InterfayceAudioEngine.exe` suspended, assigns it to a `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job, and only then resumes it. This makes an overlay crash close the job and kill the audio engine. Normal stop signals `Local\InterfayceBroadcastStop`, waits for process-loopback capture to exit, and retains forced termination only as a bounded fallback. Startup becomes visibly live only after the child survives its initialization window; an early or later exit becomes `BROADCAST FAILED`. The offline controller probe confirmed start, live state, graceful stop, and no lingering child.
+
+The complete wrist-to-VRChat route passed live testing with `CABLE Output (VB-Audio Virtual Cable)` selected as VRChat's microphone. A misleading first low-level reading came from the ordinary input volume being turned down, not attenuation in process capture or VB-CABLE. After restoring that control, direct cable measurement peaked at roughly `0.034`, matching the raw Spotify capture, and VRChat received the broadcast.
 
 For personal development on 64-bit Windows, driver signing/testing is a real prerequisite: test-signed kernel drivers require elevated setup and typically test-signing mode plus a restart. Do not change boot security settings or install a driver without David's explicit approval and a recovery plan.
 

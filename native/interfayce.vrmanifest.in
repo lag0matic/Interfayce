@@ -4,7 +4,7 @@
     {
       "app_key": "com.lag0matic.interfayce",
       "launch_type": "binary",
-      "binary_path_windows": "@INTERFAYCE_OVERLAY_EXE@",
+      "binary_path_windows": "InterfayceOverlay.exe",
       "is_dashboard_overlay": true,
       "strings": {
         "en_us": {

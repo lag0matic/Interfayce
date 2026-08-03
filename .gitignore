@@ -1,6 +1,8 @@
 # Python
 __pycache__/
 native/build/
+native/driver/**/x64/
+native/driver/**/ARM64/
 *.py[cod]
 .venv/
 venv/
@@ -22,6 +24,9 @@ design-references/
 # Build and editor output
 build/
 dist/
+packaging/.cache/
+packaging/.work/
+packaging/out/
 *.egg-info/
 .vscode/
 .idea/

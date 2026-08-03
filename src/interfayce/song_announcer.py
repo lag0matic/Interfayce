@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from time import monotonic
+from typing import Callable
 
 from .media import MediaTrack
 
@@ -90,3 +92,54 @@ class StableSongChangeWatcher:
         self._candidate = None
         self._candidate_started_at = None
         return SongAnnouncement(artist=track.artist, title=track.title, track_id=track.key)
+
+
+class ResidentSongAnnouncer:
+    """Own the song watcher for the lifetime of the resident app service."""
+
+    def __init__(self, read_track: Callable[[], MediaTrack | None],
+                 send_message: Callable[[str], None], clear_message: Callable[[], None],
+                 *, poll_seconds: float = 1.0, clear_seconds: float = 7.0,
+                 stability_seconds: float = 3.0) -> None:
+        self._read_track = read_track
+        self._send_message = send_message
+        self._clear_message = clear_message
+        self._poll_seconds = poll_seconds
+        self._clear_seconds = clear_seconds
+        self._watcher = StableSongChangeWatcher(stability_seconds=stability_seconds)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._clear_timer: threading.Timer | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run, name="InterfayceSongAnnouncer", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._clear_timer is not None:
+            self._clear_timer.cancel()
+            self._clear_timer = None
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+
+    def _schedule_clear(self) -> None:
+        if self._clear_timer is not None:
+            self._clear_timer.cancel()
+        self._clear_timer = threading.Timer(self._clear_seconds, self._clear_message)
+        self._clear_timer.daemon = True
+        self._clear_timer.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            track = self._read_track()
+            announcement = self._watcher.observe(track)
+            if announcement is not None:
+                self._send_message(announcement.chatbox_text())
+                self._schedule_clear()
+            self._stop.wait(self._poll_seconds)

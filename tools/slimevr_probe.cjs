@@ -3,10 +3,14 @@
 // calibration, settings writes, or tracker commands are sent.
 
 const path = require('path');
+const fs = require('fs');
 
-const serverRoot = process.env.SLIMEVR_SERVER_SOURCE ||
-  'C:\\Users\\lag0m\\AppData\\Local\\Temp\\slimevr-server-reference';
-const protocolRoot = path.join(serverRoot, 'solarxr-protocol');
+const protocolRoot = process.env.SLIMEVR_SERVER_SOURCE
+  ? path.join(process.env.SLIMEVR_SERVER_SOURCE, 'solarxr-protocol')
+  : path.join(__dirname, 'vendor', 'solarxr-protocol');
+if (!fs.existsSync(protocolRoot)) {
+  throw new Error('The pinned SolarXR protocol runtime is not installed.');
+}
 const protocol = require(path.join(protocolRoot, 'protocol', 'typescript', 'dist', 'all_generated.js'));
 const { Builder, ByteBuffer } = require(path.join(protocolRoot, 'node_modules', 'flatbuffers'));
 const WebSocket = globalThis.WebSocket;

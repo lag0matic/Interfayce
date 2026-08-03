@@ -33,7 +33,17 @@ python -m interfayce spotify-oauth-status
 
 The client secret is not used. OAuth tokens are protected with Windows DPAPI under the current Windows account.
 
-The desktop runtime-settings window is opened from the monitor icon on the wrist Settings deck. It remains closed otherwise and exposes the shared STT microphone, TTS volume/mute, and Interfayce haptic strength. For an explicit desktop diagnostic launch, `python -m interfayce settings` opens the same single-instance window.
+The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, TTS behavior, haptics, broadcast gain, Kokoro, Spotify OAuth, and the optional constrained LLM fallback. Tokens and API keys are protected with Windows DPAPI; a fresh installation contains no personal endpoints and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
+
+## Windows installer
+
+The reproducible per-user installer bundles the native overlay/audio engine, the Python voice runtime, the pinned SolarXR adapter, and its isolated Node runtime:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build-installer.ps1
+```
+
+The result is `packaging\out\installer\Interfayce-Setup-0.1.0.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
 
 ## Offline native checks
 
@@ -43,9 +53,12 @@ These modes do not initialize SteamVR:
 native\build\bin\InterfayceOverlay.exe --service-status
 native\build\bin\InterfayceOverlay.exe --desktop-sources
 native\build\bin\InterfayceOverlay.exe --desktop-capture-probe
+native\build\bin\InterfayceOverlay.exe --broadcast-controller-probe
+native\build\bin\InterfayceAudioEngine.exe --probe-spotify 5
 ```
 
 `--service-status` reports whether the local SlimeVR port and Spotify process are available. The capture probe requires an active Windows display but not a running headset session.
+The audio-engine probe captures and meters only Spotify's process tree at 48 kHz stereo. It does not change Spotify's playback device, the Windows default device, or any SteamVR setting. The broadcast-controller probe verifies guarded start/stop against VB-CABLE without initializing SteamVR.
 
 ## Run the tests
 
@@ -99,9 +112,8 @@ python -m interfayce steamvr-baseline
 - [Technical notes](TECHNICAL-NOTES.md)
 - [Build status and handoff](BUILD-STATUS.md)
 
-## Near-term work
+## Later improvements
 
-1. Continue the final feature-complete UI polish pass.
-2. Expand the desktop settings window with integration credentials, endpoints, and deeper diagnostics.
-3. Add active/glanceable/sleeping capture update policies.
-4. Add process-specific music capture and virtual-microphone routing.
+1. Add active/glanceable/sleeping desktop-capture update policies.
+2. Add deeper integration diagnostics only where live failures justify them.
+3. Continue optional visual polish without expanding the always-awake footprint.

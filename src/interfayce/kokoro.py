@@ -22,14 +22,15 @@ _worker_started = False
 
 def synthesize(text: str, *, timeout_seconds: float = 30.0) -> bytes:
     settings = load_settings()
-    endpoint = os.environ.get(
-        "INTERFAYCE_KOKORO_URL",
-        "http://192.168.4.194:5000/v1/audio/speech",
-    )
+    endpoint = os.environ.get("INTERFAYCE_KOKORO_URL", settings.tts_endpoint).strip()
+    model = os.environ.get("INTERFAYCE_KOKORO_MODEL", settings.tts_model).strip()
+    voice = os.environ.get("INTERFAYCE_KOKORO_VOICE", settings.tts_voice).strip()
+    if not endpoint or not model or not voice:
+        raise RuntimeError("Kokoro endpoint, model, and voice must be configured in Settings.")
     payload = json.dumps({
-        "model": os.environ.get("INTERFAYCE_KOKORO_MODEL", "tts-1"),
+        "model": model,
         "input": text,
-        "voice": os.environ.get("INTERFAYCE_KOKORO_VOICE", "af_heart"),
+        "voice": voice,
         "response_format": "wav",
         "speed": float(os.environ.get("INTERFAYCE_KOKORO_SPEED", str(settings.tts_speed))),
     }).encode("utf-8")
@@ -48,7 +49,10 @@ def synthesize(text: str, *, timeout_seconds: float = 30.0) -> bytes:
 
 
 def _output_device_index(audio: object) -> int | None:
-    configured = os.environ.get("INTERFAYCE_TTS_OUTPUT", "Beyond Audio Strap").strip()
+    configured = os.environ.get(
+        "INTERFAYCE_TTS_OUTPUT", load_settings().tts_output).strip()
+    if not configured:
+        return None
     if configured.isdigit():
         return int(configured)
     wanted = configured.casefold()

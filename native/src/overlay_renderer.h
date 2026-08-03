@@ -29,8 +29,10 @@ public:
     void SetSlimeAvailable(bool available);
     void SetMusicVoiceStatus(const std::wstring& status, bool active);
     void SetMusicPlaying(bool playing);
+    void SetMusicBroadcastState(bool active, const std::wstring& status);
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetTtsSettings(int volumePercent, bool muted);
+    void SetBroadcastGainDb(int gainDb);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
@@ -62,11 +64,14 @@ private:
     std::wstring musicVoiceStatus_{L"VOICE READY"};
     bool musicVoiceActive_{};
     bool musicPlaying_{};
+    bool musicBroadcastActive_{};
+    std::wstring musicBroadcastStatus_{L"BROADCAST OFF"};
     std::wstring commsStatus_{L"IDLE"};
     std::wstring commsTranscript_;
     bool commsActive_{};
     int ttsVolumePercent_{85};
     bool ttsMuted_{};
+    int broadcastGainDb_{12};
 };
 
 }  // namespace interfayce

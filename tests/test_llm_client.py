@@ -34,7 +34,11 @@ class LlmClientTests(unittest.TestCase):
                 "usage": {"prompt_tokens": 10, "completion_tokens": 4, "estimated_cost": 0.00001},
             })
             with patch("interfayce.llm_client.urlopen", return_value=response) as send:
-                result = OpenAiCompatibleClient(AppSettings()).chat_json(
+                result = OpenAiCompatibleClient(AppSettings(
+                    llm_enabled=True,
+                    llm_endpoint="https://example.test/v1",
+                    llm_model="example-model",
+                )).chat_json(
                     system="system", user="user"
                 )
             request = send.call_args.args[0]
@@ -49,7 +53,25 @@ class LlmClientTests(unittest.TestCase):
             "INTERFAYCE_SECURE_DIRECTORY": directory
         }):
             with self.assertRaises(LlmError):
-                OpenAiCompatibleClient(AppSettings()).chat_json(system="s", user="u")
+                OpenAiCompatibleClient(AppSettings(
+                    llm_enabled=True,
+                    llm_endpoint="https://example.test/v1",
+                    llm_model="example-model",
+                )).chat_json(system="s", user="u")
+
+    def test_disabled_llm_never_reads_credentials_or_touches_network(self) -> None:
+        client = OpenAiCompatibleClient(AppSettings(
+            llm_enabled=False,
+            llm_endpoint="https://example.test/v1",
+            llm_model="example-model",
+        ))
+        with patch("interfayce.llm_client.load_api_key") as read_key, \
+                patch("interfayce.llm_client.urlopen") as send:
+            self.assertFalse(client.configured)
+            with self.assertRaisesRegex(LlmError, "disabled"):
+                client.chat_json(system="s", user="u")
+        read_key.assert_not_called()
+        send.assert_not_called()
 
 
 if __name__ == "__main__":

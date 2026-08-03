@@ -56,7 +56,7 @@ def show_api_key_dialog() -> bool:
     root.configure(background="#080b16")
     root.attributes("-topmost", True)
 
-    tk.Label(root, text="DEEPINFRA API TOKEN", fg="#dce8ff", bg="#080b16",
+    tk.Label(root, text="LLM API TOKEN", fg="#dce8ff", bg="#080b16",
              font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=28, pady=(26, 8))
     tk.Label(root, text="Stored locally using Windows account protection.",
              fg="#8090ad", bg="#080b16", font=("Segoe UI", 10)).pack(
@@ -78,7 +78,7 @@ def show_api_key_dialog() -> bool:
             return
         token.set("")
         saved = True
-        messagebox.showinfo("Interfayce", "The DeepInfra token is protected and saved.", parent=root)
+        messagebox.showinfo("Interfayce", "The LLM token is protected and saved.", parent=root)
         root.destroy()
 
     tk.Button(button_row, text="CANCEL", command=root.destroy, fg="#8996b2", bg="#11182a",
@@ -100,9 +100,14 @@ class OpenAiCompatibleClient:
 
     @property
     def configured(self) -> bool:
-        return bool(self.settings.llm_endpoint and self.settings.llm_model and load_api_key())
+        return bool(self.settings.llm_enabled and self.settings.llm_endpoint
+                    and self.settings.llm_model and load_api_key())
 
     def chat_json(self, *, system: str, user: str, timeout: float = 20.0) -> LlmResponse:
+        if not self.settings.llm_enabled:
+            raise LlmError("LLM commands are disabled in Interfayce settings.")
+        if not self.settings.llm_endpoint or not self.settings.llm_model:
+            raise LlmError("The LLM endpoint and model have not been configured.")
         api_key = load_api_key()
         if not api_key:
             raise LlmError("The LLM API key has not been configured.")

@@ -1,10 +1,12 @@
 import unittest
+import time
 
 from interfayce.media import MediaTrack
 from interfayce.song_announcer import (
     MAX_CHATBOX_CHARACTERS,
     SongAnnouncement,
     SongAnnouncementGate,
+    ResidentSongAnnouncer,
     StableSongChangeWatcher,
 )
 
@@ -46,3 +48,22 @@ class SongAnnouncementTests(unittest.TestCase):
 
         announcement = watcher.observe(next_track, now=4)
         self.assertEqual(announcement.chatbox_text(), "♫ Ghost — Cirice")
+
+    def test_resident_announcer_owns_polling_and_shutdown(self) -> None:
+        existing_track = MediaTrack("Ghost", "Witch Image", "spotify")
+        next_track = MediaTrack("Ghost", "Cirice", "spotify")
+        reads = iter((existing_track, next_track, next_track, next_track))
+        messages: list[str] = []
+        announcer = ResidentSongAnnouncer(
+            lambda: next(reads, next_track), messages.append, lambda: None,
+            poll_seconds=0.01, clear_seconds=1.0, stability_seconds=0.01)
+
+        announcer.start()
+        deadline = time.monotonic() + 0.3
+        while not messages and time.monotonic() < deadline:
+            time.sleep(0.01)
+        announcer.stop()
+
+        self.assertEqual(len(messages), 1)
+        self.assertIn("Ghost", messages[0])
+        self.assertIn("Cirice", messages[0])

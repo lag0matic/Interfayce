@@ -5,6 +5,7 @@
 #include <openvr.h>
 
 #include "overlay_renderer.h"
+#include "broadcast_controller.h"
 #include "desktop_surface_manager.h"
 #include "desktop_surface_registry.h"
 
@@ -51,6 +52,45 @@ struct Vector3 {
 
 std::filesystem::path ExecutableDirectory(char* executablePath) {
     return std::filesystem::absolute(executablePath).parent_path();
+}
+
+std::filesystem::path ProjectRoot(const std::filesystem::path& executableDirectory) {
+    const auto developmentRoot = executableDirectory.parent_path().parent_path().parent_path();
+    return std::filesystem::exists(developmentRoot / "src" / "interfayce")
+        ? developmentRoot : executableDirectory;
+}
+
+std::filesystem::path UserCacheFile(std::wstring_view filename) {
+    wchar_t localAppData[32768]{};
+    const auto length = GetEnvironmentVariableW(
+        L"LOCALAPPDATA", localAppData, static_cast<DWORD>(std::size(localAppData)));
+    auto directory = length > 0 && length < std::size(localAppData)
+        ? std::filesystem::path(localAppData) / "Interfayce" / "cache"
+        : std::filesystem::temp_directory_path() / "Interfayce";
+    std::error_code ignored;
+    std::filesystem::create_directories(directory, ignored);
+    return directory / filename;
+}
+
+std::filesystem::path NodeExecutable(const std::filesystem::path& projectRoot) {
+    const auto bundled = projectRoot / "runtime" / "node.exe";
+    return std::filesystem::exists(bundled) ? bundled : std::filesystem::path(L"node.exe");
+}
+
+bool SlimeAdapterAvailable(const std::filesystem::path& projectRoot) {
+    const auto script = projectRoot / "tools" / "slimevr_probe.cjs";
+    const auto bundledProtocol = projectRoot / "tools" / "vendor" / "solarxr-protocol";
+    wchar_t sourceRoot[32768]{};
+    const auto sourceLength = GetEnvironmentVariableW(
+        L"SLIMEVR_SERVER_SOURCE", sourceRoot, static_cast<DWORD>(std::size(sourceRoot)));
+    const bool protocolAvailable = std::filesystem::exists(bundledProtocol)
+        || (sourceLength > 0 && sourceLength < std::size(sourceRoot)
+            && std::filesystem::exists(
+                std::filesystem::path(sourceRoot) / "solarxr-protocol"));
+    wchar_t resolvedNode[MAX_PATH]{};
+    const bool nodeAvailable = std::filesystem::exists(projectRoot / "runtime" / "node.exe")
+        || SearchPathW(nullptr, L"node.exe", nullptr, MAX_PATH, resolvedNode, nullptr) > 0;
+    return std::filesystem::exists(script) && protocolAvailable && nodeAvailable;
 }
 
 bool IsProcessRunning(std::wstring_view executableName) {
@@ -162,7 +202,23 @@ std::optional<std::string> LocalHttpRequest(std::string_view method, std::string
         ? std::optional<std::string>{} : response.substr(bodyStart + 4);
 }
 
-bool LaunchVoiceService(const std::filesystem::path& projectRoot) {
+bool LaunchVoiceService(const std::filesystem::path& executableDirectory,
+                        const std::filesystem::path& projectRoot) {
+    const auto packagedService = executableDirectory / "service" / "InterfayceService.exe";
+    if (std::filesystem::exists(packagedService)) {
+        std::wstring command = L"\"" + packagedService.wstring()
+            + L"\" voice-service --warm";
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
+        startup.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION process{};
+        if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                nullptr, executableDirectory.wstring().c_str(), &startup, &process)) return false;
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return true;
+    }
     const auto sourceDirectory = (projectRoot / "src").wstring();
     std::wstring command = L"cmd.exe /d /s /c \"set \"PYTHONPATH=" + sourceDirectory
         + L"\" && python -m interfayce voice-service --warm\"";
@@ -178,7 +234,23 @@ bool LaunchVoiceService(const std::filesystem::path& projectRoot) {
     return true;
 }
 
-bool LaunchDesktopSettings(const std::filesystem::path& projectRoot) {
+bool LaunchDesktopSettings(const std::filesystem::path& executableDirectory,
+                           const std::filesystem::path& projectRoot) {
+    const auto packagedService = executableDirectory / "service" / "InterfayceService.exe";
+    if (std::filesystem::exists(packagedService)) {
+        std::wstring command = L"\"" + packagedService.wstring() + L"\" settings";
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
+        startup.wShowWindow = SW_SHOWNORMAL;
+        PROCESS_INFORMATION process{};
+        const bool launched = CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
+            0, nullptr, executableDirectory.wstring().c_str(), &startup, &process) != FALSE;
+        if (!launched) return false;
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return true;
+    }
     const auto sourceDirectory = (projectRoot / "src").wstring();
     wchar_t previousPythonPath[32768]{};
     const auto previousLength = GetEnvironmentVariableW(
@@ -304,6 +376,7 @@ struct TtsSettingsState {
     int volumePercent{85};
     bool muted{};
     float hapticStrength{0.22F};
+    float broadcastGainDb{12.0F};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
@@ -318,8 +391,14 @@ std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
         if (muteEnd != std::string::npos) {
             const auto speedEnd = response.find('\t', muteEnd + 1);
             if (speedEnd != std::string::npos && speedEnd + 1 < response.size()) {
+                const auto gainEnd = response.find('\t', speedEnd + 1);
                 state.hapticStrength = std::clamp(
-                    std::stof(response.substr(speedEnd + 1)), 0.0F, 1.0F);
+                    std::stof(response.substr(speedEnd + 1,
+                        gainEnd - speedEnd - 1)), 0.0F, 1.0F);
+                if (gainEnd != std::string::npos && gainEnd + 1 < response.size()) {
+                    state.broadcastGainDb = std::clamp(
+                        std::stof(response.substr(gainEnd + 1)), 0.0F, 24.0F);
+                }
             }
         }
         return state;
@@ -364,8 +443,8 @@ struct SlimeRigStatus {
 
 SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoot) {
     SlimeRigStatus status;
-    const std::string command = "node \"" + (projectRoot / "tools" / "slimevr_probe.cjs").string()
-        + "\" --summary";
+    const std::string command = "\"" + NodeExecutable(projectRoot).string() + "\" \""
+        + (projectRoot / "tools" / "slimevr_probe.cjs").string() + "\" --summary";
     if (FILE* pipe = _popen(command.c_str(), "r")) {
         char buffer[512]{};
         if (std::fgets(buffer, sizeof(buffer), pipe)) {
@@ -389,8 +468,8 @@ SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoo
 }
 
 void LaunchSlimeReset(const std::filesystem::path& projectRoot, const wchar_t* kind) {
-    std::wstring command = L"node \"" + (projectRoot / "tools" / "slimevr_reset.cjs").wstring()
-        + L"\" " + kind;
+    std::wstring command = L"\"" + NodeExecutable(projectRoot).wstring() + L"\" \""
+        + (projectRoot / "tools" / "slimevr_reset.cjs").wstring() + L"\" " + kind;
     STARTUPINFOW startup{}; startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
     if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
@@ -609,7 +688,9 @@ int main(int argc, char** argv) {
     }
     const bool serviceStatus = argc > 1 && std::string_view(argv[1]) == "--service-status";
     if (serviceStatus) {
-        const bool slimeAvailable = IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
+        const auto root = ProjectRoot(ExecutableDirectory(argv[0]));
+        const bool slimeAvailable = SlimeAdapterAvailable(root)
+            && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
         const bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
         std::cout << "SLIMEVR\t" << (slimeAvailable ? "available" : "offline")
                   << "\t127.0.0.1:21110\n"
@@ -617,6 +698,33 @@ int main(int argc, char** argv) {
                   << "\tSpotify.exe\n";
         CoUninitialize();
         return 0;
+    }
+    const bool broadcastControllerProbe = argc > 1
+        && std::string_view(argv[1]) == "--broadcast-controller-probe";
+    if (broadcastControllerProbe) {
+        interfayce::BroadcastController controller(
+            ExecutableDirectory(argv[0]) / "InterfayceAudioEngine.exe");
+        std::wstring error;
+        if (!controller.Start(error)) {
+            std::wcerr << L"Broadcast controller probe failed to start: " << error << L'\n';
+            CoUninitialize();
+            return 1;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline
+               && controller.State() == interfayce::BroadcastState::Starting) {
+            controller.Poll();
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        const bool becameActive = controller.State() == interfayce::BroadcastState::Active;
+        std::wcout << L"broadcast_start\t" << controller.StatusText() << L'\n';
+        controller.Stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool engineLingering = IsProcessRunning(L"InterfayceAudioEngine.exe");
+        std::wcout << L"broadcast_stop\t" << controller.StatusText()
+                   << L"\tengine_lingering=" << engineLingering << L'\n';
+        CoUninitialize();
+        return becameActive && !engineLingering ? 0 : 1;
     }
     const bool desktopCaptureProbe = argc > 1 && std::string_view(argv[1]) == "--desktop-capture-probe";
     if (desktopCaptureProbe) {
@@ -675,13 +783,14 @@ int main(int argc, char** argv) {
     }
 
     const auto directory = ExecutableDirectory(argv[0]);
-    const auto projectRoot = directory.parent_path().parent_path().parent_path();
-    const auto musicArtPath = projectRoot / "native" / "build" / "spotify-art.jpg";
+    const auto projectRoot = ProjectRoot(directory);
+    const auto musicArtPath = UserCacheFile(L"spotify-art.jpg");
     const auto actionManifest = directory / "assets" / "steamvr" / "actions.json";
     bool voiceServiceAvailable = IsLocalTcpPortOpen(
         kVoiceServicePort, std::chrono::milliseconds(75));
-    if (!voiceServiceAvailable) LaunchVoiceService(projectRoot);
-    bool slimeAvailable = IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
+    if (!voiceServiceAvailable) LaunchVoiceService(directory, projectRoot);
+    bool slimeAvailable = SlimeAdapterAvailable(projectRoot)
+        && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
     bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
     const std::wstring initialMusicLine = spotifyAvailable
         ? L"Loading Spotify..." : L"Spotify is not running";
@@ -727,15 +836,20 @@ int main(int argc, char** argv) {
         kRightHapticActionPath, &rightHapticAction);
 
     interfayce::OverlayRenderer renderer;
+    interfayce::BroadcastController broadcast(
+        directory / "InterfayceAudioEngine.exe");
     renderer.SetSlimeAvailable(slimeAvailable);
     renderer.SetMusicVoiceStatus(
         voiceServiceAvailable ? L"VOICE READY" : L"VOICE WARMING", false);
+    renderer.SetMusicBroadcastState(false, broadcast.StatusText());
     renderer.SetCommsStatus(voiceServiceAvailable ? L"IDLE" : L"VOICE WARMING", L"", false);
     TtsSettingsState ttsSettings;
     if (voiceServiceAvailable) {
         if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
     }
     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
+    renderer.SetBroadcastGainDb(static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
+    broadcast.SetGainDb(ttsSettings.broadcastGainDb);
     if (!rawPanel && !renderer.Initialize(system, 0, initialMusicLine,
             spotifyAvailable ? musicArtPath.wstring() : L"")) {
         std::cerr << "Could not initialize the Interfayce D3D11 panel texture.\n";
@@ -1053,11 +1167,14 @@ int main(int argc, char** argv) {
         bool desktopSurfaceListHit = false;
         bool desktopListBackHit = false;
         bool musicMicHit = false;
+        bool musicBroadcastHit = false;
         bool commsMicHit = false;
         bool commsClearHit = false;
         bool ttsVolumeDownHit = false;
         bool ttsMuteHit = false;
         bool ttsVolumeUpHit = false;
+        bool broadcastGainDownHit = false;
+        bool broadcastGainUpHit = false;
         bool desktopSettingsHit = false;
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopReuseIndex;
@@ -1088,6 +1205,8 @@ int main(int argc, char** argv) {
                     && x >= 68.0F && x <= 330.0F && y >= 154.0F && y <= 346.0F;
                 musicMicHit = selectedDeck == 0
                     && x >= 480.0F && x <= 560.0F && y >= 190.0F && y <= 260.0F;
+                musicBroadcastHit = selectedDeck == 0
+                    && x >= 480.0F && x <= 560.0F && y >= 108.0F && y <= 182.0F;
                 commsMicHit = selectedDeck == 5
                     && x >= 195.0F && x <= 345.0F && y >= 205.0F && y <= 355.0F;
                 commsClearHit = selectedDeck == 5
@@ -1098,6 +1217,10 @@ int main(int argc, char** argv) {
                     && x >= 334.0F && x <= 434.0F && y >= 250.0F && y <= 350.0F;
                 ttsVolumeUpHit = selectedDeck == 4
                     && x >= 542.0F && x <= 642.0F && y >= 250.0F && y <= 350.0F;
+                broadcastGainDownHit = selectedDeck == 4
+                    && x >= 500.0F && x <= 580.0F && y >= 184.0F && y <= 256.0F;
+                broadcastGainUpHit = selectedDeck == 4
+                    && x >= 610.0F && x <= 690.0F && y >= 184.0F && y <= 256.0F;
                 desktopSettingsHit = selectedDeck == 4
                     && x >= 650.0F && x <= 730.0F && y >= 94.0F && y <= 170.0F;
                 rigFullResetHit = slimeAvailable && selectedDeck == 3
@@ -1183,8 +1306,9 @@ int main(int argc, char** argv) {
                     || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
                     || desktopListBackHit || desktopBringIndex.has_value()
                     || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
-                    || musicMicHit || commsMicHit || commsClearHit
-                    || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit;
+                    || musicMicHit || musicBroadcastHit || commsMicHit || commsClearHit
+                    || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
+                    || broadcastGainDownHit || broadcastGainUpHit;
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
                     actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
@@ -1342,6 +1466,8 @@ int main(int argc, char** argv) {
             if (requestedDeck == 4) {
                 if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
                 renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
+                renderer.SetBroadcastGainDb(
+                    static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
             }
             if (requestedDeck == 5) {
                 if (const auto current = RequestCommsState("GET", "/comms/status")) {
@@ -1359,12 +1485,31 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && musicBroadcastHit) {
+            if (broadcast.Enabled()) {
+                broadcast.Stop();
+                renderer.SetMusicBroadcastState(false, broadcast.StatusText());
+            } else if (!IsProcessRunning(L"Spotify.exe")) {
+                renderer.SetMusicBroadcastState(false, L"SPOTIFY OFFLINE");
+            } else {
+                std::wstring error;
+                if (!broadcast.Start(error)) {
+                    std::wcerr << L"Broadcast start failed: " << error << L'\n';
+                }
+                renderer.SetMusicBroadcastState(
+                    broadcast.Enabled(), broadcast.StatusText());
+            }
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
         } else if (rightUiClick.bChanged && rightUiClick.bState && musicMicHit) {
             if (!musicVoiceCommand.valid()) {
                 voiceServiceAvailable = IsLocalTcpPortOpen(
                     kVoiceServicePort, std::chrono::milliseconds(75));
                 if (!voiceServiceAvailable) {
-                    LaunchVoiceService(projectRoot);
+                    LaunchVoiceService(directory, projectRoot);
                     renderer.SetMusicVoiceStatus(L"VOICE WARMING", false);
                 } else {
                     renderer.SetMusicVoiceStatus(L"LISTENING...", true);
@@ -1382,7 +1527,7 @@ int main(int argc, char** argv) {
             voiceServiceAvailable = IsLocalTcpPortOpen(
                 kVoiceServicePort, std::chrono::milliseconds(75));
             if (!voiceServiceAvailable) {
-                LaunchVoiceService(projectRoot);
+                LaunchVoiceService(directory, projectRoot);
                 commsState = {L"VOICE WARMING", L"", false};
             } else if (const auto changed = RequestCommsState(
                     "POST", commsMicHit ? "/comms/toggle" : "/comms/clear")) {
@@ -1399,6 +1544,31 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState
+                   && (broadcastGainDownHit || broadcastGainUpHit)) {
+            const auto path = broadcastGainDownHit
+                ? "/settings/broadcast/gain/down" : "/settings/broadcast/gain/up";
+            if (const auto changed = ChangeTtsSetting(path)) {
+                const bool restartBroadcast = broadcast.Enabled();
+                if (restartBroadcast) broadcast.Stop();
+                ttsSettings = *changed;
+                broadcast.SetGainDb(ttsSettings.broadcastGainDb);
+                renderer.SetBroadcastGainDb(
+                    static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
+                if (restartBroadcast) {
+                    std::wstring error;
+                    if (!broadcast.Start(error)) {
+                        std::wcerr << L"Broadcast gain restart failed: " << error << L'\n';
+                    }
+                }
+                renderer.SetMusicBroadcastState(
+                    broadcast.Enabled(), broadcast.StatusText());
+                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState
                    && (ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit)) {
             const auto path = ttsVolumeDownHit ? "/settings/tts/volume/down"
                 : ttsVolumeUpHit ? "/settings/tts/volume/up"
@@ -1413,7 +1583,7 @@ int main(int argc, char** argv) {
                 }
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSettingsHit) {
-            if (!LaunchDesktopSettings(projectRoot)) {
+            if (!LaunchDesktopSettings(directory, projectRoot)) {
                 std::cerr << "Could not launch the desktop settings window.\n";
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && selectedDeck == 0
@@ -1542,6 +1712,16 @@ int main(int argc, char** argv) {
             verticalScrollRemainder = 0.0;
             horizontalScrollRemainder = 0.0;
         }
+        if (broadcast.Poll()) {
+            renderer.SetMusicBroadcastState(
+                broadcast.Enabled(), broadcast.StatusText());
+            if (selectedDeck == 0 && renderer.Initialize(system, selectedDeck,
+                    musicLine, musicArtPath.wstring(), rigLine, rigSlots,
+                    mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
         if (selectedDeck == 0) {
             const auto musicNow = std::chrono::steady_clock::now();
             if (musicVoiceCommand.valid()
@@ -1627,10 +1807,14 @@ int main(int argc, char** argv) {
             nextRuntimeSettingsPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             if (const auto loaded = ReadTtsSettings()) {
                 const bool wristDisplayChanged = loaded->volumePercent != ttsSettings.volumePercent
-                    || loaded->muted != ttsSettings.muted;
+                    || loaded->muted != ttsSettings.muted
+                    || loaded->broadcastGainDb != ttsSettings.broadcastGainDb;
                 ttsSettings = *loaded;
+                broadcast.SetGainDb(ttsSettings.broadcastGainDb);
                 if (selectedDeck == 4 && wristDisplayChanged) {
                     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
+                    renderer.SetBroadcastGainDb(
+                        static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
                     if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                             rigLine, rigSlots, mountReady, desktopPanel)) {
                         const auto updatedTexture = renderer.Texture();
@@ -1798,6 +1982,7 @@ int main(int argc, char** argv) {
 
     restoreBaseline(temporaryBaseline, "temporary drag shutdown");
     restoreBaseline(sessionBaseline, "Interfayce shutdown");
+    broadcast.Stop();
     desktopSurfaces.Shutdown();
     LocalHttpRequest("POST", "/shutdown", std::chrono::seconds(2));
     vr::VROverlay()->DestroyOverlay(wristOverlay);

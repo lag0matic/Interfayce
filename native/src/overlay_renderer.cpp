@@ -264,15 +264,6 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     }
     if (albumArt) d2dContext_->DrawBitmap(albumArt.Get(), D2D1::RectF(570.0F, 108.0F, 720.0F, 258.0F));
     if (deck == 0) {
-        // A restrained activity meter now; real per-process levels can replace this data later.
-        for (int index = 0; index < 24; ++index) {
-            const float left = 44.0F + static_cast<float>(index) * 14.0F;
-            const float height = musicLine.empty() ? 3.0F
-                : 5.0F + static_cast<float>((index * 7 + 3) % 6) * 2.0F;
-            d2dContext_->FillRectangle(D2D1::RectF(left, 236.0F - height, left + 8.0F, 236.0F),
-                index < 18 && !musicLine.empty() ? accentBrush_.Get() : structureDimBrush_.Get());
-        }
-        drawText(L"PLAYBACK", labelFormat_.Get(), D2D1::RectF(394, 211, 535, 242), mutedTextBrush_.Get());
         // Orbital transport controls: no text boxes, only clear geometric controls.
         const std::array<D2D1_POINT_2F, 3> centers{
             D2D1::Point2F(140, 287), D2D1::Point2F(384, 287), D2D1::Point2F(628, 287)};
@@ -302,6 +293,20 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         d2dContext_->DrawLine(D2D1::Point2F(645, 272), D2D1::Point2F(645, 302), accentBrush_.Get(), 3.5F);
         d2dContext_->DrawLine(D2D1::Point2F(617, 273), D2D1::Point2F(640, 287), accentBrush_.Get(), 3.5F);
         d2dContext_->DrawLine(D2D1::Point2F(640, 287), D2D1::Point2F(617, 301), accentBrush_.Get(), 3.5F);
+        // Broadcast gate: a compact orbital transmitter above the voice mic.
+        const auto broadcastCenter = D2D1::Point2F(520, 145);
+        d2dContext_->FillEllipse(D2D1::Ellipse(broadcastCenter, 27, 27),
+            musicBroadcastActive_ ? activeFillBrush_.Get() : buttonBrush_.Get());
+        d2dContext_->DrawEllipse(D2D1::Ellipse(broadcastCenter, 27, 27),
+            musicBroadcastActive_ ? accentBrush_.Get() : structureBrush_.Get(),
+            musicBroadcastActive_ ? 2.5F : 1.5F);
+        const auto broadcastBrush = musicBroadcastActive_
+            ? accentBrush_.Get() : mutedTextBrush_.Get();
+        d2dContext_->FillEllipse(D2D1::Ellipse(broadcastCenter, 4, 4), broadcastBrush);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(broadcastCenter, 11, 11),
+            broadcastBrush, 2.0F);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(broadcastCenter, 19, 19),
+            broadcastBrush, 1.5F);
         // Voice command microphone, kept separate from the three transport controls.
         const auto micCenter = D2D1::Point2F(520, 225);
         d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 27, 27),
@@ -326,8 +331,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             accentBrush_.Get(), 2.5F);
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
-        drawText(musicVoiceStatus_, labelFormat_.Get(), D2D1::RectF(48, 350, 720, 374),
+        drawText(musicVoiceStatus_, labelFormat_.Get(), D2D1::RectF(48, 350, 430, 374),
             musicVoiceActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
+        drawText(musicBroadcastStatus_, labelFormat_.Get(), D2D1::RectF(450, 350, 720, 374),
+            musicBroadcastActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
     } else if (deck == 1) {
         if (desktop.showSurfaceList) {
             d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 110), accentBrush_.Get(), 3.0F);
@@ -549,6 +556,24 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                     ? accentBrush_.Get() : structureDimBrush_.Get());
         }
 
+        drawText(L"BROADCAST BOOST", labelFormat_.Get(), D2D1::RectF(42, 210, 280, 242),
+            mutedTextBrush_.Get());
+        drawText(L"+" + std::to_wstring(broadcastGainDb_) + L" dB",
+            titleFormat_.Get(), D2D1::RectF(278, 201, 470, 248), textBrush_.Get());
+        const std::array<D2D1_POINT_2F, 2> gainCenters{
+            D2D1::Point2F(540, 220), D2D1::Point2F(650, 220)};
+        for (const auto center : gainCenters) {
+            d2dContext_->FillEllipse(D2D1::Ellipse(center, 28, 28), buttonBrush_.Get());
+            d2dContext_->DrawEllipse(D2D1::Ellipse(center, 28, 28),
+                structureBrush_.Get(), 1.5F);
+        }
+        d2dContext_->DrawLine(D2D1::Point2F(526, 220), D2D1::Point2F(554, 220),
+            accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(636, 220), D2D1::Point2F(664, 220),
+            accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(650, 206), D2D1::Point2F(650, 234),
+            accentBrush_.Get(), 3.5F);
+
         const std::array<D2D1_POINT_2F, 3> centers{
             D2D1::Point2F(176, 300), D2D1::Point2F(384, 300), D2D1::Point2F(592, 300)};
         for (size_t index = 0; index < centers.size(); ++index) {
@@ -627,6 +652,11 @@ void OverlayRenderer::SetMusicPlaying(bool playing) {
     musicPlaying_ = playing;
 }
 
+void OverlayRenderer::SetMusicBroadcastState(bool active, const std::wstring& status) {
+    musicBroadcastActive_ = active;
+    musicBroadcastStatus_ = status;
+}
+
 void OverlayRenderer::SetCommsStatus(const std::wstring& status,
                                      const std::wstring& transcript, bool active) {
     commsStatus_ = status;
@@ -637,6 +667,10 @@ void OverlayRenderer::SetCommsStatus(const std::wstring& status,
 void OverlayRenderer::SetTtsSettings(int volumePercent, bool muted) {
     ttsVolumePercent_ = (std::max)(0, (std::min)(100, volumePercent));
     ttsMuted_ = muted;
+}
+
+void OverlayRenderer::SetBroadcastGainDb(int gainDb) {
+    broadcastGainDb_ = (std::max)(0, (std::min)(24, gainDb));
 }
 
 }  // namespace interfayce

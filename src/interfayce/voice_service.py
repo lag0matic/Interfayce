@@ -15,7 +15,10 @@ from .kokoro import speak_in_background
 from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interpret_music_request
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
-from .settings import adjust_tts_volume, load_settings, settings_wire_text, toggle_tts_mute
+from .osc import VrchatOscClient
+from .settings import (adjust_broadcast_gain, adjust_tts_volume, load_settings,
+                       settings_wire_text, toggle_tts_mute)
+from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
 from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
 from .windows_media import WindowsSpotifyMedia
@@ -54,9 +57,33 @@ class VoiceRuntime:
         self.transcriber = ParakeetTranscriber()
         self.command_lock = threading.Lock()
         self.comms = CommsDictation(self.transcriber, self.command_lock)
+        self._song_media = WindowsSpotifyMedia()
+        self._song_read_failure_logged = False
+        osc = VrchatOscClient()
+        self.song_announcer = ResidentSongAnnouncer(
+            self._read_current_song,
+            self._announce_song,
+            osc.clear_chatbox,
+        )
         LOGGER.info("Parakeet model directory: %s; feature_dim=%s; threads=%s",
             self.transcriber.files.directory, self.transcriber.feature_dim,
             self.transcriber.threads)
+
+    @staticmethod
+    def _announce_song(message: str) -> None:
+        VrchatOscClient().send_chatbox_message(message)
+        LOGGER.info("Sent Spotify track announcement: %r", message)
+
+    def _read_current_song(self):
+        try:
+            track = asyncio.run(self._song_media.current_track())
+            self._song_read_failure_logged = False
+            return track
+        except Exception:
+            if not self._song_read_failure_logged:
+                LOGGER.exception("Spotify song announcement query failed")
+                self._song_read_failure_logged = True
+            return None
 
     def warm(self) -> None:
         try:
@@ -203,6 +230,10 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, settings_wire_text(adjust_tts_volume(-0.1)))
             elif self.path == "/settings/tts/mute/toggle":
                 self._reply(200, settings_wire_text(toggle_tts_mute()))
+            elif self.path == "/settings/broadcast/gain/up":
+                self._reply(200, settings_wire_text(adjust_broadcast_gain(3.0)))
+            elif self.path == "/settings/broadcast/gain/down":
+                self._reply(200, settings_wire_text(adjust_broadcast_gain(-3.0)))
             elif self.path == "/shutdown":
                 self._reply(200, "stopping")
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -213,11 +244,14 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    runtime.song_announcer.start()
+    LOGGER.info("Spotify OSC song announcer started")
     if warm:
         threading.Thread(target=runtime.warm, name="InterfayceParakeetWarm", daemon=True).start()
     try:
         server.serve_forever()
     finally:
+        runtime.song_announcer.stop()
         LOGGER.info("Voice service stopping")
         server.server_close()
 
