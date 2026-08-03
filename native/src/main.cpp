@@ -34,9 +34,7 @@ constexpr char kLeftHapticActionPath[] = "/actions/interfayce/out/left_haptic";
 constexpr char kRightHapticActionPath[] = "/actions/interfayce/out/right_haptic";
 constexpr char kWristOverlayKey[] = "com.lag0matic.interfayce.wrist.panel";
 constexpr char kCursorOverlayKey[] = "com.lag0matic.interfayce.wrist.cursor";
-constexpr char kLaserOverlayKey[] = "com.lag0matic.interfayce.pointer.laser";
 constexpr char kLeftCursorOverlayKey[] = "com.lag0matic.interfayce.keyboard.left_cursor";
-constexpr char kLeftLaserOverlayKey[] = "com.lag0matic.interfayce.keyboard.left_laser";
 constexpr wchar_t kShutdownEventName[] = L"Local\\InterfayceOverlayShutdown";
 
 enum class DragHand { None, Left, Right };
@@ -294,89 +292,11 @@ struct PointerRay {
     Vector3 direction;
 };
 
-float VectorLength(const Vector3 value) {
-    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
-}
-
-Vector3 Normalize(const Vector3 value) {
-    const auto length = VectorLength(value);
-    if (length < 0.0001F) return {};
-    return {value.x / length, value.y / length, value.z / length};
-}
-
-float Dot(const Vector3 left, const Vector3 right) {
-    return left.x * right.x + left.y * right.y + left.z * right.z;
-}
-
 float ApplyDeadzone(float value, float deadzone = 0.18F) {
     const auto magnitude = std::abs(value);
     if (magnitude <= deadzone) return 0.0F;
     const auto scaled = (magnitude - deadzone) / (1.0F - deadzone);
     return std::copysign((std::min)(scaled, 1.0F), value);
-}
-
-Vector3 Cross(const Vector3 left, const Vector3 right) {
-    return {
-        left.y * right.z - left.z * right.y,
-        left.z * right.x - left.x * right.z,
-        left.x * right.y - left.y * right.x,
-    };
-}
-
-std::optional<vr::HmdMatrix34_t> LaserTransform(vr::IVRSystem* system,
-                                                const Vector3 source, const Vector3 target) {
-    constexpr float kTipClearance = 0.025F;
-    const Vector3 sourceToTarget{
-        target.x - source.x,
-        target.y - source.y,
-        target.z - source.z,
-    };
-    const auto totalLength = VectorLength(sourceToTarget);
-    const auto direction = Normalize(sourceToTarget);
-    const auto beamLength = totalLength - kTipClearance;
-    if (VectorLength(direction) < 0.5F || beamLength <= 0.01F) return std::nullopt;
-
-    std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
-    system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0F, poses.data(),
-        static_cast<uint32_t>(poses.size()));
-    const auto& hmd = poses[vr::k_unTrackedDeviceIndex_Hmd];
-    if (!hmd.bPoseIsValid) return std::nullopt;
-
-    const Vector3 center{
-        source.x + direction.x * (kTipClearance + beamLength * 0.5F),
-        source.y + direction.y * (kTipClearance + beamLength * 0.5F),
-        source.z + direction.z * (kTipClearance + beamLength * 0.5F),
-    };
-    const Vector3 towardHeadset{
-        hmd.mDeviceToAbsoluteTracking.m[0][3] - center.x,
-        hmd.mDeviceToAbsoluteTracking.m[1][3] - center.y,
-        hmd.mDeviceToAbsoluteTracking.m[2][3] - center.z,
-    };
-    const auto projected = Dot(towardHeadset, direction);
-    auto normal = Normalize(Vector3{
-        towardHeadset.x - direction.x * projected,
-        towardHeadset.y - direction.y * projected,
-        towardHeadset.z - direction.z * projected,
-    });
-    if (VectorLength(normal) < 0.5F) normal = {0.0F, 1.0F, 0.0F};
-    auto horizontal = Normalize(Cross(direction, normal));
-    if (VectorLength(horizontal) < 0.5F) horizontal = {1.0F, 0.0F, 0.0F};
-    normal = Normalize(Cross(horizontal, direction));
-
-    vr::HmdMatrix34_t transform{};
-    transform.m[0][0] = horizontal.x;
-    transform.m[1][0] = horizontal.y;
-    transform.m[2][0] = horizontal.z;
-    transform.m[0][1] = direction.x;
-    transform.m[1][1] = direction.y;
-    transform.m[2][1] = direction.z;
-    transform.m[0][2] = normal.x;
-    transform.m[1][2] = normal.y;
-    transform.m[2][2] = normal.z;
-    transform.m[0][3] = center.x;
-    transform.m[1][3] = center.y;
-    transform.m[2][3] = center.z;
-    return transform;
 }
 
 std::optional<PointerRay> ReadPointerRay(vr::IVRSystem* system, DragHand hand) {
@@ -453,6 +373,17 @@ int main(int argc, char** argv) {
                     ? L"DISPLAY\t" : L"APPLICATION\t")
                        << source.label << L'\t' << source.detail << L'\n';
         }
+        CoUninitialize();
+        return 0;
+    }
+    const bool serviceStatus = argc > 1 && std::string_view(argv[1]) == "--service-status";
+    if (serviceStatus) {
+        const bool slimeAvailable = IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
+        const bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
+        std::cout << "SLIMEVR\t" << (slimeAvailable ? "available" : "offline")
+                  << "\t127.0.0.1:21110\n"
+                  << "SPOTIFY\t" << (spotifyAvailable ? "running" : "offline")
+                  << "\tSpotify.exe\n";
         CoUninitialize();
         return 0;
     }
@@ -587,15 +518,11 @@ int main(int argc, char** argv) {
     // cleanup cycle. Reclaim only Interfayce's own keys before recreating it.
     DestroyStaleOverlay(kWristOverlayKey);
     DestroyStaleOverlay(kCursorOverlayKey);
-    DestroyStaleOverlay(kLaserOverlayKey);
     DestroyStaleOverlay(kLeftCursorOverlayKey);
-    DestroyStaleOverlay(kLeftLaserOverlayKey);
 
     vr::VROverlayHandle_t wristOverlay = vr::k_ulOverlayHandleInvalid;
     vr::VROverlayHandle_t cursorOverlay = vr::k_ulOverlayHandleInvalid;
-    vr::VROverlayHandle_t laserOverlay = vr::k_ulOverlayHandleInvalid;
     vr::VROverlayHandle_t leftCursorOverlay = vr::k_ulOverlayHandleInvalid;
-    vr::VROverlayHandle_t leftLaserOverlay = vr::k_ulOverlayHandleInvalid;
     const auto panelTexture = renderer.Texture();
 
     const auto wristError = vr::VROverlay()->CreateOverlay(
@@ -655,53 +582,6 @@ int main(int argc, char** argv) {
     }
     vr::VROverlay()->SetOverlayRaw(
         leftCursorOverlay, leftCursorPixels.data(), 32, 32, 4);
-    if (vr::VROverlay()->CreateOverlay(kLaserOverlayKey, "Interfayce pointer laser", &laserOverlay)
-        != vr::VROverlayError_None) {
-        std::cerr << "Could not create Interfayce pointer laser overlay.\n";
-        vr::VROverlay()->DestroyOverlay(leftCursorOverlay);
-        vr::VROverlay()->DestroyOverlay(cursorOverlay);
-        vr::VROverlay()->DestroyOverlay(wristOverlay);
-        vr::VR_Shutdown();
-        return 1;
-    }
-    vr::VROverlay()->SetOverlayInputMethod(laserOverlay, vr::VROverlayInputMethod_None);
-    vr::VROverlay()->SetOverlaySortOrder(laserOverlay, 29);
-    vr::VROverlay()->SetOverlayAlpha(laserOverlay, 0.42F);
-    constexpr uint32_t kLaserWidth = 4;
-    constexpr uint32_t kLaserHeight = 1024;
-    std::vector<uint8_t> laserPixels(kLaserWidth * kLaserHeight * 4U);
-    for (uint32_t y = 0; y < kLaserHeight; ++y) {
-        for (uint32_t x = 0; x < kLaserWidth; ++x) {
-            const auto pixel = (y * kLaserWidth + x) * 4U;
-            laserPixels[pixel + 0] = 40;
-            laserPixels[pixel + 1] = 230;
-            laserPixels[pixel + 2] = 255;
-            laserPixels[pixel + 3] = (x == 1 || x == 2) ? 150 : 0;
-        }
-    }
-    vr::VROverlay()->SetOverlayRaw(
-        laserOverlay, laserPixels.data(), kLaserWidth, kLaserHeight, 4);
-    if (vr::VROverlay()->CreateOverlay(kLeftLaserOverlayKey,
-            "Interfayce left keyboard laser", &leftLaserOverlay) != vr::VROverlayError_None) {
-        std::cerr << "Could not create Interfayce left keyboard laser overlay.\n";
-        vr::VROverlay()->DestroyOverlay(laserOverlay);
-        vr::VROverlay()->DestroyOverlay(leftCursorOverlay);
-        vr::VROverlay()->DestroyOverlay(cursorOverlay);
-        vr::VROverlay()->DestroyOverlay(wristOverlay);
-        vr::VR_Shutdown();
-        return 1;
-    }
-    vr::VROverlay()->SetOverlayInputMethod(leftLaserOverlay, vr::VROverlayInputMethod_None);
-    vr::VROverlay()->SetOverlaySortOrder(leftLaserOverlay, 29);
-    vr::VROverlay()->SetOverlayAlpha(leftLaserOverlay, 0.42F);
-    std::vector<uint8_t> leftLaserPixels = laserPixels;
-    for (size_t pixel = 0; pixel < leftLaserPixels.size(); pixel += 4) {
-        leftLaserPixels[pixel + 0] = 188;
-        leftLaserPixels[pixel + 1] = 82;
-        leftLaserPixels[pixel + 2] = 255;
-    }
-    vr::VROverlay()->SetOverlayRaw(
-        leftLaserOverlay, leftLaserPixels.data(), kLaserWidth, kLaserHeight, 4);
     std::vector<uint8_t> rawVisibilityCard;
     if (rawPanel) {
         constexpr uint32_t kCardSize = 512;
@@ -771,9 +651,7 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         vr::VROverlay()->DestroyOverlay(wristOverlay);
         vr::VROverlay()->DestroyOverlay(cursorOverlay);
-        vr::VROverlay()->DestroyOverlay(laserOverlay);
         vr::VROverlay()->DestroyOverlay(leftCursorOverlay);
-        vr::VROverlay()->DestroyOverlay(leftLaserOverlay);
         std::cout << "Interfayce tracked-overlay probe completed.\n";
         vr::VR_Shutdown();
         return 0;
@@ -904,8 +782,6 @@ int main(int argc, char** argv) {
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
-        std::optional<Vector3> pointerTarget;
-        std::optional<Vector3> leftPointerTarget;
         const auto pointerRay = ReadPointerRay(system, DragHand::Right);
         if (pointerRay) {
             vr::VROverlayIntersectionParams_t ray{};
@@ -988,11 +864,6 @@ int main(int argc, char** argv) {
             if (leftController != vr::k_unTrackedDeviceIndexInvalid) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
                     cursorOverlay, leftController, &cursorTransform);
-                if (const auto leftPose = ReadControllerPose(system, DragHand::Left)) {
-                    const auto absoluteCursor = MultiplyTransforms(*leftPose, cursorTransform);
-                    pointerTarget = Vector3{absoluteCursor.m[0][3], absoluteCursor.m[1][3],
-                        absoluteCursor.m[2][3]};
-                }
                 const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
                     || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
                     || desktopListBackHit || desktopBringIndex.has_value() || desktopCloseIndex.has_value();
@@ -1007,8 +878,6 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 30);
                 vr::VROverlay()->SetOverlayTransformAbsolute(cursorOverlay,
                     vr::TrackingUniverseStanding, &*cursorTransform);
-                pointerTarget = Vector3{cursorTransform->m[0][3], cursorTransform->m[1][3],
-                    cursorTransform->m[2][3]};
                 vr::VROverlay()->SetOverlayColor(cursorOverlay, 0.20F, 1.0F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
             } else {
@@ -1020,8 +889,6 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 30);
                 vr::VROverlay()->SetOverlayTransformAbsolute(cursorOverlay,
                     vr::TrackingUniverseStanding, &*cursorTransform);
-                pointerTarget = Vector3{cursorTransform->m[0][3], cursorTransform->m[1][3],
-                    cursorTransform->m[2][3]};
                 const bool actionable = desktopSurfaceHit->captured
                     || desktopSurfaceHit->sourceIndex.has_value()
                     || desktopSurfaceHit->pageDelta != 0;
@@ -1034,16 +901,12 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(cursorOverlay);
         }
-        // Surface dots provide sufficient aim feedback without a depth-changing beam.
-        vr::VROverlay()->HideOverlay(laserOverlay);
         if (leftKeyboardSurfaceHit) {
             if (const auto cursorTransform = desktopSurfaces.KeyboardCursorTransform(
                     *leftKeyboardSurfaceHit)) {
                 vr::VROverlay()->SetOverlayWidthInMeters(leftCursorOverlay, 0.0055F);
                 vr::VROverlay()->SetOverlayTransformAbsolute(leftCursorOverlay,
                     vr::TrackingUniverseStanding, &*cursorTransform);
-                leftPointerTarget = Vector3{cursorTransform->m[0][3], cursorTransform->m[1][3],
-                    cursorTransform->m[2][3]};
                 vr::VROverlay()->ShowOverlay(leftCursorOverlay);
             } else {
                 vr::VROverlay()->HideOverlay(leftCursorOverlay);
@@ -1051,7 +914,6 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(leftCursorOverlay);
         }
-        vr::VROverlay()->HideOverlay(leftLaserOverlay);
         if (leftSurfaceGrab.bChanged && leftSurfaceGrab.bState && leftDesktopFrameHit) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Left)) {
                 if (desktopSurfaces.BeginGrab(*leftDesktopFrameHit,
@@ -1454,9 +1316,7 @@ int main(int argc, char** argv) {
     desktopSurfaces.Shutdown();
     vr::VROverlay()->DestroyOverlay(wristOverlay);
     vr::VROverlay()->DestroyOverlay(cursorOverlay);
-    vr::VROverlay()->DestroyOverlay(laserOverlay);
     vr::VROverlay()->DestroyOverlay(leftCursorOverlay);
-    vr::VROverlay()->DestroyOverlay(leftLaserOverlay);
     if (shutdownEvent != nullptr) CloseHandle(shutdownEvent);
     vr::VR_Shutdown();
     return 0;

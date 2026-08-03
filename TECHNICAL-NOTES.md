@@ -40,6 +40,16 @@ Every captured desktop window needs an explicit update policy:
 
 The persistent cockpit should not depend on desktop capture or an embedded browser runtime.
 
+### Desktop interaction decisions
+
+The live-tested desktop baseline uses independent OpenVR overlays backed by Windows Graphics Capture. A spawned surface begins as its own display/application picker, then becomes the selected capture. Closing it destroys only the Interfayce overlay. A wrist list supplies Bring to me and Close recovery actions.
+
+Interaction is intentionally geometric rather than magnetic. Each hand casts its controller-tip ray; the nearest actual surface intersection wins. The only visible guide is a small dot at that intersection. Earlier laser beams, oversized keyboard occlusion gutters, and timed target handoffs made nearby keyboard/monitor arrangements feel as though one surface was stealing the pointer, so they were removed. Do not reintroduce them without a specific live-tested need.
+
+Use deliberate Index force-grip thresholds for movement so resting fingers do not grab surfaces while typing. One-hand grip preserves the grab offset; two-hand grip scales around the controller midpoint. Keyboard and captured surfaces use the same session-only placement model. Position and size persistence is explicitly unwanted because the useful layout changes between sessions.
+
+At host startup, capability checks must be bounded and native. SlimeVR is probed once at `127.0.0.1:21110`; if absent, its trackers and reset controls stay unavailable for the play session. Spotify presence is read from the process list before invoking any slower media helper. The `--service-status` diagnostic performs these checks without initializing SteamVR.
+
 ## Wrist cockpit and utility deck
 
 The wrist overlay mounts on the **inner wrist**, in a natural palm-up watch-check pose. It should be thin and semi-transparent, with user-adjustable wrist offset, angle, scale, and optional arm selection.

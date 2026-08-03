@@ -2,165 +2,82 @@
 
 Updated: 2026-08-02
 
-## Desktop surfaces: active branch checkpoint
+## Current checkpoint
 
-Branch: `codex/desktop-surfaces`
+- Branch: `codex/desktop-surfaces`
+- Draft PR: https://github.com/lag0matic/Interfayce/pull/1
+- Last published feature commit: `09d2ba3 feat: polish VR surfaces and service availability`
+- Native host: `native/build/bin/InterfayceOverlay.exe`
+- Python suite: 27 passing tests
 
-The current offline-verified slice now:
+The desktop interaction slice is now **usably complete**. SteamVR is currently shut down intentionally, so the latest cleanup has been compiled and tested offline but not revisited in-headset.
 
-- filters the display/application inventory to visible user-facing applications, excluding Windows shell hosts such as `explorer.exe`;
-- gives the wrist Desktop deck icon-first controls for New Surface and open-surface management;
-- spawns an independent world-space picker overlay at the current HMD eye line;
-- renders display and application choices in that spawned surface using the shared wrist-panel D3D11 device;
-- tracks each spawned surface independently and supports Bring to me and Close from the wrist list;
-- destroys only the Interfayce VR surface on Close, never the underlying application;
-- includes a non-VR `--desktop-sources` inventory probe and `--desktop-capture-probe` GPU-frame check;
-- supports paged picker applications, live Windows Graphics Capture for displays and HWNDs, and primary pointer movement/click forwarding;
-- shows a cyan world-space aiming reticle at the trigger ray's exact picker or captured-surface hit point;
-- gives every desktop surface a slim cyan/violet frame; aiming at it brightens the frame and holding right grip moves and rotates the surface while preserving the original grab offset;
-- supports one-hand frame movement from either controller and two-hand stretch/compact scaling around the controllers' midpoint, with smooth fallback when either grip is released;
-- requires deliberate Index grip force (0.70 activation / 0.50 release) for surface grabs so naturally holding the controllers does not move windows while typing;
-- forwards right-thumbstick vertical and horizontal wheel input to the captured surface under the controller ray, with a dead zone and proportional speed;
-- spawns one reusable, independent keyboard surface from the wrist Desktop deck; it targets the most recently clicked captured surface and participates in Bring to me, Close, one-hand movement, and two-hand scaling;
-- renders that keyboard as a wide staggered QWERTY layout with functional one-shot Shift/Ctrl/Alt modifiers, and accepts trigger input from independent cyan right-hand and violet left-hand cursor/laser pairs;
-- treats the full keyboard panel plus a 3.5 cm invisible edge gutter as a pointer occluder, preventing nearby desktop surfaces from stealing the beam while approaching edge keys such as Backspace;
-- keeps keyboard rendering stable during pointer movement and inserts a 350 ms neutral handoff before the right-hand beam can transfer from the keyboard to a farther desktop surface;
-- provides `--shutdown` so future host restarts use the normal session-baseline cleanup path;
-- removes SteamVR's modal keyboard in favor of the independent non-modal Interfayce keyboard surface.
+## Desktop surfaces
 
-The native sources and a separately named verification executable compile and link successfully while the live host remains open. The capture probe has received a real display frame through Windows Graphics Capture. Picker selection, capture display, primary pointer input, cursor/laser alignment, visible frames, one-hand movement, two-hand scaling, vertical thumbstick scrolling, keyboard routing, and ambidextrous keyboard typing have passed live VR checkpoints. VRChat currently consumes the right stick's horizontal axis, which is acceptable because horizontal desktop scrolling is rare. Keyboard pointer handoff and flicker stabilization await a final live checkpoint.
+Live-tested behavior:
 
-Confirmed interaction direction:
+- New Surface opens a world-space picker containing displays and filtered, user-facing applications.
+- Selecting a source converts that picker into a live Windows Graphics Capture surface.
+- Trigger input forwards pointer movement and primary clicks to captured content.
+- The aiming guide is a small surface dot only. The old laser overlays and beam math have been removed because the beams gave misleading depth cues between nearby surfaces.
+- Either controller can grab a surface using deliberate Index force-grip input. One hand moves it; both hands stretch or compact it around their midpoint.
+- The wrist list can bring a lost surface back or close its Interfayce overlay without closing the underlying application.
+- Right-thumbstick scrolling forwards vertical and horizontal wheel input when VRChat does not consume that axis.
+- Surface position and size are deliberately session-only; arrangements vary too much day to day to restore usefully.
 
-- source selection lives inside each newly spawned world surface, not on the wrist;
-- trigger ray interacts with captured content;
-- one-hand grip on the frame moves a surface;
-- gripping with both hands stretches or compacts a surface;
-- the wrist list is the recovery route for lost surfaces.
+The independent keyboard:
 
-## Handoff: current state (desktop work is incomplete)
+- is a wide, staggered QWERTY layout rather than SteamVR's modal keyboard;
+- accepts trigger input from either hand with cyan/violet pointer dots;
+- targets the most recently clicked captured surface;
+- supports Shift, Ctrl, Alt, Backspace, Enter, arrows, and Space;
+- gives a short key glow and a haptic tap on the hand that pressed it;
+- uses direct panel geometry with only a small edge tolerance, allowing rays to pass naturally through the space between keyboard and monitor;
+- participates in the same Bring to me, Close, one-hand move, and two-hand resize behavior as desktop surfaces.
 
-The native host builds and launches from `native/build/bin/InterfayceOverlay.exe`. Live-tested: session-safe playspace drag/reset, inner-wrist fit, in-world trigger ray interaction, Spotify controls/album art, VRChat OSC announce + clear, Index/Slime batteries, and guarded SlimeVR Full Reset + Body Mount.
+## Wrist and visual state
 
-The desktop-window request is **not complete**.
+- The chosen direction is **Orbital Utility**: smoked transparent panels, violet structure, cyan reserved for active state, icons before text, and restrained glow.
+- Music uses circular icon controls and a compact playback activity meter.
+- Playspace shows only baseline/adjusted session state and an abstract origin-reset glyph.
+- Selected desktop and keyboard surfaces use subtle violet backlight rather than thick grab bars. Their functional grab regions are visually quiet.
+- The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`.
 
-What exists:
+## Startup capability gates
 
-- `native/src/desktop_surface_manager.h/.cpp` read-only enumerates displays (`EnumDisplayMonitors`) and eligible titled top-level app windows (`EnumWindows`). `EnumerateSources()` combines them.
-- The Desktop deck shows a live display/window count when selected.
-- New Surface spawns an independent world picker; application choices are paged and source assignment starts a GPU-native Windows Graphics Capture session.
-- The wrist open-surface list supports Bring to me and Close. Close destroys only the VR surface.
-- Trigger input is routed into assigned sources as pointer movement and primary mouse down/up.
-- SteamVR's modal keyboard has been replaced by an independent Interfayce keyboard targeting the most recently clicked captured surface.
+- At startup, Interfayce checks SlimeVR on `127.0.0.1:21110`. If unavailable, Slime tracker/reset controls are omitted for that play session instead of allowing the Rig tab to block.
+- Spotify presence is checked natively through the running process list. Opening Music does not launch a slow helper when Spotify is absent.
+- `--service-status` reports both checks without initializing SteamVR.
+- `--desktop-sources` inventories capturable sources without SteamVR.
+- `--desktop-capture-probe` verifies receipt of a real GPU frame without SteamVR.
+- `--shutdown` asks a running host to exit through its normal session-baseline cleanup path.
 
-Next implementation sequence:
+## Constraints to preserve
 
-1. Begin the cohesive visual-design pass using David's cyan/violet transparent HUD references, prioritizing clarity and low visual load in VR.
-2. Add capture update policies (active, glanceable, sleeping) after the visual and interaction baseline is settled.
-
-Surface positions and sizes are intentionally session-only; the useful arrangement varies day to day and should not be restored automatically.
-
-Constraints to preserve:
-
-- `OverlayRenderer` now retains one D3D11/DXGI shared texture and repaints it in place. Do not regress to recreating GPU devices/textures for panel updates.
-- Keep `InnerLeftWristTransform()` in `native/src/main.cpp` unchanged.
+- `OverlayRenderer` retains one D3D11/DXGI shared texture and repaints it in place. Do not recreate GPU devices or overlay textures for ordinary panel updates.
+- Keep `InnerLeftWristTransform()` unchanged unless David explicitly starts another live fitting pass.
 - Right trigger is UI click. Index B double-tap/hold is playspace drag only.
-- Stop `InterfayceOverlay` before a rebuild if the linker locks it.
-- SlimeVR Node adapters are development-only and currently reference `C:\Users\lag0m\AppData\Local\Temp\slimevr-server-reference`; vendor/pin before packaging.
+- Closing a VR desktop surface must never close its source application.
+- Do not reintroduce a magnetic target halo, timed surface handoff, or visual laser without a new live interaction reason.
+- SlimeVR Node adapters are development-only and currently rely on a temporary reference checkout; vendor and version-pin the SolarXR protocol before packaging.
 
-Last verification:
+## Larger features intentionally next, not half-started
 
-- Native Release verification build succeeds with Windows Graphics Capture and the world-space aiming reticle.
-- Desktop capture probe receives a real GPU frame.
-- Python suite: 27 passing.
+1. Spotify OAuth for search, play-by-name, and conversational control.
+2. Music mic button feeding local STT, deterministic commands, then a constrained LLM fallback.
+3. A separate Comms mic-button path for previewable VRChat chatbox dictation.
+4. Asynchronous spoken acknowledgments through Kokoro at `http://thearkive.local:5000/v1/audio/speech`.
+5. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
+6. Active/glanceable/sleeping capture update policies after the current UI and interaction baseline settles.
 
-## North-star decisions
+## Verification record
 
-- This is David/Lag0Matic's personal, low-overhead VRChat cockpit—not a general consumer product.
-- Windows + SteamVR/OpenVR first; Linux/OpenXR later.
-- Native C++20 is the target host architecture: OpenVR initially, D3D11 render-to-texture for the persistent wrist overlay, no Electron/browser/UI framework runtime.
-- Wrist UI mounts on the **inner wrist**, palm-up, with a quiet status layer and a multi-purpose utility deck.
-- Personal 10-trackers setup is represented as 8 logical SlimeVR body slots (elbows, chest, hip, thighs, combined ankle+foot) plus independent Index controller slots.
+- Native Release build succeeds with SteamVR stopped.
+- `--service-status` is the intended offline capability smoke test.
+- Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
+- Picker selection, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, and wrist recovery controls have passed live VR testing.
+- Python proof-of-concept suite: 27 passing checks.
 
-## Confirmed working
+## North star
 
-- Spotify media-session discovery and transport controls work through Windows media APIs.
-- A stable Spotify change sends one silent VRChat OSC message: `♫ Artist — Title`.
-- An experimental empty chatbox OSC payload clears that message after seven seconds; live-tested successfully in David's current VRChat build.
-- OpenVR reads Index controller battery state (both controllers live-tested at 99%).
-- OpenVR reads Index controller poses.
-- OpenVR reads SteamVR's working standing-origin matrix once tracking is awake. This baseline is read-only so far.
-- Floor-reference measurement works read-only: 25-sample stability test, lower controller selected.
-  - David's canonical placement: Index controller **controls-up** on floor.
-  - Observed tracked-origin offset: about 3.7 cm below current floor plane; back-down about 4.5 cm.
-  - Treat as personal reference, not a universal magic constant.
-
-## Playspace drag: intended behavior
-
-- Preserve David's OVR Advanced Settings muscle memory: Index **B double-tap, hold second press, drag, release**.
-- Lone press must never move the playspace.
-- Current pure safety state machine: `src/interfayce/gesture.py`.
-- Current pure transform math: `src/interfayce/transforms.py`.
-- No code has written a SteamVR room transform yet.
-- First actual write must be session-baseline backed, previewable, bounded, and have undo/restore-session-baseline.
-
-## SteamVR Input research status
-
-- Interfayce app/action manifest and an Index default binding exist under `assets/steamvr/`.
-- SteamVR accepts and displays the binding, but a Python console process cannot keep the action source live as a proper overlay app.
-- The legacy OpenVR `getControllerState` path does not expose the Index B press in this setup, even during a long hold.
-- Conclusion: do not depend on either a Python host or legacy controller state for critical drag. Build the native overlay host, then revisit OpenVR Input actions inside that actual executable.
-
-## Next build target
-
-Build the smallest native C++20 SteamVR overlay host:
-
-1. initialize as `VRApplication_Overlay`;
-2. identify as `com.lag0matic.interfayce`;
-3. load Interfayce's action manifest;
-4. keep a low-cost event/action loop alive;
-5. verify B double-tap action delivery **without** applying any playspace transform;
-6. add the D3D11 overlay texture and inner-wrist pose after input is verified.
-
-Do not start actual playspace writes until step 5 is proven.
-
-The initial host source now lives in `native/`; it successfully compiles with the local Visual Studio Build Tools and completed a live SteamVR native probe (initialization, application identification, action-manifest loading, and D3D11 texture creation). It creates a single 768×384 smoked-glass texture and only uploads it once; the eventual UI must redraw it only when state is dirty.
-
-Native Index action delivery is now proven live: both left/right actions reported active controller origins and David's right-hand B double gesture produced a clean active/release event. An initial `VRActiveActionSet_t` bug restricted the set to device index 0; setting `ulRestrictedToDevice` to `k_ulInvalidInputValueHandle` fixed it. Next: a dry-run controller-pose delta while held, with no SteamVR origin writes.
-
-Native dry-run drag is also proven live: while David held the right-hand B-double gesture, Interfayce accumulated smooth per-frame controller translation and reported a final proposed offset of roughly `(-0.177 m, -0.064 m, -0.032 m)` on release. No SteamVR origin transform was written. Next is the deliberately guarded first working-origin preview/restore test.
-
-The first native working-origin preview/restore test is now proven live. With the SteamVR dashboard closed (it captures controller focus while open), David used the familiar B-double held gesture; the playspace followed the controller during the hold and restored the exact captured baseline on release. The test never called `CommitWorkingCopy`. The special temporary-test launch argument has been removed from the normal native manifest.
-
-Native session drag is now proven live: release keeps the moved playspace position for the Interfayce session, while the host's exit path restores the immutable startup baseline. This is the intended default behavior. It still never calls `CommitWorkingCopy`, never derives an offset from HMD position, and has a 2 m hard safety bound. The special session-test launch argument has been removed from the normal native manifest.
-
-The normal native host now enables session drag by default. Diagnostic modes (`--probe`, `--input-capture`, `--drag-preview`, `--temporary-drag`, and `--show-bindings`) remain non-default and do not silently turn on session drag.
-
-## Deferred but decided: first-party music broadcast
-
-- Build an Interfayce-owned Windows virtual microphone later; do not depend on VAC/Voicemeeter for the final route.
-- Spotify should continue to local headphones. Capture only Spotify with process-specific WASAPI loopback, then inject it into the virtual microphone only while a deliberate broadcast gate is on.
-- The driver must be installed once and stay dormant/silent when VR/broadcast is off. Do **not** dynamically create/remove the endpoint during a VRChat session—the selected VRChat input would be invalidated.
-- This requires a kernel-mode audio driver (SysVAD-style) and signing/test-mode work. Do not install a driver or change boot security without explicit approval and a recovery plan.
-
-## Current test status
-
-- Python proof-of-concept test suite: 27 passing checks.
-- The native host has not been created yet; a prior attempted creation was aborted before any files were added after David paused to choose the backend.
-
-## Native wrist panel: live fit baseline
-
-- A native Direct2D/DirectWrite panel now renders successfully through an OpenVR `TextureType_DXGISharedHandle` texture. The raw-image test card confirmed that the overlay lifecycle and headset visibility path are sound; the shared DXGI handle fixed the previously invisible D3D texture handoff.
-- David live-fitted the left inner-wrist panel using an avatar in VR. Current baseline is readable across the wrist, centered, clear of the arm, and should be retained as the starting fit:
-  - panel width: `0.205 m`
-  - controller-relative translation: `x=0.005 m`, `y=0.071 m`, `z=0.189 m`
-  - controller-relative orientation: local panel normal along controller `+X`, with the panel rolled for across-wrist reading (`45°` clockwise from the prior test orientation)
-- The current white/black diagnostic skin is being returned to the intended smoked-glass dark blue palette with sparse cyan accent.
-- Next UI work: make the existing top strip (Music, Desktop, Playspace, Rig) interactive, then add a Wrist Fit deck with persisted size, local X/Y/Z nudge, and roll controls so David can make later fit changes without a rebuild.
-- Interaction baseline now works in-world: the right Index trigger uses SteamVR's render-model `tip` component as its ray origin/direction, a small cyan dot appears at the actual panel intersection, brightens over an actionable control, and a 0.75-second trigger hold activates Playspace restore. It does not require the SteamVR dashboard.
-- Appearance must be user-configurable later: glass, strip, primary text, muted text, accent, button, normal cursor, and actionable cursor colors belong in the local persisted Appearance/Wrist Fit settings rather than remaining fixed implementation values.
-- Voice is now core scope with two explicit mic-button paths. The Music deck feeds local Parakeet/Sherpa transcription through a deterministic command path or constrained LLM fallback, may use Spotify OAuth for search/play-by-name, and returns a short acknowledgment through David's local TTS server. A separate Comms deck provides previewable, mute-safe VRChat textbox dictation. Textbox mode sends only chatbox OSC and must never activate or route audio into VRChat voice.
-- SlimeVR's local SolarXR WebSocket data feed is now live-proven read-only against David's running server: all 10 physical trackers report battery percentage, body assignment, and status. The Rig deck maps those into the agreed eight logical slots (left/right elbow, chest, hip, left/right thigh, left/right foot) and preserves independent Index controller batteries in its title row. The development adapter is `tools/slimevr_probe.cjs`; it uses the SlimeVR GUI's generated FlatBuffers protocol from the current local reference checkout. Before packaging Interfayce, vendor/pin that protocol adapter rather than relying on the temporary reference location.
-- Native panel updates now repaint one persistent D3D11/DXGI shared texture; changing decks or receiving music/Rig state must not recreate the graphics device or overlay texture. While the Rig deck is selected, controller and Slime battery status refreshes every five seconds.
-- The Rig recovery controls are live-tested: a one-second trigger hold on Full Reset and then Body Mount issued SlimeVR's expected audible reset/countdown sequence. Mounting remains disabled in the panel until SlimeVR's live server guard permits it. No drift-reset control is exposed.
-- Desktop-surface foundation started: `DesktopSurfaceManager` inventories real Windows displays and eligible top-level application windows. Capture, OpenVR overlay ownership, and placement will remain separate so several independently movable desktop surfaces can exist and any one can be reposed in front of the HMD.
+Interfayce is David/Lag0Matic's personal, low-overhead VRChat cockpit, not a general dashboard product. Windows and SteamVR/OpenVR come first; Linux/OpenXR can follow behind adapter boundaries. Prefer native, explicit, testable machinery over a browser runtime or a pile of always-awake helpers.

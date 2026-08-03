@@ -11,15 +11,29 @@ The project begins with the things that matter in an actual session:
 
 It is intentionally personal-use-first. We are building the useful little shipboard console, not a generic VR dashboard empire.
 
-## Current first slice
+## Current build
 
-`interfayce.osc` can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
+The native C++20 host now provides the inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status, SlimeVR rig status and recovery, and independently movable interactive desktop/application surfaces with an ambidextrous VR keyboard.
+
+The Python support code can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
 
 ```text
 ♫ Artist — Title
 ```
 
 It reads Spotify through Windows' local media-session API; no Spotify OAuth or cloud service is required for the basic case.
+
+## Offline native checks
+
+These modes do not initialize SteamVR:
+
+```powershell
+native\build\bin\InterfayceOverlay.exe --service-status
+native\build\bin\InterfayceOverlay.exe --desktop-sources
+native\build\bin\InterfayceOverlay.exe --desktop-capture-probe
+```
+
+`--service-status` reports whether the local SlimeVR port and Spotify process are available. The capture probe requires an active Windows display but not a running headset session.
 
 ## Run the tests
 
@@ -75,7 +89,7 @@ python -m interfayce steamvr-baseline
 
 ## Near-term work
 
-1. Build the minimal native C++20 SteamVR overlay host and verify its Index action input.
-2. Add the D3D11 inner-wrist overlay texture after input is proven.
-3. Implement guarded, temporary playspace drag with preview, undo, and restore-session-baseline.
-4. Research the cleanest supported SlimeVR full-calibration integration.
+1. Add Spotify OAuth for search and conversational play-by-name control.
+2. Add separate Music-command and Comms-dictation microphone flows using local STT.
+3. Return short asynchronous acknowledgments through the local Kokoro server.
+4. Add active/glanceable/sleeping update policies for captured surfaces.
