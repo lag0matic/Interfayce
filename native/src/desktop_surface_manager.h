@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,10 @@ struct DesktopSource {
     Kind kind{};
     std::wstring id;
     std::wstring label;
+    std::wstring detail;
+    std::vector<uint8_t> iconBgra;
     HWND window{};
+    HMONITOR monitor{};
 };
 
 // Inventory only for now. Capture and OpenVR surface ownership are deliberately

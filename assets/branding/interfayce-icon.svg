@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Interfayce orbital aperture</title>
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="#070910"/>
+  <rect x="24" y="24" width="464" height="464" rx="96"
+        fill="none" stroke="#171a32" stroke-width="8"/>
+  <g fill="none" stroke="#7652e8" stroke-width="62" stroke-linecap="butt">
+    <path d="M 288.0 105.4 A 154 154 0 0 1 380.6 346.5"/>
+    <path d="M 337.6 386.6 A 154 154 0 0 1 106.6 293.3"/>
+    <path d="M 104.8 226.6 A 154 154 0 0 1 237.2 103.2"/>
+  </g>
+  <circle cx="256" cy="256" r="34" fill="#26d8ec"/>
+</svg>

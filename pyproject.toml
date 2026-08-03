@@ -17,6 +17,14 @@ dependencies = [
     "openvr>=2.12,<3",
 ]
 
+[project.optional-dependencies]
+voice = [
+    "numpy>=2,<3",
+    "sherpa-onnx>=1.12,<2",
+    "SpeechRecognition>=3.14,<4",
+    "PyAudio>=0.2.14,<1",
+]
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 

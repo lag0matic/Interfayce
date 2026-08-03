@@ -2,11 +2,21 @@
   "name": "Interfayce Index default",
   "app_key": "com.lag0matic.interfayce",
   "controller_type": "knuckles",
-  "description": "Deliberate B-button double-tap and hold for playspace drag.",
+  "description": "B-button double-tap and hold for playspace drag; right grip grabs desktop frames.",
   "options": {},
   "simulated_actions": [],
   "bindings": {
     "/actions/interfayce": {
+      "haptics": [
+        {
+          "output": "/actions/interfayce/out/left_haptic",
+          "path": "/user/hand/left/output/haptic"
+        },
+        {
+          "output": "/actions/interfayce/out/right_haptic",
+          "path": "/user/hand/right/output/haptic"
+        }
+      ],
       "sources": [
         {
           "path": "/user/hand/left/input/b",
@@ -27,11 +37,59 @@
           }
         },
         {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/interfayce/in/left_ui_click"
+            }
+          }
+        },
+        {
           "path": "/user/hand/right/input/trigger",
           "mode": "button",
           "inputs": {
             "click": {
               "output": "/actions/interfayce/in/right_ui_click"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "button",
+          "parameters": {
+            "force_input": "force",
+            "click_activate_threshold": "0.70",
+            "click_deactivate_threshold": "0.50",
+            "haptic_amplitude": "0"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/interfayce/in/left_surface_grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "button",
+          "parameters": {
+            "force_input": "force",
+            "click_activate_threshold": "0.70",
+            "click_deactivate_threshold": "0.50",
+            "haptic_amplitude": "0"
+          },
+          "inputs": {
+            "click": {
+              "output": "/actions/interfayce/in/right_surface_grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/thumbstick",
+          "mode": "joystick",
+          "inputs": {
+            "position": {
+              "output": "/actions/interfayce/in/right_surface_scroll"
             }
           }
         }

@@ -1,6 +1,96 @@
 #include "desktop_surface_manager.h"
 
 #include <algorithm>
+#include <cstring>
+#include <cwctype>
+#include <dwmapi.h>
+#include <filesystem>
+#include <shellapi.h>
+#include <unordered_set>
+
+namespace {
+
+std::wstring Lowercase(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t character) {
+        return static_cast<wchar_t>(std::towlower(character));
+    });
+    return value;
+}
+
+struct ProcessIdentity {
+    std::wstring name;
+    std::wstring path;
+};
+
+ProcessIdentity ProcessForWindow(HWND window) {
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    if (processId == 0 || processId == GetCurrentProcessId()) return {};
+
+    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (process == nullptr) return {};
+    std::wstring path(32768, L'\0');
+    DWORD length = static_cast<DWORD>(path.size());
+    const bool found = QueryFullProcessImageNameW(process, 0, path.data(), &length) != FALSE;
+    CloseHandle(process);
+    if (!found) return {};
+    path.resize(length);
+    return {std::filesystem::path(path).filename().wstring(), path};
+}
+
+std::vector<uint8_t> IconPixelsForExecutable(const std::wstring& path) {
+    if (path.empty()) return {};
+    SHFILEINFOW fileInfo{};
+    if (SHGetFileInfoW(path.c_str(), FILE_ATTRIBUTE_NORMAL, &fileInfo, sizeof(fileInfo),
+            SHGFI_ICON | SHGFI_SMALLICON) == 0 || fileInfo.hIcon == nullptr) return {};
+    constexpr int size = 32;
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = size;
+    bitmapInfo.bmiHeader.biHeight = -size;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    const HDC dc = CreateCompatibleDC(nullptr);
+    const HBITMAP bitmap = CreateDIBSection(dc, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+    std::vector<uint8_t> pixels;
+    if (dc != nullptr && bitmap != nullptr && bits != nullptr) {
+        const auto previous = SelectObject(dc, bitmap);
+        std::memset(bits, 0, size * size * 4);
+        DrawIconEx(dc, 0, 0, fileInfo.hIcon, size, size, 0, nullptr, DI_NORMAL);
+        pixels.assign(static_cast<uint8_t*>(bits), static_cast<uint8_t*>(bits) + size * size * 4);
+        SelectObject(dc, previous);
+    }
+    if (bitmap != nullptr) DeleteObject(bitmap);
+    if (dc != nullptr) DeleteDC(dc);
+    DestroyIcon(fileInfo.hIcon);
+    return pixels;
+}
+
+bool IsUsefulApplicationWindow(HWND window, const std::wstring& processName) {
+    if (!IsWindowVisible(window) || GetWindow(window, GW_OWNER) != nullptr) {
+        return false;
+    }
+    BOOL cloaked = FALSE;
+    if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) {
+        return false;
+    }
+
+    static const std::unordered_set<std::wstring> ignoredProcesses{
+        L"applicationframehost.exe",
+        L"explorer.exe",
+        L"lockapp.exe",
+        L"searchhost.exe",
+        L"shellexperiencehost.exe",
+        L"startmenuexperiencehost.exe",
+        L"textinputhost.exe",
+        L"widgets.exe",
+    };
+    return !processName.empty() && !ignoredProcesses.contains(Lowercase(processName));
+}
+
+}  // namespace
 
 namespace interfayce {
 
@@ -11,8 +101,15 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateDisplays() const {
         MONITORINFOEXW info{};
         info.cbSize = sizeof(info);
         if (GetMonitorInfoW(monitor, &info)) {
-            output.push_back({DesktopSource::Kind::Display, info.szDevice,
-                std::wstring(L"Display ") + info.szDevice, nullptr});
+            DISPLAY_DEVICEW device{};
+            device.cb = sizeof(device);
+            const bool hasFriendlyName = EnumDisplayDevicesW(info.szDevice, 0, &device, 0) != FALSE;
+            const auto label = hasFriendlyName && device.DeviceString[0] != L'\0'
+                ? std::wstring(device.DeviceString)
+                : std::wstring(info.szDevice);
+            output.push_back({DesktopSource::Kind::Display, info.szDevice, label,
+                (info.dwFlags & MONITORINFOF_PRIMARY) ? L"Primary display" : L"Display",
+                {}, nullptr, monitor});
         }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&displays));
@@ -22,15 +119,17 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateDisplays() const {
 std::vector<DesktopSource> DesktopSurfaceManager::EnumerateWindows() const {
     std::vector<DesktopSource> windows;
     EnumWindows([](HWND window, LPARAM data) {
-        if (!IsWindowVisible(window) || GetWindow(window, GW_OWNER) != nullptr) return TRUE;
         const auto length = GetWindowTextLengthW(window);
         if (length == 0) return TRUE;
+        const auto process = ProcessForWindow(window);
+        if (!IsUsefulApplicationWindow(window, process.name)) return TRUE;
         std::wstring title(static_cast<size_t>(length) + 1, L'\0');
         GetWindowTextW(window, title.data(), static_cast<int>(title.size()));
         title.resize(static_cast<size_t>(length));
         auto& output = *reinterpret_cast<std::vector<DesktopSource>*>(data);
         output.push_back({DesktopSource::Kind::Window,
-            std::to_wstring(reinterpret_cast<uintptr_t>(window)), title, window});
+            std::to_wstring(reinterpret_cast<uintptr_t>(window)), title, process.name,
+            IconPixelsForExecutable(process.path), window, nullptr});
         return TRUE;
     }, reinterpret_cast<LPARAM>(&windows));
     std::sort(windows.begin(), windows.end(), [](const auto& left, const auto& right) {

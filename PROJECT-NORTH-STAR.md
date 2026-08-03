@@ -68,13 +68,15 @@ Nothing should render, poll, capture, or consume meaningful resources merely bec
 ### Nice later
 
 6. **Voice commands**
-   - A deliberate local-mic gesture starts a command.
-   - Use local Parakeet/Sherpa speech-to-text; a small LLM command router is welcome for natural requests.
+   - A microphone button on the Music deck deliberately starts and stops a command capture.
+   - Use local Parakeet/Sherpa speech-to-text, a fast deterministic path for simple commands, and a small LLM router for natural or conversational requests.
+   - Spotify OAuth/Web API access is allowed for search and playback behaviors that Windows media sessions cannot provide.
    - Example: "Play Ghost — Witch Image on Spotify."
+   - Return a short spoken acknowledgment through David's local TTS server so the result is clear without reading the wrist.
    - Never leave a microphone open continuously.
 
 7. **Mute-safe VRChat textbox dictation**
-   - A deliberate panel mic capture transcribes speech locally, then sends the text to VRChat's `/chatbox/input` OSC endpoint.
+   - A separate microphone button on a Comms deck deliberately captures speech, previews the transcription, then sends approved text to VRChat's `/chatbox/input` OSC endpoint.
    - Example: David says “hi dips”; Interfayce posts `hi dips` in VRChat.
    - This must never enable, route into, or otherwise reveal the VRChat voice microphone.
    - Show armed/listening/transcribing/sent feedback and provide a cancel-before-send path.
@@ -120,6 +122,13 @@ The cockpit should not constantly sit in David's view. It wakes when the inner w
 - volume later if needed;
 - deliberate microphone/voice-command arm control (not always listening);
 - one-shot VRChat music-note announcement remains a separate opt-in state.
+
+### Comms deck
+
+- a microphone button dedicated to VRChat textbox dictation, visually distinct from the Music command microphone;
+- local transcription preview with cancel and send controls;
+- OSC chatbox output only—never VRChat voice activation or audio routing;
+- the command and dictation microphones must never silently cross-route between modes.
 
 ### Desktop deck
 

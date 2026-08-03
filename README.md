@@ -11,15 +11,54 @@ The project begins with the things that matter in an actual session:
 
 It is intentionally personal-use-first. We are building the useful little shipboard console, not a generic VR dashboard empire.
 
-## Current first slice
+## Current build
 
-`interfayce.osc` can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
+The native C++20 host now provides the fading inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable/reusable interactive desktop surfaces with native application icons and an ambidextrous VR keyboard.
+
+The Python support code can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
 
 ```text
 ♫ Artist — Title
 ```
 
 It reads Spotify through Windows' local media-session API; no Spotify OAuth or cloud service is required for the basic case.
+
+Advanced Spotify control uses a browser-based PKCE login. The developer app must register the exact redirect URI `http://127.0.0.1:8888/callback`. Connect and verify with:
+
+```powershell
+$env:PYTHONPATH = "$PWD/src"
+python -m interfayce spotify-oauth-connect --client-id YOUR_CLIENT_ID
+python -m interfayce spotify-oauth-status
+```
+
+The client secret is not used. OAuth tokens are protected with Windows DPAPI under the current Windows account.
+
+The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, TTS behavior, haptics, broadcast gain, Kokoro, Spotify OAuth, and the optional constrained LLM fallback. Tokens and API keys are protected with Windows DPAPI; a fresh installation contains no personal endpoints and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
+
+## Windows installer
+
+The reproducible per-user installer bundles the native overlay/audio engine, the Python voice runtime, the pinned SolarXR adapter, and its isolated Node runtime:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build-installer.ps1
+```
+
+The result is `packaging\out\installer\Interfayce-Setup-0.1.0.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
+
+## Offline native checks
+
+These modes do not initialize SteamVR:
+
+```powershell
+native\build\bin\InterfayceOverlay.exe --service-status
+native\build\bin\InterfayceOverlay.exe --desktop-sources
+native\build\bin\InterfayceOverlay.exe --desktop-capture-probe
+native\build\bin\InterfayceOverlay.exe --broadcast-controller-probe
+native\build\bin\InterfayceAudioEngine.exe --probe-spotify 5
+```
+
+`--service-status` reports whether the local SlimeVR port and Spotify process are available. The capture probe requires an active Windows display but not a running headset session.
+The audio-engine probe captures and meters only Spotify's process tree at 48 kHz stereo. It does not change Spotify's playback device, the Windows default device, or any SteamVR setting. The broadcast-controller probe verifies guarded start/stop against VB-CABLE without initializing SteamVR.
 
 ## Run the tests
 
@@ -73,9 +112,8 @@ python -m interfayce steamvr-baseline
 - [Technical notes](TECHNICAL-NOTES.md)
 - [Build status and handoff](BUILD-STATUS.md)
 
-## Near-term work
+## Later improvements
 
-1. Build the minimal native C++20 SteamVR overlay host and verify its Index action input.
-2. Add the D3D11 inner-wrist overlay texture after input is proven.
-3. Implement guarded, temporary playspace drag with preview, undo, and restore-session-baseline.
-4. Research the cleanest supported SlimeVR full-calibration integration.
+1. Add active/glanceable/sleeping desktop-capture update policies.
+2. Add deeper integration diagnostics only where live failures justify them.
+3. Continue optional visual polish without expanding the always-awake footprint.

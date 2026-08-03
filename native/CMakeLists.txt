@@ -1,12 +1,16 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(InterfayceOverlay LANGUAGES CXX)
+project(InterfayceOverlay LANGUAGES CXX RC)
 
 if(NOT WIN32)
     message(FATAL_ERROR "The first native Interfayce host targets Windows + SteamVR.")
 endif()
 
 include(FetchContent)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+set(INTERFAYCE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/../assets/branding/interfayce.ico")
+configure_file(src/interfayce.rc.in "${CMAKE_BINARY_DIR}/interfayce.rc" @ONLY)
 FetchContent_Declare(
     openvr_sdk
     GIT_REPOSITORY https://github.com/ValveSoftware/openvr.git
@@ -24,21 +28,40 @@ set_target_properties(openvr_api PROPERTIES
 )
 
 add_executable(InterfayceOverlay
+    "${CMAKE_BINARY_DIR}/interfayce.rc"
     src/main.cpp
+    src/broadcast_controller.cpp
+    src/desktop_capture.cpp
     src/desktop_surface_manager.cpp
+    src/desktop_surface_registry.cpp
     src/overlay_renderer.cpp
 )
 target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
-target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite windowscodecs)
+target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32)
+
+add_library(interfayce_process_audio STATIC
+    src/process_loopback_capture.cpp
+)
+target_compile_features(interfayce_process_audio PRIVATE cxx_std_20)
+target_link_libraries(interfayce_process_audio PUBLIC mmdevapi)
+
+add_executable(InterfayceAudioEngine
+    "${CMAKE_BINARY_DIR}/interfayce.rc"
+    src/audio_engine_main.cpp
+    src/audio_endpoint_renderer.cpp
+)
+target_compile_features(InterfayceAudioEngine PRIVATE cxx_std_20)
+target_link_libraries(InterfayceAudioEngine PRIVATE interfayce_process_audio)
 
 set(INTERFAYCE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-    set_target_properties(InterfayceOverlay PROPERTIES
-        "RUNTIME_OUTPUT_DIRECTORY_${config}" "${INTERFAYCE_OUTPUT_DIRECTORY}"
-    )
+foreach(target InterfayceOverlay InterfayceAudioEngine)
+    foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+        set_target_properties(${target} PROPERTIES
+            "RUNTIME_OUTPUT_DIRECTORY_${config}" "${INTERFAYCE_OUTPUT_DIRECTORY}"
+        )
+    endforeach()
 endforeach()
 
-set(INTERFAYCE_OVERLAY_EXE "${INTERFAYCE_OUTPUT_DIRECTORY}/InterfayceOverlay.exe")
 configure_file(interfayce.vrmanifest.in interfayce.vrmanifest @ONLY)
 
 add_custom_command(TARGET InterfayceOverlay POST_BUILD

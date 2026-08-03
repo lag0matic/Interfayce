@@ -72,6 +72,42 @@ def main() -> None:
     subcommands.add_parser("spotify-current", help="Print the current Spotify artist and title as one tab-separated line.")
     spotify_art = subcommands.add_parser("spotify-art", help="Save the current Spotify thumbnail to a local PNG/JPEG file.")
     spotify_art.add_argument("--output", required=True)
+    voice_service = subcommands.add_parser(
+        "voice-service", help="Run the localhost-only Parakeet voice service."
+    )
+    voice_service.add_argument("--port", default=43817, type=int)
+    voice_service.add_argument("--warm", action="store_true")
+    voice_intent = subcommands.add_parser(
+        "voice-intent", help="Classify one deterministic Music transcript without acting on it."
+    )
+    voice_intent.add_argument("transcript")
+    subcommands.add_parser(
+        "voice-model-status", help="Locate the configured Parakeet model without loading it."
+    )
+    spotify_oauth = subcommands.add_parser(
+        "spotify-oauth-connect", help="Connect Spotify through browser-based OAuth PKCE."
+    )
+    spotify_oauth.add_argument("--client-id", default="")
+    subcommands.add_parser(
+        "spotify-oauth-status", help="Validate the protected Spotify OAuth session."
+    )
+    subcommands.add_parser(
+        "spotify-oauth-disconnect", help="Delete the protected Spotify OAuth token."
+    )
+    spotify_search = subcommands.add_parser(
+        "spotify-search", help="Run an authenticated Spotify search diagnostic."
+    )
+    spotify_search.add_argument("query")
+    spotify_search.add_argument("--type", choices=("track", "album", "artist", "playlist"), default="track")
+    subcommands.add_parser(
+        "llm-key-dialog", help="Open a local protected-input dialog for the LLM API token."
+    )
+    subcommands.add_parser(
+        "llm-status", help="Report the configured LLM profile without exposing its token."
+    )
+    subcommands.add_parser(
+        "settings", help="Open the Interfayce desktop configuration window."
+    )
 
     steamvr_status = subcommands.add_parser(
         "steamvr-status", help="Show Index controller battery state from SteamVR."
@@ -124,6 +160,60 @@ def main() -> None:
             from pathlib import Path
 
             Path(arguments.output).write_bytes(art)
+    elif arguments.command == "voice-service":
+        from .voice_service import serve_voice
+
+        serve_voice(port=arguments.port, warm=arguments.warm)
+    elif arguments.command == "voice-intent":
+        from .voice import parse_music_intent
+
+        print(parse_music_intent(arguments.transcript).kind.value)
+    elif arguments.command == "voice-model-status":
+        from .parakeet_stt import discover_parakeet_model
+
+        print(discover_parakeet_model().directory)
+    elif arguments.command == "spotify-oauth-connect":
+        from .settings import load_settings
+        from .spotify_oauth import SpotifyWebApi, connect
+
+        client_id = arguments.client_id or load_settings().spotify_client_id
+        connect(client_id)
+        profile = SpotifyWebApi(client_id).profile()
+        print(f"Connected Spotify as {profile.display_name} ({profile.product}).")
+    elif arguments.command == "spotify-oauth-status":
+        from .spotify_oauth import SpotifyOAuthError, SpotifyWebApi
+
+        try:
+            profile = SpotifyWebApi().profile()
+            print(f"CONNECTED\t{profile.display_name}\t{profile.product}")
+        except SpotifyOAuthError as error:
+            print(f"DISCONNECTED\t{error}")
+    elif arguments.command == "spotify-oauth-disconnect":
+        from .spotify_oauth import disconnect
+
+        print("Spotify disconnected." if disconnect() else "Spotify was already disconnected.")
+    elif arguments.command == "spotify-search":
+        from .spotify_oauth import SpotifyWebApi
+
+        data = SpotifyWebApi().search(arguments.query, item_type=arguments.type)
+        collection = data.get(arguments.type + "s", {}).get("items", [])
+        for item in collection:
+            artists = ", ".join(artist.get("name", "") for artist in item.get("artists", []))
+            print(f"{item.get('uri', '')}\t{item.get('name', '')}\t{artists}")
+    elif arguments.command == "llm-key-dialog":
+        from .llm_client import show_api_key_dialog
+
+        show_api_key_dialog()
+    elif arguments.command == "llm-status":
+        from .llm_client import OpenAiCompatibleClient
+
+        client = OpenAiCompatibleClient()
+        print(f"{'CONFIGURED' if client.configured else 'MISSING_KEY'}\t"
+              f"{client.settings.llm_endpoint}\t{client.settings.llm_model}")
+    elif arguments.command == "settings":
+        from .settings_window import show_settings_window
+
+        show_settings_window()
     elif arguments.command == "steamvr-status":
         status = read_index_controller_status()
         if not status.available:

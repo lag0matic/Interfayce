@@ -30,6 +30,16 @@ def _is_spotify(session: object) -> bool:
     return "spotify" in source_id.casefold()
 
 
+def _is_playing_status(status: object) -> bool:
+    name = getattr(status, "name", "")
+    if str(name).casefold() == "playing":
+        return True
+    try:
+        return int(status) == 4  # Windows PlaybackStatus.Playing
+    except (TypeError, ValueError):
+        return False
+
+
 class WindowsSpotifyMedia:
     """Finds Spotify's current Windows media session when it exists."""
 
@@ -41,20 +51,26 @@ class WindowsSpotifyMedia:
         return None
 
     async def current_track(self) -> MediaTrack | None:
+        track, _playing = await self.current_track_and_playback()
+        return track
+
+    async def current_track_and_playback(self) -> tuple[MediaTrack | None, bool]:
         session = await self._spotify_session()
         if session is None:
-            return None
+            return None, False
 
         properties = await session.try_get_media_properties_async()
         artist = properties.artist.strip()
         title = properties.title.strip()
         if not artist or not title:
-            return None
-        return MediaTrack(
+            return None, False
+        track = MediaTrack(
             artist=artist,
             title=title,
             source_id=session.source_app_user_model_id,
         )
+        playback = session.get_playback_info().playback_status
+        return track, _is_playing_status(playback)
 
     async def current_art_bytes(self) -> bytes | None:
         """Return Spotify's current Windows media-session thumbnail, if supplied."""

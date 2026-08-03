@@ -11,8 +11,28 @@
       "requirement": "optional"
     },
     {
+      "name": "/actions/interfayce/in/left_ui_click",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
       "name": "/actions/interfayce/in/right_ui_click",
       "type": "boolean",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/in/left_surface_grab",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/in/right_surface_grab",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/in/right_surface_scroll",
+      "type": "vector2",
       "requirement": "optional"
     },
     {
@@ -44,7 +64,11 @@
       "/actions/interfayce": "Interfayce",
       "/actions/interfayce/in/left_drag": "Left playspace drag",
       "/actions/interfayce/in/right_drag": "Right playspace drag",
-      "/actions/interfayce/in/right_ui_click": "Right wrist-panel click"
+      "/actions/interfayce/in/left_ui_click": "Left keyboard click",
+      "/actions/interfayce/in/right_ui_click": "Right wrist-panel click",
+      "/actions/interfayce/in/left_surface_grab": "Grab desktop surface frame with left hand",
+      "/actions/interfayce/in/right_surface_grab": "Grab desktop surface frame",
+      "/actions/interfayce/in/right_surface_scroll": "Scroll captured desktop surface"
     }
   ]
 }
