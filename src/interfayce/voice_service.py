@@ -11,9 +11,12 @@ from pathlib import Path
 import threading
 
 from .kokoro import speak_in_background
+from .llm_client import LlmError, OpenAiCompatibleClient
+from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interpret_music_request
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
 from .settings import adjust_tts_volume, load_settings, settings_wire_text, toggle_tts_mute
-from .voice import execute_music_intent, parse_music_intent
+from .spotify_oauth import SpotifyOAuthError
+from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
 from .windows_media import WindowsSpotifyMedia
 
 
@@ -81,10 +84,25 @@ class VoiceRuntime:
                 return f"ERROR\t\t{_safe_field(str(error))}"
             intent = parse_music_intent(transcript)
             LOGGER.info("Transcript=%r intent=%s", transcript, intent.kind.value)
-            result = asyncio.run(execute_music_intent(intent))
+            if intent.kind is MusicIntentKind.UNKNOWN and OpenAiCompatibleClient().configured:
+                try:
+                    llm_intent = interpret_music_request(transcript)
+                    LOGGER.info("Validated LLM music tool=%s play_type=%s query=%r artist=%r command=%s",
+                                llm_intent.tool, llm_intent.play_type, llm_intent.query,
+                                llm_intent.artist, llm_intent.command)
+                    result = execute_music_llm_intent(llm_intent)
+                except (LlmError, MusicLlmValidationError) as error:
+                    LOGGER.warning("LLM music fallback rejected: %s", error)
+                    result = MusicCommandResult(False, "I could not safely interpret that request.")
+                except SpotifyOAuthError as error:
+                    LOGGER.warning("Spotify OAuth action failed: %s", error)
+                    result = MusicCommandResult(False, "Spotify rejected that command.")
+            else:
+                result = asyncio.run(execute_music_intent(intent))
             LOGGER.info("Music command succeeded=%s message=%r", result.succeeded, result.message)
-            if result.succeeded:
-                speak_in_background(result.message)
+            # In-headset failures are as important as successes; the user should
+            # not need to stop and read the wrist to learn that nothing happened.
+            speak_in_background(result.message)
             state = "OK" if result.succeeded else "NO_MATCH"
             return f"{state}\t{_safe_field(transcript)}\t{_safe_field(result.message)}"
         finally:

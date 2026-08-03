@@ -215,6 +215,12 @@ Use the operating system's media-session API to learn the current track and issu
 
 Spotify OAuth/Web API access is explicitly in scope for search, play-by-name, conversational selection, and other behaviors media sessions cannot satisfy. Credentials and refresh tokens belong only in ignored local configuration. Keep the media-session path for fast basic transport and as a useful fallback.
 
+The implemented desktop authorization uses Spotify's Authorization Code with PKCE flow and the existing Covasify developer application. Its registered callback is the explicit loopback URI `http://127.0.0.1:8888/callback`; `localhost` must not replace that literal address. Interfayce requests only playback read/write, current-track, private-playlist read, and library-read scopes. It never needs or stores the Spotify client secret.
+
+The client ID is a non-secret preference in `%LOCALAPPDATA%\Interfayce\settings.json`. Access and refresh tokens are serialized into a Windows DPAPI-protected blob at `%LOCALAPPDATA%\Interfayce\secure\spotify-oauth-token.dpapi`, bound to David's Windows account. The API client refreshes shortly before expiry and retains the existing refresh token when Spotify omits a replacement from a refresh response. Live verification on 2026-08-03 authenticated David Armstrong and returned real Web API artist search results.
+
+Spotify's February 2026 development-mode API changes removed the artist top-tracks endpoint used by older integrations. Interfayce therefore resolves an artist to Spotify's canonical name, searches tracks using that identity, and validates both title and credited artist before starting playback. Spoken or STT-mangled artist names are handled generically rather than through artist-specific aliases, and low-confidence results fail closed.
+
 ## Voice control
 
 Preferred initial pipeline:
@@ -227,7 +233,9 @@ Music mic button → local microphone capture → local STT
     → short acknowledgment through David's local TTS server
 ```
 
-The LLM returns a constrained intent and arguments; it does not receive arbitrary authority to operate the computer. Simple commands such as pause, next, and volume changes bypass it for speed. Natural requests and conversational follow-ups may use a local model or chosen API. Track metadata, captured application text, and other untrusted strings are data, never instructions.
+The LLM returns a constrained intent and arguments; it does not receive arbitrary authority to operate the computer. Explicit commands such as pause and next bypass it for speed. Unrecognized natural requests, including volume phrasing, go through the constrained router and are locally validated before execution. Track metadata, captured application text, and other untrusted strings are data, never instructions.
+
+The current router uses DeepInfra's OpenAI-compatible chat-completions endpoint at `https://api.deepinfra.com/v1/openai`, model `deepseek-ai/DeepSeek-V4-Flash`, and temperature `0.65`. It may emit only the enumerated Music actions for playback search, transport, status, volume, mute, or no action. The API key is stored as a Windows DPAPI-protected blob at `%LOCALAPPDATA%\Interfayce\secure\llm-api-key.dpapi`; it must never enter the settings JSON, logs, wrist UI, or repository.
 
 VRChat textbox dictation is a separate Comms-deck path:
 
@@ -275,6 +283,8 @@ The confirmed health response from `GET http://192.168.4.194:5000/health` is:
 A live WAV request using `af_heart` completed in about 11.1 seconds and produced a valid 208,844-byte file. That timing may include server/model warmup, but it confirms that synthesis must run asynchronously. Show action completion on the wrist immediately, then play the spoken acknowledgment when it arrives. Do not hold the command UI in a busy state for the duration of TTS generation.
 
 The base URL, model, voice/blend, response format, speed, and timeout belong in ignored local configuration. TTS is acknowledgment, not the authority that decides whether an action succeeded. A failed or sleeping TTS server must not roll back, block, or misreport a completed Spotify action; the wrist should still show the result visually. Keep acknowledgments short, bound request timeouts, and discard stale queued speech when a newer command supersedes it.
+
+Speak both successful Music actions and completed command failures. In VR, hearing that a request was rejected or produced no confident Spotify match is substantially more ergonomic than requiring the user to inspect the wrist. Keep raw service/microphone diagnostics visual and logged rather than reading exception details aloud.
 
 Non-secret runtime preferences are persisted in `%LOCALAPPDATA%\Interfayce\settings.json`. The first settings are TTS volume, mute, and speed; volume and mute are exposed through the wrist gear deck. Kokoro reloads them immediately before synthesis/playback so a wrist change applies without restarting the service. The future desktop settings window owns endpoint/device selection and integration setup. OAuth refresh tokens and API keys must be stored with Windows credential protection and never written to this JSON file or rendered in VR.
 

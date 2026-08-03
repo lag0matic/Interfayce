@@ -13,7 +13,7 @@ It is intentionally personal-use-first. We are building the useful little shipbo
 
 ## Current build
 
-The native C++20 host now provides the inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status, SlimeVR rig status and recovery, and independently movable interactive desktop/application surfaces with an ambidextrous VR keyboard.
+The native C++20 host now provides the inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, SlimeVR rig status and recovery, and independently movable interactive desktop/application surfaces with an ambidextrous VR keyboard.
 
 The Python support code can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
 
@@ -22,6 +22,16 @@ The Python support code can build and send VRChat chatbox OSC packets with no th
 ```
 
 It reads Spotify through Windows' local media-session API; no Spotify OAuth or cloud service is required for the basic case.
+
+Advanced Spotify control uses a browser-based PKCE login. The developer app must register the exact redirect URI `http://127.0.0.1:8888/callback`. Connect and verify with:
+
+```powershell
+$env:PYTHONPATH = "$PWD/src"
+python -m interfayce spotify-oauth-connect --client-id YOUR_CLIENT_ID
+python -m interfayce spotify-oauth-status
+```
+
+The client secret is not used. OAuth tokens are protected with Windows DPAPI under the current Windows account.
 
 ## Offline native checks
 
@@ -89,7 +99,7 @@ python -m interfayce steamvr-baseline
 
 ## Near-term work
 
-1. Add Spotify OAuth for search and conversational play-by-name control.
-2. Add separate Music-command and Comms-dictation microphone flows using local STT.
-3. Return short asynchronous acknowledgments through the local Kokoro server.
-4. Add active/glanceable/sleeping update policies for captured surfaces.
+1. Add the separate Comms-dictation microphone flow using local STT, with preview/cancel/send through VRChat OSC.
+2. Add process-specific music capture and virtual-microphone routing.
+3. Add the desktop settings window for integration credentials, endpoints, devices, and diagnostics.
+4. Add active/glanceable/sleeping update policies, wrist visibility fading, and final UI polish.

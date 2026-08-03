@@ -1,6 +1,6 @@
 # Interfayce — Build Status
 
-Updated: 2026-08-02
+Updated: 2026-08-03
 
 ## Current checkpoint
 
@@ -8,9 +8,9 @@ Updated: 2026-08-02
 - Draft PR: https://github.com/lag0matic/Interfayce/pull/1
 - Last published feature commit: `09d2ba3 feat: polish VR surfaces and service availability`
 - Native host: `native/build/bin/InterfayceOverlay.exe`
-- Python suite: 34 passing tests
+- Python suite: 51 passing tests
 
-The desktop interaction slice is now **usably complete**. SteamVR is currently shut down intentionally, so the latest cleanup has been compiled and tested offline but not revisited in-headset.
+The desktop interaction slice is now **usably complete**. Spotify OAuth, constrained conversational Music control, local STT, and Kokoro acknowledgments have also passed live in-headset testing.
 
 ## Desktop surfaces
 
@@ -44,6 +44,11 @@ The independent keyboard:
 - Music status, artwork, and transport controls now reuse the resident localhost service. The old two-second `cmd.exe`/Python launch loop was removed because it caused Windows application-start cursor feedback.
 - Playspace shows only baseline/adjusted session state and an abstract origin-reset glyph.
 - A compact gear opens wrist settings. The first live controls are persistent Kokoro output volume and mute; they update the voice service immediately.
+- Spotify OAuth uses Authorization Code with PKCE through the existing Covasify developer app and `http://127.0.0.1:8888/callback`. Live authorization, protected-token reload, account lookup, and Web API search all pass.
+- Music keeps explicit transport commands on the local fast path and forwards only unrecognized requests to a constrained DeepInfra intent router. The provider key and Spotify tokens are protected with Windows DPAPI.
+- Conversational play requests canonicalize artist names through Spotify, then require confident title and artist matches before playback. Ambiguous or unrelated search results fail closed.
+- Spoken Music controls now cover search/play, transport, status, Spotify volume, mute, and unmute. Both successes and safe command failures receive short asynchronous Kokoro acknowledgments.
+- The Music response line has its own full-width strip at the bottom of the deck, clear of the transport controls.
 - Selected desktop and keyboard surfaces use subtle violet backlight rather than thick grab bars. Their functional grab regions are visually quiet.
 - The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`.
 
@@ -68,13 +73,10 @@ The independent keyboard:
 
 ## Larger features intentionally next, not half-started
 
-1. Spotify OAuth for search, play-by-name, and conversational control.
-2. Constrained LLM fallback for Music requests beyond the completed local STT and deterministic command path.
-3. A separate Comms mic-button path for previewable VRChat chatbox dictation.
-4. Broader acknowledgment phrasing atop the completed asynchronous Kokoro path at `http://192.168.4.194:5000/v1/audio/speech`.
-5. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
-6. Desktop settings window for OAuth, integrations, device selection, and diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
-7. Active/glanceable/sleeping capture update policies after the current UI and interaction baseline settles.
+1. A separate Comms mic-button path for previewable VRChat chatbox dictation.
+2. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
+3. Desktop settings window for OAuth, integrations, device selection, and diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
+4. Active/glanceable/sleeping capture update policies, wrist visibility/fade behavior, and the final feature-complete UI polish pass.
 
 ## Verification record
 
@@ -82,7 +84,8 @@ The independent keyboard:
 - `--service-status` is the intended offline capability smoke test.
 - Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
 - Picker selection, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, and wrist recovery controls have passed live VR testing.
-- Python proof-of-concept suite: 34 passing checks.
+- Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
+- Python proof-of-concept suite: 51 passing checks.
 
 ## North star
 

@@ -273,7 +273,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(L"PLAYBACK", labelFormat_.Get(), D2D1::RectF(394, 211, 535, 242), mutedTextBrush_.Get());
         // Orbital transport controls: no text boxes, only clear geometric controls.
         const std::array<D2D1_POINT_2F, 3> centers{
-            D2D1::Point2F(140, 305), D2D1::Point2F(384, 305), D2D1::Point2F(628, 305)};
+            D2D1::Point2F(140, 287), D2D1::Point2F(384, 287), D2D1::Point2F(628, 287)};
         for (size_t index = 0; index < centers.size(); ++index) {
             const float radius = index == 1 ? 42.0F : 32.0F;
             d2dContext_->FillEllipse(D2D1::Ellipse(centers[index], radius, radius),
@@ -284,17 +284,17 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 structureDimBrush_.Get(), 1.0F);
         }
         // Previous.
-        d2dContext_->DrawLine(D2D1::Point2F(149, 290), D2D1::Point2F(149, 320), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(146, 305), D2D1::Point2F(124, 291), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(146, 305), D2D1::Point2F(124, 319), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(149, 272), D2D1::Point2F(149, 302), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(146, 287), D2D1::Point2F(124, 273), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(146, 287), D2D1::Point2F(124, 301), accentBrush_.Get(), 3.5F);
         // Play.
-        d2dContext_->DrawLine(D2D1::Point2F(371, 283), D2D1::Point2F(371, 327), accentBrush_.Get(), 4.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(371, 283), D2D1::Point2F(407, 305), accentBrush_.Get(), 4.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(407, 305), D2D1::Point2F(371, 327), accentBrush_.Get(), 4.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(371, 265), D2D1::Point2F(371, 309), accentBrush_.Get(), 4.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(371, 265), D2D1::Point2F(407, 287), accentBrush_.Get(), 4.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(407, 287), D2D1::Point2F(371, 309), accentBrush_.Get(), 4.0F);
         // Next.
-        d2dContext_->DrawLine(D2D1::Point2F(619, 290), D2D1::Point2F(619, 320), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(622, 305), D2D1::Point2F(644, 291), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(622, 305), D2D1::Point2F(644, 319), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(619, 272), D2D1::Point2F(619, 302), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(622, 287), D2D1::Point2F(644, 273), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(622, 287), D2D1::Point2F(644, 301), accentBrush_.Get(), 3.5F);
         // Voice command microphone, kept separate from the three transport controls.
         const auto micCenter = D2D1::Point2F(520, 225);
         d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 27, 27),
@@ -317,7 +317,9 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             accentBrush_.Get(), 2.5F);
         d2dContext_->DrawLine(D2D1::Point2F(520, 234), D2D1::Point2F(520, 240),
             accentBrush_.Get(), 2.5F);
-        drawText(musicVoiceStatus_, labelFormat_.Get(), D2D1::RectF(396, 246, 560, 268),
+        d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
+            structureDimBrush_.Get(), 1.0F);
+        drawText(musicVoiceStatus_, labelFormat_.Get(), D2D1::RectF(48, 350, 720, 374),
             musicVoiceActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
     } else if (deck == 1) {
         if (desktop.showSurfaceList) {

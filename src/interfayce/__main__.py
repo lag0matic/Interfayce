@@ -84,6 +84,27 @@ def main() -> None:
     subcommands.add_parser(
         "voice-model-status", help="Locate the configured Parakeet model without loading it."
     )
+    spotify_oauth = subcommands.add_parser(
+        "spotify-oauth-connect", help="Connect Spotify through browser-based OAuth PKCE."
+    )
+    spotify_oauth.add_argument("--client-id", default="")
+    subcommands.add_parser(
+        "spotify-oauth-status", help="Validate the protected Spotify OAuth session."
+    )
+    subcommands.add_parser(
+        "spotify-oauth-disconnect", help="Delete the protected Spotify OAuth token."
+    )
+    spotify_search = subcommands.add_parser(
+        "spotify-search", help="Run an authenticated Spotify search diagnostic."
+    )
+    spotify_search.add_argument("query")
+    spotify_search.add_argument("--type", choices=("track", "album", "artist", "playlist"), default="track")
+    subcommands.add_parser(
+        "llm-key-dialog", help="Open a local protected-input dialog for the LLM API token."
+    )
+    subcommands.add_parser(
+        "llm-status", help="Report the configured LLM profile without exposing its token."
+    )
 
     steamvr_status = subcommands.add_parser(
         "steamvr-status", help="Show Index controller battery state from SteamVR."
@@ -148,6 +169,44 @@ def main() -> None:
         from .parakeet_stt import discover_parakeet_model
 
         print(discover_parakeet_model().directory)
+    elif arguments.command == "spotify-oauth-connect":
+        from .settings import load_settings
+        from .spotify_oauth import SpotifyWebApi, connect
+
+        client_id = arguments.client_id or load_settings().spotify_client_id
+        connect(client_id)
+        profile = SpotifyWebApi(client_id).profile()
+        print(f"Connected Spotify as {profile.display_name} ({profile.product}).")
+    elif arguments.command == "spotify-oauth-status":
+        from .spotify_oauth import SpotifyOAuthError, SpotifyWebApi
+
+        try:
+            profile = SpotifyWebApi().profile()
+            print(f"CONNECTED\t{profile.display_name}\t{profile.product}")
+        except SpotifyOAuthError as error:
+            print(f"DISCONNECTED\t{error}")
+    elif arguments.command == "spotify-oauth-disconnect":
+        from .spotify_oauth import disconnect
+
+        print("Spotify disconnected." if disconnect() else "Spotify was already disconnected.")
+    elif arguments.command == "spotify-search":
+        from .spotify_oauth import SpotifyWebApi
+
+        data = SpotifyWebApi().search(arguments.query, item_type=arguments.type)
+        collection = data.get(arguments.type + "s", {}).get("items", [])
+        for item in collection:
+            artists = ", ".join(artist.get("name", "") for artist in item.get("artists", []))
+            print(f"{item.get('uri', '')}\t{item.get('name', '')}\t{artists}")
+    elif arguments.command == "llm-key-dialog":
+        from .llm_client import show_api_key_dialog
+
+        show_api_key_dialog()
+    elif arguments.command == "llm-status":
+        from .llm_client import OpenAiCompatibleClient
+
+        client = OpenAiCompatibleClient()
+        print(f"{'CONFIGURED' if client.configured else 'MISSING_KEY'}\t"
+              f"{client.settings.llm_endpoint}\t{client.settings.llm_model}")
     elif arguments.command == "steamvr-status":
         status = read_index_controller_status()
         if not status.available:

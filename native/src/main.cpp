@@ -198,6 +198,14 @@ std::wstring VoiceStatusFromResponse(const std::wstring& response) {
     const auto firstTab = response.find(L'\t');
     const auto secondTab = firstTab == std::wstring::npos
         ? std::wstring::npos : response.find(L'\t', firstTab + 1);
+    if (firstTab != std::wstring::npos && secondTab != std::wstring::npos
+        && response.substr(0, firstTab) != L"OK") {
+        auto transcript = response.substr(firstTab + 1, secondTab - firstTab - 1);
+        if (!transcript.empty()) {
+            if (transcript.size() > 26) transcript = transcript.substr(0, 25) + L"\u2026";
+            return L"HEARD: " + transcript;
+        }
+    }
     if (secondTab != std::wstring::npos && secondTab + 1 < response.size()) {
         return response.substr(secondTab + 1);
     }
@@ -1217,7 +1225,7 @@ int main(int argc, char** argv) {
                 }
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && selectedDeck == 0
-                   && panelY >= 272.0F && panelY <= 338.0F) {
+                   && panelY >= 245.0F && panelY <= 333.0F) {
             if (!spotifyAvailable) {
                 // Controls remain inert while no Spotify media session can exist.
             } else if (panelX >= 70.0F && panelX <= 210.0F) {

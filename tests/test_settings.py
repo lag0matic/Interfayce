@@ -4,7 +4,10 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from interfayce.settings import AppSettings, adjust_tts_volume, load_settings, save_settings, toggle_tts_mute
+from interfayce.settings import (
+    AppSettings, adjust_tts_volume, load_settings, save_settings,
+    set_spotify_client_id, toggle_tts_mute,
+)
 
 
 class SettingsTests(unittest.TestCase):
@@ -20,8 +23,10 @@ class SettingsTests(unittest.TestCase):
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
             "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
         }):
+            set_spotify_client_id("client-id")
             self.assertAlmostEqual(adjust_tts_volume(0.1).tts_volume, 0.95)
             self.assertTrue(toggle_tts_mute().tts_muted)
+            self.assertEqual(load_settings().spotify_client_id, "client-id")
 
     def test_invalid_file_falls_back_safely(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
