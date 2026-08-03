@@ -33,6 +33,8 @@ python -m interfayce spotify-oauth-status
 
 The client secret is not used. OAuth tokens are protected with Windows DPAPI under the current Windows account.
 
+The desktop runtime-settings window is opened from the monitor icon on the wrist Settings deck. It remains closed otherwise and exposes the shared STT microphone, TTS volume/mute, and Interfayce haptic strength. For an explicit desktop diagnostic launch, `python -m interfayce settings` opens the same single-instance window.
+
 ## Offline native checks
 
 These modes do not initialize SteamVR:
@@ -100,6 +102,6 @@ python -m interfayce steamvr-baseline
 ## Near-term work
 
 1. Continue the final feature-complete UI polish pass.
-2. Add the desktop settings window for integration credentials, endpoints, devices, and diagnostics.
+2. Expand the desktop settings window with integration credentials, endpoints, and deeper diagnostics.
 3. Add active/glanceable/sleeping capture update policies.
 4. Add process-specific music capture and virtual-microphone routing.

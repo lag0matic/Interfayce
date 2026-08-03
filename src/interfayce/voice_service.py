@@ -112,8 +112,10 @@ class VoiceRuntime:
 
     def current_music(self) -> str:
         try:
-            track = asyncio.run(WindowsSpotifyMedia().current_track())
-            return "" if track is None else f"{_safe_field(track.artist)}\t{_safe_field(track.title)}"
+            track, playing = asyncio.run(WindowsSpotifyMedia().current_track_and_playback())
+            return "" if track is None else (
+                f"{'PLAYING' if playing else 'PAUSED'}\t"
+                f"{_safe_field(track.artist)}\t{_safe_field(track.title)}")
         except Exception:
             LOGGER.exception("Music status query failed")
             return ""

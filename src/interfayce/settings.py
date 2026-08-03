@@ -1,7 +1,7 @@
 """Persistent, non-secret Interfayce settings.
 
-Credentials deliberately do not belong here. The future desktop settings UI
-will store those through Windows credential protection instead.
+Credentials deliberately do not belong here. The desktop settings UI stores
+those through Windows credential protection instead.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ class AppSettings:
     tts_volume: float = 0.85
     tts_muted: bool = False
     tts_speed: float = 1.0
+    stt_microphone: str = ""
+    haptic_strength: float = 0.22
     spotify_client_id: str = ""
     llm_endpoint: str = "https://api.deepinfra.com/v1/openai"
     llm_model: str = "deepseek-ai/DeepSeek-V4-Flash"
@@ -40,6 +42,8 @@ def _clamp(settings: AppSettings) -> AppSettings:
         tts_volume=max(0.0, min(1.0, float(settings.tts_volume))),
         tts_muted=bool(settings.tts_muted),
         tts_speed=max(0.25, min(4.0, float(settings.tts_speed))),
+        stt_microphone=str(settings.stt_microphone).strip(),
+        haptic_strength=max(0.0, min(1.0, float(settings.haptic_strength))),
         spotify_client_id=str(settings.spotify_client_id).strip(),
         llm_endpoint=str(settings.llm_endpoint).strip().rstrip("/"),
         llm_model=str(settings.llm_model).strip(),
@@ -57,6 +61,8 @@ def load_settings() -> AppSettings:
                 tts_volume=data.get("tts_volume", 0.85),
                 tts_muted=data.get("tts_muted", False),
                 tts_speed=data.get("tts_speed", 1.0),
+                stt_microphone=data.get("stt_microphone", ""),
+                haptic_strength=data.get("haptic_strength", 0.22),
                 spotify_client_id=data.get("spotify_client_id", ""),
                 llm_endpoint=data.get("llm_endpoint", "https://api.deepinfra.com/v1/openai"),
                 llm_model=data.get("llm_model", "deepseek-ai/DeepSeek-V4-Flash"),
@@ -88,6 +94,17 @@ def toggle_tts_mute() -> AppSettings:
     return save_settings(replace(current, tts_muted=not current.tts_muted))
 
 
+def set_runtime_controls(*, tts_volume: float, tts_muted: bool,
+                         stt_microphone: str, haptic_strength: float) -> AppSettings:
+    return save_settings(replace(
+        load_settings(),
+        tts_volume=tts_volume,
+        tts_muted=tts_muted,
+        stt_microphone=stt_microphone,
+        haptic_strength=haptic_strength,
+    ))
+
+
 def set_spotify_client_id(client_id: str) -> AppSettings:
     return save_settings(replace(load_settings(), spotify_client_id=client_id.strip()))
 
@@ -105,4 +122,5 @@ def set_llm_profile(*, endpoint: str, model: str, reasoning_effort: str = "",
 
 def settings_wire_text(settings: AppSettings | None = None) -> str:
     current = settings or load_settings()
-    return f"{round(current.tts_volume * 100)}\t{int(current.tts_muted)}\t{current.tts_speed:.2f}"
+    return (f"{round(current.tts_volume * 100)}\t{int(current.tts_muted)}\t"
+            f"{current.tts_speed:.2f}\t{current.haptic_strength:.2f}")

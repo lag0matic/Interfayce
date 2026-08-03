@@ -8,6 +8,8 @@ from pathlib import Path
 import threading
 from typing import Any
 
+from .settings import load_settings
+
 
 DEFAULT_SAMPLE_RATE = 16_000
 
@@ -98,15 +100,20 @@ def capture_microphone_once(
     import speech_recognition as sr  # type: ignore[import-not-found]
 
     recognizer = sr.Recognizer()
-    configured = os.environ.get("INTERFAYCE_MICROPHONE", "").strip()
+    configured = (os.environ.get("INTERFAYCE_MICROPHONE", "").strip()
+                  or load_settings().stt_microphone)
     device_index: int | None = None
     if configured:
         if configured.isdigit():
             device_index = int(configured)
         else:
             wanted = configured.casefold()
-            device_index = next((index for index, name in enumerate(
-                sr.Microphone.list_microphone_names()) if wanted in name.casefold()), None)
+            microphone_names = sr.Microphone.list_microphone_names()
+            device_index = next((index for index, name in enumerate(microphone_names)
+                if wanted == name.casefold()), None)
+            if device_index is None:
+                device_index = next((index for index, name in enumerate(
+                    microphone_names) if wanted in name.casefold()), None)
             if device_index is None:
                 raise ValueError(f"Configured microphone was not found: {configured}")
     # Use the device's native sample rate while recording. AudioData resamples to

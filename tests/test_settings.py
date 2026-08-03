@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from interfayce.settings import (
     AppSettings, adjust_tts_volume, load_settings, save_settings,
-    set_spotify_client_id, toggle_tts_mute,
+    set_runtime_controls, set_spotify_client_id, settings_wire_text, toggle_tts_mute,
 )
 
 
@@ -35,6 +35,20 @@ class SettingsTests(unittest.TestCase):
             path = Path(os.environ["INTERFAYCE_SETTINGS_PATH"])
             path.write_text("not json", encoding="utf-8")
             self.assertEqual(load_settings(), AppSettings())
+
+    def test_runtime_controls_round_trip_and_wire_format(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            saved = set_runtime_controls(
+                tts_volume=0.42,
+                tts_muted=True,
+                stt_microphone="Beyond Microphone",
+                haptic_strength=0.37,
+            )
+            self.assertEqual(saved.stt_microphone, "Beyond Microphone")
+            self.assertAlmostEqual(saved.haptic_strength, 0.37)
+            self.assertEqual(settings_wire_text(saved), "42\t1\t1.00\t0.37")
 
 
 if __name__ == "__main__":

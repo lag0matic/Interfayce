@@ -285,18 +285,23 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             d2dContext_->DrawEllipse(D2D1::Ellipse(centers[index], radius + 7.0F, radius + 7.0F),
                 structureDimBrush_.Get(), 1.0F);
         }
-        // Previous.
-        d2dContext_->DrawLine(D2D1::Point2F(149, 272), D2D1::Point2F(149, 302), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(146, 287), D2D1::Point2F(124, 273), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(146, 287), D2D1::Point2F(124, 301), accentBrush_.Get(), 3.5F);
-        // Play.
-        d2dContext_->DrawLine(D2D1::Point2F(371, 265), D2D1::Point2F(371, 309), accentBrush_.Get(), 4.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(371, 265), D2D1::Point2F(407, 287), accentBrush_.Get(), 4.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(407, 287), D2D1::Point2F(371, 309), accentBrush_.Get(), 4.0F);
-        // Next.
-        d2dContext_->DrawLine(D2D1::Point2F(619, 272), D2D1::Point2F(619, 302), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(622, 287), D2D1::Point2F(644, 273), accentBrush_.Get(), 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(622, 287), D2D1::Point2F(644, 301), accentBrush_.Get(), 3.5F);
+        // Previous: |<
+        d2dContext_->DrawLine(D2D1::Point2F(123, 272), D2D1::Point2F(123, 302), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(151, 273), D2D1::Point2F(128, 287), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(128, 287), D2D1::Point2F(151, 301), accentBrush_.Get(), 3.5F);
+        // The center glyph describes the action: pause while playing, play while paused.
+        if (musicPlaying_) {
+            d2dContext_->DrawLine(D2D1::Point2F(373, 266), D2D1::Point2F(373, 308), accentBrush_.Get(), 5.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(395, 266), D2D1::Point2F(395, 308), accentBrush_.Get(), 5.0F);
+        } else {
+            d2dContext_->DrawLine(D2D1::Point2F(371, 265), D2D1::Point2F(371, 309), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(371, 265), D2D1::Point2F(407, 287), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(407, 287), D2D1::Point2F(371, 309), accentBrush_.Get(), 4.0F);
+        }
+        // Next: >|
+        d2dContext_->DrawLine(D2D1::Point2F(645, 272), D2D1::Point2F(645, 302), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(617, 273), D2D1::Point2F(640, 287), accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(640, 287), D2D1::Point2F(617, 301), accentBrush_.Get(), 3.5F);
         // Voice command microphone, kept separate from the three transport controls.
         const auto micCenter = D2D1::Point2F(520, 225);
         d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 27, 27),
@@ -517,6 +522,24 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             titleFormat_.Get(), D2D1::RectF(42, 150, 280, 202),
             ttsMuted_ ? mutedTextBrush_.Get() : textBrush_.Get());
 
+        // Desktop settings launcher: monitor frame with an outward utility arrow.
+        const auto desktopSettingsCenter = D2D1::Point2F(690, 132);
+        d2dContext_->FillEllipse(
+            D2D1::Ellipse(desktopSettingsCenter, 28, 28), buttonBrush_.Get());
+        d2dContext_->DrawEllipse(
+            D2D1::Ellipse(desktopSettingsCenter, 28, 28), structureBrush_.Get(), 1.5F);
+        d2dContext_->DrawRectangle(D2D1::RectF(675, 120, 700, 137), accentBrush_.Get(), 2.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(682, 143), D2D1::Point2F(694, 143),
+            accentBrush_.Get(), 2.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(688, 137), D2D1::Point2F(688, 143),
+            accentBrush_.Get(), 2.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(696, 116), D2D1::Point2F(706, 106),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(699, 106), D2D1::Point2F(706, 106),
+            accentBrush_.Get(), 2.5F);
+        d2dContext_->DrawLine(D2D1::Point2F(706, 106), D2D1::Point2F(706, 113),
+            accentBrush_.Get(), 2.5F);
+
         // Thin segmented level meter remains readable without becoming a luminous bar.
         for (int index = 0; index < 10; ++index) {
             const float left = 286.0F + static_cast<float>(index) * 39.0F;
@@ -598,6 +621,10 @@ void OverlayRenderer::SetSlimeAvailable(bool available) {
 void OverlayRenderer::SetMusicVoiceStatus(const std::wstring& status, bool active) {
     musicVoiceStatus_ = status;
     musicVoiceActive_ = active;
+}
+
+void OverlayRenderer::SetMusicPlaying(bool playing) {
+    musicPlaying_ = playing;
 }
 
 void OverlayRenderer::SetCommsStatus(const std::wstring& status,

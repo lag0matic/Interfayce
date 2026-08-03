@@ -8,7 +8,7 @@ Updated: 2026-08-03
 - Draft PR: https://github.com/lag0matic/Interfayce/pull/1
 - Last published feature commit: `09d2ba3 feat: polish VR surfaces and service availability`
 - Native host: `native/build/bin/InterfayceOverlay.exe`
-- Python suite: 55 passing tests
+- Python suite: 57 passing tests
 
 The desktop interaction slice is now **usably complete**. Spotify OAuth, constrained conversational Music control, local STT, and Kokoro acknowledgments have also passed live in-headset testing.
 
@@ -44,8 +44,10 @@ The independent keyboard:
 - Music status, artwork, and transport controls now reuse the resident localhost service. The old two-second `cmd.exe`/Python launch loop was removed because it caused Windows application-start cursor feedback.
 - Playspace shows only baseline/adjusted session state and an abstract origin-reset glyph.
 - A compact gear opens wrist settings. The first live controls are persistent Kokoro output volume and mute; they update the voice service immediately.
+- The wrist Settings deck can open a single-instance desktop configuration window on demand. It selects the shared Music/Comms microphone, mirrors TTS volume and mute, and controls Interfayce haptic strength; the window never opens automatically.
 - Spotify OAuth uses Authorization Code with PKCE through the existing Covasify developer app and `http://127.0.0.1:8888/callback`. Live authorization, protected-token reload, account lookup, and Web API search all pass.
 - Music keeps explicit transport commands on the local fast path and forwards only unrecognized requests to a constrained DeepInfra intent router. The provider key and Spotify tokens are protected with Windows DPAPI.
+- Music transport glyphs follow their actions: previous is `|<`, next is `>|`, and the center control shows pause while Windows reports playback and play while paused.
 - Conversational play requests canonicalize artist names through Spotify, then require confident title and artist matches before playback. Ambiguous or unrelated search results fail closed.
 - Spoken Music controls now cover search/play, transport, status, Spotify volume, mute, and unmute. Both successes and safe command failures receive short asynchronous Kokoro acknowledgments.
 - The Music response line has its own full-width strip at the bottom of the deck, clear of the transport controls.
@@ -78,7 +80,7 @@ The independent keyboard:
 ## Larger features intentionally next, not half-started
 
 1. Wrist visibility/fade behavior and the final feature-complete UI polish pass.
-2. Desktop settings window for OAuth, integrations, device selection, and diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
+2. Expand the completed desktop runtime-settings window with OAuth/integration setup and deeper diagnostics. Non-secret preferences live under `%LOCALAPPDATA%\Interfayce`; tokens and API keys must use Windows credential protection rather than the JSON settings file.
 3. Active/glanceable/sleeping capture update policies.
 4. First-party process-specific music capture and virtual-microphone routing, isolated from the overlay host because it requires driver work and explicit safety decisions.
 
@@ -90,7 +92,8 @@ The independent keyboard:
 - Picker selection and paging, application icons, surface reuse, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, wrist recovery controls, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
 - Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.
-- Python proof-of-concept suite: 55 passing checks.
+- Desktop microphone selection, TTS wrist mirroring, haptic strength, on-demand single-instance launch, and state-aware Music transport glyphs have passed live testing.
+- Python proof-of-concept suite: 57 passing checks.
 
 ## North star
 

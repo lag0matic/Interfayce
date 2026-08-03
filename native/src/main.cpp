@@ -178,6 +178,31 @@ bool LaunchVoiceService(const std::filesystem::path& projectRoot) {
     return true;
 }
 
+bool LaunchDesktopSettings(const std::filesystem::path& projectRoot) {
+    const auto sourceDirectory = (projectRoot / "src").wstring();
+    wchar_t previousPythonPath[32768]{};
+    const auto previousLength = GetEnvironmentVariableW(
+        L"PYTHONPATH", previousPythonPath, static_cast<DWORD>(std::size(previousPythonPath)));
+    SetEnvironmentVariableW(L"PYTHONPATH", sourceDirectory.c_str());
+    std::wstring command = L"pythonw.exe -m interfayce settings";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
+    startup.wShowWindow = SW_SHOWNORMAL;
+    PROCESS_INFORMATION process{};
+    const bool launched = CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
+        0, nullptr, projectRoot.wstring().c_str(), &startup, &process) != FALSE;
+    if (previousLength > 0 && previousLength < std::size(previousPythonPath)) {
+        SetEnvironmentVariableW(L"PYTHONPATH", previousPythonPath);
+    } else {
+        SetEnvironmentVariableW(L"PYTHONPATH", nullptr);
+    }
+    if (!launched) return false;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
 std::wstring Utf8ToWide(const std::string& text) {
     if (text.empty()) return {};
     const auto length = MultiByteToWideChar(CP_UTF8, 0, text.data(),
@@ -255,19 +280,30 @@ void RefreshSpotifyArt(const std::filesystem::path& projectRoot, const std::file
     }
 }
 
-std::wstring ReadSpotifyNowPlaying(const std::filesystem::path& projectRoot) {
+struct MusicPlaybackState {
+    std::wstring line;
+    bool playing{};
+};
+
+MusicPlaybackState ReadSpotifyNowPlaying(const std::filesystem::path& projectRoot) {
     static_cast<void>(projectRoot);
     const auto response = LocalHttpRequest("GET", "/music/current", std::chrono::seconds(2));
     if (!response || response->empty()) return {};
-    auto line = *response;
-    const auto separator = line.find('\t');
-    if (separator != std::string::npos) line.replace(separator, 1, " - ");
-    return Utf8ToWide(line);
+    const auto statusEnd = response->find('\t');
+    const auto artistEnd = statusEnd == std::string::npos
+        ? std::string::npos : response->find('\t', statusEnd + 1);
+    if (statusEnd == std::string::npos || artistEnd == std::string::npos) {
+        return {Utf8ToWide(*response), false};
+    }
+    const auto artist = response->substr(statusEnd + 1, artistEnd - statusEnd - 1);
+    const auto title = response->substr(artistEnd + 1);
+    return {Utf8ToWide(artist + " - " + title), response->substr(0, statusEnd) == "PLAYING"};
 }
 
 struct TtsSettingsState {
     int volumePercent{85};
     bool muted{};
+    float hapticStrength{0.22F};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
@@ -279,6 +315,13 @@ std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
             std::stoi(response.substr(0, firstTab))));
         const auto muteEnd = response.find('\t', firstTab + 1);
         state.muted = response.substr(firstTab + 1, muteEnd - firstTab - 1) == "1";
+        if (muteEnd != std::string::npos) {
+            const auto speedEnd = response.find('\t', muteEnd + 1);
+            if (speedEnd != std::string::npos && speedEnd + 1 < response.size()) {
+                state.hapticStrength = std::clamp(
+                    std::stof(response.substr(speedEnd + 1)), 0.0F, 1.0F);
+            }
+        }
         return state;
     } catch (...) {
         return std::nullopt;
@@ -883,17 +926,19 @@ int main(int argc, char** argv) {
     bool dragFaulted = false;
     int selectedDeck = 0;
     std::wstring musicLine = initialMusicLine;
+    bool musicPlaying = false;
     std::wstring desktopLine = DesktopSurfaceLine(0);
     interfayce::DesktopPanelState desktopPanel;
     std::wstring rigLine;
     std::array<std::wstring, 8> rigSlots;
     bool mountReady = false;
     auto nextMusicPoll = std::chrono::steady_clock::now();
-    std::future<std::wstring> musicPoll;
+    std::future<MusicPlaybackState> musicPoll;
     std::future<std::wstring> musicVoiceCommand;
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
     auto nextCommsPoll = std::chrono::steady_clock::now();
+    auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
     auto nextRigPoll = std::chrono::steady_clock::now();
     bool restoreHoldActive = false;
     bool rigResetHoldActive = false;
@@ -1013,6 +1058,7 @@ int main(int argc, char** argv) {
         bool ttsVolumeDownHit = false;
         bool ttsMuteHit = false;
         bool ttsVolumeUpHit = false;
+        bool desktopSettingsHit = false;
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopReuseIndex;
         std::optional<size_t> desktopCloseIndex;
@@ -1052,6 +1098,8 @@ int main(int argc, char** argv) {
                     && x >= 334.0F && x <= 434.0F && y >= 250.0F && y <= 350.0F;
                 ttsVolumeUpHit = selectedDeck == 4
                     && x >= 542.0F && x <= 642.0F && y >= 250.0F && y <= 350.0F;
+                desktopSettingsHit = selectedDeck == 4
+                    && x >= 650.0F && x <= 730.0F && y >= 94.0F && y <= 170.0F;
                 rigFullResetHit = slimeAvailable && selectedDeck == 3
                     && x >= 42.0F && x <= 350.0F && y >= 320.0F && y <= 366.0F;
                 rigMountResetHit = slimeAvailable && selectedDeck == 3
@@ -1136,7 +1184,7 @@ int main(int argc, char** argv) {
                     || desktopListBackHit || desktopBringIndex.has_value()
                     || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
                     || musicMicHit || commsMicHit || commsClearHit
-                    || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit;
+                    || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit;
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
                     actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
@@ -1231,14 +1279,14 @@ int main(int argc, char** argv) {
         if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit) {
             if (desktopSurfaces.ActivateKeyboardHit(*leftKeyboardSurfaceHit)) {
                 vr::VRInput()->TriggerHapticVibrationAction(
-                    leftHapticAction, 0.0F, 0.035F, 115.0F, 0.22F,
+                    leftHapticAction, 0.0F, 0.035F, 115.0F, ttsSettings.hapticStrength,
                     vr::k_ulInvalidInputValueHandle);
             }
         }
         if (rightUiClick.bChanged && rightUiClick.bState && keyboardSurfaceHit && !panelHitFound) {
             if (desktopSurfaces.ActivateKeyboardHit(*keyboardSurfaceHit)) {
                 vr::VRInput()->TriggerHapticVibrationAction(
-                    rightHapticAction, 0.0F, 0.035F, 115.0F, 0.22F,
+                    rightHapticAction, 0.0F, 0.035F, 115.0F, ttsSettings.hapticStrength,
                     vr::k_ulInvalidInputValueHandle);
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
@@ -1363,6 +1411,10 @@ int main(int argc, char** argv) {
                     const auto updatedTexture = renderer.Texture();
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSettingsHit) {
+            if (!LaunchDesktopSettings(projectRoot)) {
+                std::cerr << "Could not launch the desktop settings window.\n";
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && selectedDeck == 0
                    && panelY >= 245.0F && panelY <= 333.0F) {
@@ -1520,13 +1572,16 @@ int main(int argc, char** argv) {
             }
             if (musicPoll.valid()
                 && musicPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-                const auto updatedMusicLine = musicPoll.get();
+                const auto updatedMusic = musicPoll.get();
                 nextMusicPoll = musicNow + std::chrono::seconds(2);
-                if (updatedMusicLine != musicLine
-                    && renderer.Initialize(system, selectedDeck, updatedMusicLine)) {
-                    musicLine = updatedMusicLine;
-                    RefreshSpotifyArt(projectRoot, musicArtPath);
-                    renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring());
+                if (updatedMusic.line != musicLine || updatedMusic.playing != musicPlaying) {
+                    const bool trackChanged = updatedMusic.line != musicLine;
+                    musicLine = updatedMusic.line;
+                    musicPlaying = updatedMusic.playing;
+                    renderer.SetMusicPlaying(musicPlaying);
+                    if (trackChanged) RefreshSpotifyArt(projectRoot, musicArtPath);
+                    renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel);
                     const auto updatedTexture = renderer.Texture();
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
@@ -1535,6 +1590,8 @@ int main(int argc, char** argv) {
                 const bool spotifyRunningNow = IsProcessRunning(L"Spotify.exe");
                 if (!spotifyRunningNow) {
                     spotifyAvailable = false;
+                    musicPlaying = false;
+                    renderer.SetMusicPlaying(false);
                     nextMusicPoll = musicNow + std::chrono::seconds(2);
                     const std::wstring unavailable = L"Spotify is not running";
                     if (musicLine != unavailable && renderer.Initialize(system, selectedDeck,
@@ -1558,6 +1615,22 @@ int main(int argc, char** argv) {
                     commsState = *current;
                     renderer.SetCommsStatus(
                         commsState.status, commsState.transcript, commsState.active);
+                    if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                            rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                }
+            }
+        }
+        if (std::chrono::steady_clock::now() >= nextRuntimeSettingsPoll) {
+            nextRuntimeSettingsPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            if (const auto loaded = ReadTtsSettings()) {
+                const bool wristDisplayChanged = loaded->volumePercent != ttsSettings.volumePercent
+                    || loaded->muted != ttsSettings.muted;
+                ttsSettings = *loaded;
+                if (selectedDeck == 4 && wristDisplayChanged) {
+                    renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
                     if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                             rigLine, rigSlots, mountReady, desktopPanel)) {
                         const auto updatedTexture = renderer.Texture();

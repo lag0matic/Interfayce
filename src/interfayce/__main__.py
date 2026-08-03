@@ -105,6 +105,9 @@ def main() -> None:
     subcommands.add_parser(
         "llm-status", help="Report the configured LLM profile without exposing its token."
     )
+    subcommands.add_parser(
+        "settings", help="Open the Interfayce desktop configuration window."
+    )
 
     steamvr_status = subcommands.add_parser(
         "steamvr-status", help="Show Index controller battery state from SteamVR."
@@ -207,6 +210,10 @@ def main() -> None:
         client = OpenAiCompatibleClient()
         print(f"{'CONFIGURED' if client.configured else 'MISSING_KEY'}\t"
               f"{client.settings.llm_endpoint}\t{client.settings.llm_model}")
+    elif arguments.command == "settings":
+        from .settings_window import show_settings_window
+
+        show_settings_window()
     elif arguments.command == "steamvr-status":
         status = read_index_controller_status()
         if not status.available:
