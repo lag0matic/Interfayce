@@ -1203,6 +1203,8 @@ int main(int argc, char** argv) {
     renderer.SetRigBodyArtPath((directory / "assets" / "ui" / "rig-body-scanner.png").wstring());
     renderer.SetPlayspaceResetArtPath(
         (directory / "assets" / "ui" / "playspace-reset.png").wstring());
+    renderer.SetHoloGlyphAtlasPath(
+        (directory / "assets" / "ui" / "holo-glyph-atlas.png").wstring());
     std::wstring clockText = LocalClockText();
     renderer.SetClockText(clockText);
     interfayce::BroadcastController broadcast(

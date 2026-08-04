@@ -5,13 +5,15 @@ Updated: 2026-08-04
 ## Current checkpoint
 
 - Branch: `codex/desktop-surfaces`
-- Draft PR: https://github.com/lag0matic/Interfayce/pull/1
-- Checkpoint scope: feature-complete personal build and first installer
+- Prior feature PR (merged): https://github.com/lag0matic/Interfayce/pull/1
+- Checkpoint scope: Interfayce 1.0 personal release
 - Native host: `native/build/bin/InterfayceOverlay.exe`
 - Native audio engine: `native/build/bin/InterfayceAudioEngine.exe`
-- Python suite: 72 passing tests
+- Python suite: 76 passing tests
+- Release installer: `packaging/out/installer/Interfayce-Setup-1.0.0.exe` (498.5 MiB)
+- Installer SHA-256: `9B64739C5574AAE769E64AD82C3D91913CA7F1E754AD7B0FE6D71789D0D0B70D`
 
-The desktop interaction slice is now **usably complete**. Spotify OAuth, constrained conversational Music control, local STT, and Kokoro acknowledgments have also passed live in-headset testing.
+Interfayce 1.0 is **feature-complete for personal daily use**. Desktop interaction, Spotify OAuth and conversational control, local STT, Kokoro acknowledgments, SlimeVR status, audio broadcast, and the Holo Glass wrist interface have passed live in-headset testing.
 
 ## Desktop surfaces
 
@@ -105,13 +107,13 @@ The independent keyboard:
 - The desktop settings window now owns General and Integrations tabs: input/output devices, TTS level/mute/speed, haptics, broadcast gain, Kokoro endpoint/model/voice, Spotify OAuth, and the constrained LLM provider.
 - Its Diagnostics tab refreshes bounded, network-free local health checks whenever Settings opens, separates required attention from optional offline integrations, and persists no credentials or device details beyond the small status report.
 - Update discovery is explicit rather than periodic: the user-requested check reads the latest GitHub release and can open the release page, but never downloads or executes software automatically.
-- `VERSION` now drives native build metadata, the bundled service, and installer compilation. Settings, the tray, `--version`, Windows executable properties, and Add/Remove Programs all expose `0.1.0`.
+- `VERSION` now drives native build metadata, the bundled service, and installer compilation. Settings, the tray, `--version`, Windows executable properties, and Add/Remove Programs all expose `1.0.0`.
 - LLM fallback has an enforced enable toggle. Fresh installs are disabled and blank; when disabled, the client does not read a key or contact a network endpoint.
 - Spotify tokens and the LLM key remain DPAPI-protected. No personal endpoint, client ID, device name, settings JSON, or credential blob is embedded in the source or installer payload.
 - Spotify song announcements now run inside the resident service lifecycle instead of depending on an orphanable `spotify-watch` process.
 - The selected orbital-aperture identity ships as SVG, 1024 px PNG, multi-resolution ICO, native executable resources, shortcuts, and installer branding.
 - `packaging/build-installer.ps1` produces a self-contained, per-user Inno Setup package. It bundles the static-runtime native host, PyInstaller voice service, pinned SolarXR protocol commit, and isolated Node runtime.
-- The staged support service passed local health/settings startup and graceful-shutdown checks. The 236.2 MB payload compresses to a 73.6 MB installer and contains no personal literals or private configuration files.
+- The staged support service passed local health/settings startup and graceful-shutdown checks. The self-contained 1.0 installer is 498.5 MiB because it includes the local Parakeet STT model; it contains no personal settings or credential files.
 
 ## Constraints to preserve
 
@@ -145,6 +147,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Keyboard Copy/Paste glyph controls passed live cross-surface clipboard and post-command modifier-release testing.
 - Favorite shortcuts passed live running-app, closed-app, and Microsoft Store Spotify testing; their bottom status-strip layout passed visual review.
 - Redundant deck-label removal, circular Desk actions, the orbital Playspace restore asset, and its segmented hold feedback passed staged headset visual review.
+- The asset-backed Holo Glass controls, distinct Copy/Paste and gain glyphs, favorite-app treatment, and corrected Settings spacing passed staged headset visual review.
 - First-run diagnostics, persisted report round-tripping, explicit release comparison, shared version identity, native `--version`, EXE metadata, and installer packaging pass automated checks.
 - Left/right wrist mirroring, automatic opposite-hand wrist input, live six-axis placement offsets, reset-to-fit, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
@@ -153,7 +156,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Battery location/readability and the redesigned Rig scanner passed a live headset check.
 - Battery low/critical threshold crossings, deduplication, combined speech, and recovery
   re-arming pass deterministic tests; a naturally depleted-device playtest remains outstanding.
-- Python proof-of-concept suite: 72 passing checks.
+- Python proof-of-concept suite: 76 passing checks.
 
 ## North star
 

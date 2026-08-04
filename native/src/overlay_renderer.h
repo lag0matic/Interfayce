@@ -43,6 +43,7 @@ public:
     void SetPressFeedback(float x, float y, bool active);
     void SetRigBodyArtPath(const std::wstring& path);
     void SetPlayspaceResetArtPath(const std::wstring& path);
+    void SetHoloGlyphAtlasPath(const std::wstring& path);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
@@ -76,8 +77,12 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> criticalBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bodyFillBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> scanFillBrush_;
+    Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> holoGlassBrush_;
+    Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> holoGlyphBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> holoSpecularBrush_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> rigBodyArt_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> playspaceResetArt_;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> holoGlyphAtlas_;
     HANDLE sharedTextureHandle_{};
     bool playspaceAdjusted_{};
     float playspaceHoldProgress_{};
@@ -103,6 +108,7 @@ private:
     bool pressFeedbackActive_{};
     std::wstring rigBodyArtPath_;
     std::wstring playspaceResetArtPath_;
+    std::wstring holoGlyphAtlasPath_;
 };
 
 }  // namespace interfayce

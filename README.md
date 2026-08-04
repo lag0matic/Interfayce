@@ -13,7 +13,7 @@ It is intentionally personal-use-first. We are building the useful little shipbo
 
 ## Current build
 
-The native C++20 host now provides the fading inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable/reusable interactive desktop surfaces with native application icons and an ambidextrous VR keyboard. The wrist uses a unified visual language: circular icon-only actions, rectangular labeled shortcuts, restrained active glow, and segmented hold confirmation for destructive or reset actions.
+Interfayce 1.0 is the first complete personal release. The native C++20 host provides the fading inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable/reusable interactive desktop surfaces with native application icons and an ambidextrous VR keyboard. Its Holo Glass interface uses compact, asset-backed controls designed to remain readable at a glance in a headset, with restrained active glow and segmented hold confirmation for destructive or reset actions.
 
 The Python support code can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
 
@@ -43,7 +43,7 @@ The reproducible per-user installer bundles the native overlay/audio engine, the
 powershell -ExecutionPolicy Bypass -File packaging\build-installer.ps1
 ```
 
-The result is `packaging\out\installer\Interfayce-Setup-0.1.0.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
+The result is `packaging\out\installer\Interfayce-Setup-1.0.0.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
 
 ## Offline native checks
 
