@@ -223,6 +223,22 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             d2dContext_->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &rigBodyArt_);
         }
     }
+    if (deck == 2 && !playspaceResetArt_ && !playspaceResetArtPath_.empty()) {
+        Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory;
+        Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+        Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+        Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&wicFactory)))
+            && SUCCEEDED(wicFactory->CreateDecoderFromFilename(playspaceResetArtPath_.c_str(),
+                nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder))
+            && SUCCEEDED(decoder->GetFrame(0, &frame))
+            && SUCCEEDED(wicFactory->CreateFormatConverter(&converter))
+            && SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+            d2dContext_->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &playspaceResetArt_);
+        }
+    }
 
     d2dContext_->BeginDraw();
     d2dContext_->Clear(D2D1::ColorF(0.0F, 0.0F, 0.0F, 0.0F));
@@ -281,15 +297,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 gearCenter.y + std::sin(angle) * 18.0F), gearBrush, 3.0F);
     }
 
-    if (deck != 2 && deck != 4 && deck != 5) {
-        drawText(deck == 0 ? L"MUSIC" : deck == 1 ? L"DESKTOP" : L"RIG",
-            labelFormat_.Get(), D2D1::RectF(42.0F, 106.0F, 300.0F, 138.0F),
-            accentBrush_.Get());
-    }
     if (deck == 0) {
         drawText(musicLine.empty() ? L"No active track" : musicLine,
-            titleFormat_.Get(), D2D1::RectF(42.0F, 154.0F,
-                540.0F, 202.0F), textBrush_.Get());
+            titleFormat_.Get(), D2D1::RectF(42.0F, 116.0F,
+                500.0F, 170.0F), textBrush_.Get());
     }
     if (albumArt) d2dContext_->DrawBitmap(albumArt.Get(), D2D1::RectF(570.0F, 108.0F, 720.0F, 258.0F));
     if (deck == 0) {
@@ -451,13 +462,17 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                     D2D1::RectF(favoriteLeft[index] + 50.0F, 166.0F,
                         favoriteLeft[index] + 150.0F, 202.0F), textBrush_.Get());
             }
-            const std::array<D2D1_RECT_F, 3> buttons{
-                D2D1::RectF(70, 252, 230, 338),
-                D2D1::RectF(304, 252, 464, 338),
-                D2D1::RectF(538, 252, 698, 338),
+            const std::array<D2D1_POINT_2F, 3> centers{
+                D2D1::Point2F(150, 295),
+                D2D1::Point2F(384, 295),
+                D2D1::Point2F(618, 295),
             };
-            for (const auto& rectangle : buttons) {
-                d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(rectangle, 8, 8), buttonBrush_.Get());
+            for (const auto center : centers) {
+                d2dContext_->FillEllipse(D2D1::Ellipse(center, 43, 43), buttonBrush_.Get());
+                d2dContext_->DrawEllipse(D2D1::Ellipse(center, 43, 43),
+                    structureBrush_.Get(), 1.5F);
+                d2dContext_->DrawEllipse(D2D1::Ellipse(center, 50, 50),
+                    structureDimBrush_.Get(), 1.0F);
             }
             // New surface: plus. Keyboard: key grid. Current surfaces: stacked windows.
             d2dContext_->DrawLine(D2D1::Point2F(150, 276), D2D1::Point2F(150, 314), accentBrush_.Get(), 4.0F);
@@ -668,43 +683,29 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         }
     } else if (deck == 2) {
         const auto stateBrush = playspaceAdjusted_ ? accentBrush_.Get() : structureBrush_.Get();
-        const auto controlBounds = D2D1::RectF(68, 154, 330, 346);
-        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(controlBounds, 18, 18),
+        const auto resetCenter = D2D1::Point2F(199, 250);
+        d2dContext_->FillEllipse(D2D1::Ellipse(resetCenter, 96, 96),
             playspaceAdjusted_ ? activeFillBrush_.Get() : buttonBrush_.Get());
-        d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(controlBounds, 18, 18),
+        d2dContext_->DrawEllipse(D2D1::Ellipse(resetCenter, 96, 96),
             playspaceAdjusted_ ? accentBrush_.Get() : structureDimBrush_.Get(),
             playspaceAdjusted_ ? 2.0F : 1.0F);
-
-        // Abstract origin-reset mark: zero-point diamond over an orbital floor datum.
-        d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(199, 285), 88, 23),
-            stateBrush, 2.5F);
-        d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(199, 244), 75, 75),
-            structureDimBrush_.Get(), 1.5F);
-        d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(199, 244), 58, 58),
-            structureDimBrush_.Get(), 1.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(199, 178), D2D1::Point2F(199, 215),
-            stateBrush, 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(199, 257), D2D1::Point2F(199, 285),
-            stateBrush, 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(166, 236), D2D1::Point2F(178, 236),
-            stateBrush, 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(220, 236), D2D1::Point2F(232, 236),
-            stateBrush, 2.5F);
-        // Central default-origin diamond.
-        d2dContext_->DrawLine(D2D1::Point2F(199, 215), D2D1::Point2F(220, 236),
-            stateBrush, 3.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(220, 236), D2D1::Point2F(199, 257),
-            stateBrush, 3.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(199, 257), D2D1::Point2F(178, 236),
-            stateBrush, 3.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(178, 236), D2D1::Point2F(199, 215),
-            stateBrush, 3.0F);
-        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(199, 236), 5, 5), stateBrush);
-        // Reset arrow head rides the outer orbit without adding another label.
-        d2dContext_->DrawLine(D2D1::Point2F(257, 194), D2D1::Point2F(277, 197),
-            stateBrush, 3.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(277, 197), D2D1::Point2F(270, 216),
-            stateBrush, 3.0F);
+        if (playspaceResetArt_) {
+            d2dContext_->DrawBitmap(playspaceResetArt_.Get(),
+                D2D1::RectF(115, 166, 283, 334), playspaceAdjusted_ ? 0.92F : 0.42F,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        }
+        constexpr int restoreSegments = 12;
+        const int restoreLit = playspaceAdjusted_ ? static_cast<int>(
+            std::ceil(playspaceHoldProgress_ * restoreSegments)) : 0;
+        for (int index = 0; index < restoreSegments; ++index) {
+            const float angle = -1.5707963F
+                + static_cast<float>(index) * 6.2831853F / restoreSegments;
+            const auto point = D2D1::Point2F(
+                resetCenter.x + std::cos(angle) * 106.0F,
+                resetCenter.y + std::sin(angle) * 106.0F);
+            d2dContext_->FillEllipse(D2D1::Ellipse(point, 2.8F, 2.8F),
+                index < restoreLit ? accentBrush_.Get() : structureDimBrush_.Get());
+        }
 
         drawText(L"SESSION", labelFormat_.Get(), D2D1::RectF(390, 178, 680, 210),
             mutedTextBrush_.Get());
@@ -717,10 +718,8 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             labelFormat_.Get(), D2D1::RectF(426, 285, 720, 326), mutedTextBrush_.Get());
     } else if (deck == 5) {
         const auto stateBrush = commsActive_ ? accentBrush_.Get() : structureBrush_.Get();
-        drawText(L"COMMS", labelFormat_.Get(), D2D1::RectF(42, 108, 260, 140),
-            accentBrush_.Get());
         drawText(commsTranscript_.empty() ? L"Voice transcription will appear here"
-                : commsTranscript_, bodyFormat_.Get(), D2D1::RectF(42, 150, 726, 202),
+                : commsTranscript_, bodyFormat_.Get(), D2D1::RectF(42, 116, 726, 190),
             commsTranscript_.empty() ? mutedTextBrush_.Get() : textBrush_.Get());
 
         const std::array<D2D1_RECT_F, 4> shortcutButtons{
@@ -924,6 +923,10 @@ void OverlayRenderer::SetPlayspaceAdjusted(bool adjusted) {
     playspaceAdjusted_ = adjusted;
 }
 
+void OverlayRenderer::SetPlayspaceHoldProgress(float progress) {
+    playspaceHoldProgress_ = (std::max)(0.0F, (std::min)(1.0F, progress));
+}
+
 void OverlayRenderer::SetSlimeAvailable(bool available) {
     slimeAvailable_ = available;
 }
@@ -983,6 +986,12 @@ void OverlayRenderer::SetRigBodyArtPath(const std::wstring& path) {
     if (rigBodyArtPath_ == path) return;
     rigBodyArtPath_ = path;
     rigBodyArt_.Reset();
+}
+
+void OverlayRenderer::SetPlayspaceResetArtPath(const std::wstring& path) {
+    if (playspaceResetArtPath_ == path) return;
+    playspaceResetArtPath_ = path;
+    playspaceResetArt_.Reset();
 }
 
 }  // namespace interfayce

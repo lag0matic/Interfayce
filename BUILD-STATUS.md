@@ -41,10 +41,13 @@ The independent keyboard:
 ## Wrist and visual state
 
 - The chosen direction is **Orbital Utility**: smoked transparent panels, violet structure, cyan reserved for active state, icons before text, and restrained glow.
+- The selected top tab is now the sole deck-identity label; redundant cyan Music, Desktop, Rig, and Comms headings were removed from the content field.
+- Icon-only actions use circular visuals and matching circular hit regions, while user-labeled OSC and favorite-application shortcuts remain rectangular.
 - Music uses circular icon controls; the decorative static playback meter was removed.
 - Music is the startup deck. Its media-session query refreshes asynchronously so helper startup cannot block wrist interaction; the last known state remains visible while it refreshes.
 - Music status, artwork, and transport controls now reuse the resident localhost service. The old two-second `cmd.exe`/Python launch loop was removed because it caused Windows application-start cursor feedback.
 - Playspace shows only baseline/adjusted session state and an abstract origin-reset glyph.
+- Playspace restore now uses a polished orbital origin/anchor/return asset rather than the old code-drawn diagram. Its circular control shares the twelve-dot hold countdown used by Rig and shutdown confirmation.
 - A compact gear opens wrist settings. The first live controls are persistent Kokoro output volume and mute; they update the voice service immediately.
 - The wrist Settings deck can open a single-instance desktop configuration window on demand. It selects the shared Music/Comms microphone, mirrors TTS volume and mute, and controls Interfayce haptic strength; the window never opens automatically.
 - Spotify OAuth uses Authorization Code with PKCE through the existing Covasify developer app and `http://127.0.0.1:8888/callback`. Live authorization, protected-token reload, account lookup, and Web API search all pass.
@@ -122,13 +125,13 @@ The independent keyboard:
 
 ## Larger features intentionally deferred
 
-1. Active/glanceable/sleeping capture update policies.
+1. Active/glanceable/sleeping capture update policies, explicitly deferred unless profiling shows measurable desktop-surface frame-time cost.
 2. Additional diagnostics or visual polish only when live use identifies a concrete need.
 3. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
     selection glow, and interaction feedback across every wrist deck and desktop surface.
 
-The intended next expansion is active/glanceable/sleeping capture update policies.
-Battery/status handling is implemented; its low/critical behavior is
+The intended next phase is extended real-use testing and the remaining UI-unification details.
+Capture throttling stays deferred because current resource use is tiny and stale surfaces would be a UX regression. Battery/status handling is implemented; its low/critical behavior is
 covered by deterministic tests and awaits a natural depleted-battery playtest.
 
 ## Verification record
@@ -141,6 +144,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Per-surface movement locks and grouped Bring All recovery, including independent keyboard placement, have passed live VR testing.
 - Keyboard Copy/Paste glyph controls passed live cross-surface clipboard and post-command modifier-release testing.
 - Favorite shortcuts passed live running-app, closed-app, and Microsoft Store Spotify testing; their bottom status-strip layout passed visual review.
+- Redundant deck-label removal, circular Desk actions, the orbital Playspace restore asset, and its segmented hold feedback passed staged headset visual review.
 - First-run diagnostics, persisted report round-tripping, explicit release comparison, shared version identity, native `--version`, EXE metadata, and installer packaging pass automated checks.
 - Left/right wrist mirroring, automatic opposite-hand wrist input, live six-axis placement offsets, reset-to-fit, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.

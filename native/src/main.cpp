@@ -1128,6 +1128,8 @@ int main(int argc, char** argv) {
 
     interfayce::OverlayRenderer renderer;
     renderer.SetRigBodyArtPath((directory / "assets" / "ui" / "rig-body-scanner.png").wstring());
+    renderer.SetPlayspaceResetArtPath(
+        (directory / "assets" / "ui" / "playspace-reset.png").wstring());
     std::wstring clockText = LocalClockText();
     renderer.SetClockText(clockText);
     interfayce::BroadcastController broadcast(
@@ -1366,6 +1368,7 @@ int main(int argc, char** argv) {
     std::array<int, 2> controllerBatteries{-1, -1};
     auto nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     bool restoreHoldActive = false;
+    int restoreHoldSegment = 0;
     bool rigResetHoldActive = false;
     bool rigResetHoldCompleted = false;
     bool shutdownHoldActive = false;
@@ -1551,8 +1554,10 @@ int main(int argc, char** argv) {
                 const auto y = (1.0F - panelHit.vUVs.v[1]) * 384.0F;
                 panelX = x;
                 panelY = y;
+                const auto restoreX = x - 199.0F;
+                const auto restoreY = y - 250.0F;
                 restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
-                    && x >= 68.0F && x <= 330.0F && y >= 154.0F && y <= 346.0F;
+                    && restoreX * restoreX + restoreY * restoreY <= 98.0F * 98.0F;
                 musicMicHit = selectedDeck == 0
                     && x >= 480.0F && x <= 560.0F && y >= 190.0F && y <= 260.0F;
                 musicBroadcastHit = selectedDeck == 0
@@ -1615,9 +1620,16 @@ int main(int argc, char** argv) {
                             }
                         }
                     }
-                    desktopNewSurfaceHit = selectedDeck == 1 && x >= 70.0F && x <= 230.0F && y >= 252.0F && y <= 338.0F;
-                    desktopKeyboardSpawnHit = selectedDeck == 1 && x >= 304.0F && x <= 464.0F && y >= 252.0F && y <= 338.0F;
-                    desktopSurfaceListHit = selectedDeck == 1 && x >= 538.0F && x <= 698.0F && y >= 252.0F && y <= 338.0F;
+                    const auto deskY = y - 295.0F;
+                    const auto newX = x - 150.0F;
+                    const auto keyboardX = x - 384.0F;
+                    const auto listX = x - 618.0F;
+                    desktopNewSurfaceHit = selectedDeck == 1
+                        && newX * newX + deskY * deskY <= 48.0F * 48.0F;
+                    desktopKeyboardSpawnHit = selectedDeck == 1
+                        && keyboardX * keyboardX + deskY * deskY <= 48.0F * 48.0F;
+                    desktopSurfaceListHit = selectedDeck == 1
+                        && listX * listX + deskY * deskY <= 48.0F * 48.0F;
                 }
             }
         }
@@ -2119,6 +2131,13 @@ int main(int argc, char** argv) {
         } else if (wristUiClick.bChanged && wristUiClick.bState && restoreButtonHit && selectedDeck == 2) {
             restoreHoldActive = true;
             restoreHoldStarted = std::chrono::steady_clock::now();
+            restoreHoldSegment = 1;
+            renderer.SetPlayspaceHoldProgress(1.0F / 12.0F);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
         } else if (wristUiClick.bChanged && wristUiClick.bState && (rigFullResetHit || (rigMountResetHit && mountReady))) {
             rigResetHoldActive = true;
             rigResetHoldCompleted = false;
@@ -2431,6 +2450,29 @@ int main(int argc, char** argv) {
                 std::cout << "wrist restore cancelled: hold for 0.75 seconds\n";
             }
             restoreHoldActive = false;
+            restoreHoldSegment = 0;
+            renderer.SetPlayspaceHoldProgress(0.0F);
+            if (selectedDeck == 2 && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
+        if (restoreHoldActive && wristUiClick.bState && restoreButtonHit) {
+            const auto elapsed = std::chrono::steady_clock::now() - restoreHoldStarted;
+            constexpr float restoreSeconds = 0.75F;
+            const float progress = (std::min)(1.0F,
+                std::chrono::duration<float>(elapsed).count() / restoreSeconds);
+            const int segment = (std::min)(12, 1 + static_cast<int>(progress * 12.0F));
+            if (segment != restoreHoldSegment) {
+                restoreHoldSegment = segment;
+                renderer.SetPlayspaceHoldProgress(progress);
+                if (selectedDeck == 2 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
         }
         if (shutdownHoldActive) {
             const bool stillHolding = wristUiClick.bState && shutdownButtonHit;

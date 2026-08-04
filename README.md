@@ -13,7 +13,7 @@ It is intentionally personal-use-first. We are building the useful little shipbo
 
 ## Current build
 
-The native C++20 host now provides the fading inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable/reusable interactive desktop surfaces with native application icons and an ambidextrous VR keyboard.
+The native C++20 host now provides the fading inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable/reusable interactive desktop surfaces with native application icons and an ambidextrous VR keyboard. The wrist uses a unified visual language: circular icon-only actions, rectangular labeled shortcuts, restrained active glow, and segmented hold confirmation for destructive or reset actions.
 
 The Python support code can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
 

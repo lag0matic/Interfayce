@@ -27,6 +27,7 @@ public:
                     const std::array<std::wstring, 8>& rigSlots = {}, bool mountReady = false,
                     const DesktopPanelState& desktop = {});
     void SetPlayspaceAdjusted(bool adjusted);
+    void SetPlayspaceHoldProgress(float progress);
     void SetSlimeAvailable(bool available);
     void SetMusicVoiceStatus(const std::wstring& status, bool active);
     void SetMusicPlaying(bool playing);
@@ -40,6 +41,7 @@ public:
     void SetClockText(const std::wstring& text);
     void SetLowestBattery(int percent);
     void SetRigBodyArtPath(const std::wstring& path);
+    void SetPlayspaceResetArtPath(const std::wstring& path);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
@@ -70,8 +72,10 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bodyFillBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> scanFillBrush_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> rigBodyArt_;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> playspaceResetArt_;
     HANDLE sharedTextureHandle_{};
     bool playspaceAdjusted_{};
+    float playspaceHoldProgress_{};
     bool slimeAvailable_{};
     std::wstring musicVoiceStatus_{L"VOICE READY"};
     bool musicVoiceActive_{};
@@ -91,6 +95,7 @@ private:
     std::wstring clockText_;
     int lowestBatteryPercent_{-1};
     std::wstring rigBodyArtPath_;
+    std::wstring playspaceResetArtPath_;
 };
 
 }  // namespace interfayce
