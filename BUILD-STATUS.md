@@ -1,6 +1,6 @@
 # Interfayce — Build Status
 
-Updated: 2026-08-03
+Updated: 2026-08-04
 
 ## Current checkpoint
 
@@ -58,6 +58,9 @@ The independent keyboard:
 - The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`. A gaze-and-presentation gate now gives it a fast fade-in, slower fade-out, and hysteresis so it disappears out of view without flickering or stealing hidden clicks.
 - Desktop source pickers show native Windows application icons. Their application pages are pre-rendered and switched as persistent GPU textures, avoiding shared-texture hover flicker and runtime page blanks.
 - Current Windows rows include a reuse action that stops only Interfayce's capture and returns the existing VR surface to a freshly populated picker while preserving its session position and size.
+- The Rig deck is now a filled feminine cybernetic scanner rather than a grid of text boxes. Native battery nodes and percentages remain live above the bundled visual asset, with external leader lines for chest and hip readings.
+- The persistent header shows the lowest connected battery percentage. Controller readings refresh natively; SlimeVR readings refresh asynchronously without blocking deck changes.
+- Battery alerts speak through the existing Kokoro queue on low (20%) and critical (10%) threshold crossings. Each crossing is announced once, simultaneous alerts are combined, and a recovered device can arm a future warning again.
 
 ## Startup capability gates
 
@@ -107,8 +110,20 @@ The independent keyboard:
 
 ## Larger features intentionally deferred
 
-1. Active/glanceable/sleeping capture update policies.
-2. Additional diagnostics or visual polish only when live use identifies a concrete need.
+1. Configurable Comms shortcut buttons for frequently used OSC chatbox messages.
+2. Desktop window locking plus a single Bring All recovery action.
+3. Configurable handedness and wrist-panel positioning.
+4. Clipboard paste and other VR text-entry conveniences.
+5. First-run diagnostics plus installed version and update support.
+6. Personal favorite-application shortcuts for one-action desktop surface spawning.
+7. Active/glanceable/sleeping capture update policies.
+8. Additional diagnostics or visual polish only when live use identifies a concrete need.
+9. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
+    selection glow, and interaction feedback across every wrist deck and desktop surface.
+
+The intended next expansion is configurable Comms shortcuts, followed by window locking and
+Bring All. Battery/status handling is implemented; its low/critical behavior is covered by
+deterministic tests and awaits a natural depleted-battery playtest.
 
 ## Verification record
 
@@ -120,7 +135,10 @@ The independent keyboard:
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
 - Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.
 - Desktop microphone selection, TTS wrist mirroring, haptic strength, on-demand single-instance launch, and state-aware Music transport glyphs have passed live testing.
-- Python proof-of-concept suite: 61 passing checks.
+- Battery location/readability and the redesigned Rig scanner passed a live headset check.
+- Battery low/critical threshold crossings, deduplication, combined speech, and recovery
+  re-arming pass deterministic tests; a naturally depleted-device playtest remains outstanding.
+- Python proof-of-concept suite: 63 passing checks.
 
 ## North star
 

@@ -158,7 +158,8 @@ bool IsLocalTcpPortOpen(uint16_t port, std::chrono::milliseconds timeout) {
 }
 
 std::optional<std::string> LocalHttpRequest(std::string_view method, std::string_view path,
-                                            std::chrono::milliseconds timeout) {
+                                            std::chrono::milliseconds timeout,
+                                            std::string_view body = {}) {
     WSADATA winsock{};
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return std::nullopt;
     const SOCKET socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -181,7 +182,8 @@ std::optional<std::string> LocalHttpRequest(std::string_view method, std::string
         return std::nullopt;
     }
     const std::string request = std::string(method) + " " + std::string(path)
-        + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
+        + std::to_string(body.size()) + "\r\n\r\n" + std::string(body);
     size_t sent = 0;
     while (sent < request.size()) {
         const auto amount = send(socketHandle, request.data() + sent,
@@ -459,6 +461,15 @@ std::wstring ReadControllerBatteryLine(vr::IVRSystem* system) {
         + batteryText(vr::TrackedControllerRole_RightHand, L"R");
 }
 
+int ReadControllerBatteryPercent(vr::IVRSystem* system, vr::ETrackedControllerRole role) {
+    const auto index = system->GetTrackedDeviceIndexForControllerRole(role);
+    if (index == vr::k_unTrackedDeviceIndexInvalid || !system->IsTrackedDeviceConnected(index)) {
+        return -1;
+    }
+    return static_cast<int>(std::lround(system->GetFloatTrackedDeviceProperty(
+        index, vr::Prop_DeviceBatteryPercentage_Float) * 100.0F));
+}
+
 std::wstring DesktopSurfaceLine(size_t count) {
     if (count == 0) return L"No open surfaces";
     return std::to_wstring(count) + (count == 1 ? L" open surface" : L" open surfaces");
@@ -467,6 +478,7 @@ std::wstring DesktopSurfaceLine(size_t count) {
 struct SlimeRigStatus {
     std::array<std::wstring, 8> slots{};
     bool mountReady{};
+    bool received{};
 };
 
 std::optional<std::string> RunHiddenAndCapture(std::wstring command,
@@ -532,6 +544,7 @@ SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoo
         + (projectRoot / "tools" / "slimevr_probe.cjs").wstring() + L"\" --summary";
     if (const auto captured = RunHiddenAndCapture(
             std::move(command), projectRoot, std::chrono::milliseconds(6500))) {
+        status.received = true;
         const auto newline = captured->find_first_of("\r\n");
         const std::string line = captured->substr(0, newline);
         size_t start = 0;
@@ -982,6 +995,7 @@ int main(int argc, char** argv) {
         kRightHapticActionPath, &rightHapticAction);
 
     interfayce::OverlayRenderer renderer;
+    renderer.SetRigBodyArtPath((directory / "assets" / "ui" / "rig-body-scanner.png").wstring());
     std::wstring clockText = LocalClockText();
     renderer.SetClockText(clockText);
     interfayce::BroadcastController broadcast(
@@ -1207,6 +1221,10 @@ int main(int argc, char** argv) {
     auto nextCommsPoll = std::chrono::steady_clock::now();
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
     auto nextRigPoll = std::chrono::steady_clock::now();
+    std::future<SlimeRigStatus> slimeBatteryPoll;
+    std::future<std::optional<std::string>> batteryStatusPost;
+    auto nextControllerBatteryPoll = std::chrono::steady_clock::now();
+    std::array<int, 2> controllerBatteries{-1, -1};
     auto nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     bool restoreHoldActive = false;
     bool rigResetHoldActive = false;
@@ -1410,9 +1428,9 @@ int main(int argc, char** argv) {
                 shutdownButtonHit = selectedDeck == 4
                     && x >= 666.0F && x <= 748.0F && y >= 260.0F && y <= 340.0F;
                 rigFullResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 222.0F && x <= 298.0F && y >= 300.0F && y <= 376.0F;
+                    && x >= 80.0F && x <= 156.0F && y >= 236.0F && y <= 312.0F;
                 rigMountResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 470.0F && x <= 546.0F && y >= 300.0F && y <= 376.0F;
+                    && x >= 612.0F && x <= 688.0F && y >= 236.0F && y <= 312.0F;
                 if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
                     desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
                     if (y >= 166.0F && y < 352.0F) {
@@ -1646,19 +1664,6 @@ int main(int argc, char** argv) {
             }
             if (requestedDeck == 3) {
                 rigLine = ReadControllerBatteryLine(system);
-                if (slimeAvailable
-                    && !IsLocalTcpPortOpen(21110, std::chrono::milliseconds(100))) {
-                    slimeAvailable = false;
-                    renderer.SetSlimeAvailable(false);
-                }
-                if (slimeAvailable) {
-                    const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
-                    rigSlots = slimeStatus.slots;
-                    mountReady = slimeStatus.mountReady;
-                } else {
-                    rigSlots = {};
-                    mountReady = false;
-                }
             }
             if (requestedDeck == 4) {
                 if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
@@ -2040,30 +2045,66 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (selectedDeck == 3 && slimeAvailable
-            && std::chrono::steady_clock::now() >= nextRigPoll) {
-            nextRigPoll = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-            if (!IsLocalTcpPortOpen(21110, std::chrono::milliseconds(100))) {
-                slimeAvailable = false;
-                renderer.SetSlimeAvailable(false);
-                rigSlots = {};
-                mountReady = false;
-                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                        ReadControllerBatteryLine(system), rigSlots, mountReady, desktopPanel)) {
-                    const auto updatedTexture = renderer.Texture();
-                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-                }
-                continue;
+        const auto batteryNow = std::chrono::steady_clock::now();
+        bool batteryStateChanged = false;
+        if (batteryStatusPost.valid()
+            && batteryStatusPost.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            batteryStatusPost.get();
+        }
+        if (batteryNow >= nextControllerBatteryPoll) {
+            nextControllerBatteryPoll = batteryNow + std::chrono::seconds(15);
+            const std::array<int, 2> updated{
+                ReadControllerBatteryPercent(system, vr::TrackedControllerRole_LeftHand),
+                ReadControllerBatteryPercent(system, vr::TrackedControllerRole_RightHand)};
+            batteryStateChanged = updated != controllerBatteries;
+            controllerBatteries = updated;
+            rigLine = ReadControllerBatteryLine(system);
+        }
+        if (slimeAvailable && !slimeBatteryPoll.valid() && batteryNow >= nextRigPoll) {
+            nextRigPoll = batteryNow + std::chrono::seconds(30);
+            slimeBatteryPoll = std::async(std::launch::async,
+                [projectRoot] { return ReadSlimeTrackerBatteries(projectRoot); });
+        }
+        if (slimeBatteryPoll.valid()
+            && slimeBatteryPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            const auto updated = slimeBatteryPoll.get();
+            if (updated.received) {
+                batteryStateChanged = batteryStateChanged || updated.slots != rigSlots
+                    || updated.mountReady != mountReady;
+                rigSlots = updated.slots;
+                mountReady = updated.mountReady;
             }
-            const auto updatedRigLine = ReadControllerBatteryLine(system);
-            const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
-            const auto updatedRigSlots = slimeStatus.slots;
-            if ((updatedRigLine != rigLine || updatedRigSlots != rigSlots)
-                && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                    updatedRigLine, updatedRigSlots, slimeStatus.mountReady)) {
-                rigLine = updatedRigLine;
-                rigSlots = updatedRigSlots;
-                mountReady = slimeStatus.mountReady;
+        }
+        if (batteryStateChanged) {
+            static constexpr const char* batteryNames[]{
+                "Left hand", "Right hand", "Left elbow", "Right elbow", "Chest",
+                "Hip", "Left thigh", "Right thigh", "Left foot", "Right foot"};
+            std::string payload;
+            int lowestBattery = 101;
+            for (size_t index = 0; index < controllerBatteries.size(); ++index) {
+                if (controllerBatteries[index] >= 0) {
+                    lowestBattery = (std::min)(lowestBattery, controllerBatteries[index]);
+                    payload += std::string(batteryNames[index]) + "="
+                        + std::to_string(controllerBatteries[index]) + "\n";
+                }
+            }
+            for (size_t index = 0; index < rigSlots.size(); ++index) {
+                const int percent = rigSlots[index].empty() ? -1 : _wtoi(rigSlots[index].c_str());
+                if (percent >= 0) {
+                    lowestBattery = (std::min)(lowestBattery, percent);
+                    payload += std::string(batteryNames[index + 2]) + "="
+                        + std::to_string(percent) + "\n";
+                }
+            }
+            renderer.SetLowestBattery(lowestBattery <= 100 ? lowestBattery : -1);
+            if (!payload.empty() && !batteryStatusPost.valid()) {
+                batteryStatusPost = std::async(std::launch::async, [payload] {
+                    return LocalHttpRequest(
+                        "POST", "/battery/status", std::chrono::seconds(2), payload);
+                });
+            }
+            if (selectedDeck == 3 && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
@@ -2266,6 +2307,13 @@ int main(int argc, char** argv) {
     broadcast.Stop();
     desktopSurfaces.Shutdown();
     LocalHttpRequest("POST", "/shutdown", std::chrono::seconds(2));
+    if (restartRequested) {
+        const auto serviceDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (std::chrono::steady_clock::now() < serviceDeadline
+               && IsLocalTcpPortOpen(kVoiceServicePort, std::chrono::milliseconds(50))) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
     vr::VROverlay()->DestroyOverlay(wristOverlay);
     vr::VROverlay()->DestroyOverlay(cursorOverlay);
     vr::VROverlay()->DestroyOverlay(leftCursorOverlay);

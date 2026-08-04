@@ -36,6 +36,8 @@ public:
     void SetShutdownHoldProgress(float progress);
     void SetRigHoldProgress(float resetProgress, float mountProgress);
     void SetClockText(const std::wstring& text);
+    void SetLowestBattery(int percent);
+    void SetRigBodyArtPath(const std::wstring& path);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
@@ -61,6 +63,11 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> structureDimBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> activeFillBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> buttonBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> warningBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> criticalBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bodyFillBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> scanFillBrush_;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> rigBodyArt_;
     HANDLE sharedTextureHandle_{};
     bool playspaceAdjusted_{};
     bool slimeAvailable_{};
@@ -79,6 +86,8 @@ private:
     float rigResetHoldProgress_{};
     float rigMountHoldProgress_{};
     std::wstring clockText_;
+    int lowestBatteryPercent_{-1};
+    std::wstring rigBodyArtPath_;
 };
 
 }  // namespace interfayce

@@ -11,6 +11,7 @@ from pathlib import Path
 import threading
 
 from .comms import CommsDictation
+from .battery_alerts import BatteryAlertMonitor
 from .kokoro import speak_in_background
 from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interpret_music_request
@@ -57,6 +58,7 @@ class VoiceRuntime:
         self.transcriber = ParakeetTranscriber()
         self.command_lock = threading.Lock()
         self.comms = CommsDictation(self.transcriber, self.command_lock)
+        self.battery_alerts = BatteryAlertMonitor()
         self._song_media = WindowsSpotifyMedia()
         self._song_read_failure_logged = False
         osc = VrchatOscClient()
@@ -224,6 +226,34 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, runtime.toggle_comms())
             elif self.path == "/comms/clear":
                 self._reply(200, runtime.clear_comms())
+            elif self.path == "/tts/announce":
+                try:
+                    length = min(int(self.headers.get("Content-Length", "0")), 512)
+                except ValueError:
+                    length = 0
+                message = self.rfile.read(length).decode("utf-8", errors="replace").strip()
+                if not message:
+                    self._reply(400, "empty announcement")
+                else:
+                    speak_in_background(message)
+                    self._reply(200, "queued")
+            elif self.path == "/battery/status":
+                try:
+                    length = min(int(self.headers.get("Content-Length", "0")), 2048)
+                except ValueError:
+                    length = 0
+                readings: dict[str, int] = {}
+                for line in self.rfile.read(length).decode("utf-8", errors="replace").splitlines():
+                    name, separator, value = line.partition("=")
+                    if separator and name.strip():
+                        try:
+                            readings[name.strip()] = int(value.strip())
+                        except ValueError:
+                            continue
+                announcement = runtime.battery_alerts.observe(readings)
+                if announcement:
+                    speak_in_background(announcement)
+                self._reply(200, announcement or "quiet")
             elif self.path == "/settings/tts/volume/up":
                 self._reply(200, settings_wire_text(adjust_tts_volume(0.1)))
             elif self.path == "/settings/tts/volume/down":

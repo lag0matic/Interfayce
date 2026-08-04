@@ -145,6 +145,10 @@ bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wst
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.30F, 0.22F, 0.57F, 0.78F), &structureDimBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.04F, 0.28F, 0.34F, 0.96F), &activeFillBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.035F, 0.055F, 0.105F, 0.96F), &buttonBrush_);
+    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(1.0F, 0.64F, 0.16F, 1.0F), &warningBrush_);
+    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(1.0F, 0.20F, 0.32F, 1.0F), &criticalBrush_);
+    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.34F, 0.18F, 0.78F, 0.34F), &bodyFillBrush_);
+    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.12F, 0.82F, 0.94F, 0.14F), &scanFillBrush_);
 
     return Render(deck, musicLine, musicArtPath, rigLine, rigSlots, mountReady, desktop);
 }
@@ -203,6 +207,22 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             d2dContext_->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &albumArt);
         }
     }
+    if (deck == 3 && !rigBodyArt_ && !rigBodyArtPath_.empty()) {
+        Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory;
+        Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+        Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+        Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&wicFactory)))
+            && SUCCEEDED(wicFactory->CreateDecoderFromFilename(rigBodyArtPath_.c_str(), nullptr,
+                GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder))
+            && SUCCEEDED(decoder->GetFrame(0, &frame))
+            && SUCCEEDED(wicFactory->CreateFormatConverter(&converter))
+            && SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+            d2dContext_->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &rigBodyArt_);
+        }
+    }
 
     d2dContext_->BeginDraw();
     d2dContext_->Clear(D2D1::ColorF(0.0F, 0.0F, 0.0F, 0.0F));
@@ -238,8 +258,15 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
 
     // Compact orbital gear; it opens settings without spending another text tab.
     const auto gearBrush = deck == 4 ? accentBrush_.Get() : mutedTextBrush_.Get();
+    if (lowestBatteryPercent_ >= 0) {
+        auto* batteryBrush = lowestBatteryPercent_ <= 10 ? criticalBrush_.Get()
+            : lowestBatteryPercent_ <= 20 ? warningBrush_.Get() : structureBrush_.Get();
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(620, 49), 4, 4), batteryBrush);
+        drawText(std::to_wstring(lowestBatteryPercent_) + L"%", labelFormat_.Get(),
+            D2D1::RectF(628, 36, 670, 66), batteryBrush);
+    }
     if (!clockText_.empty()) {
-        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(618, 36, 694, 66),
+        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(666, 36, 716, 66),
             textBrush_.Get());
     }
     const auto gearCenter = D2D1::Point2F(724, 49);
@@ -259,10 +286,9 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             labelFormat_.Get(), D2D1::RectF(42.0F, 106.0F, 300.0F, 138.0F),
             accentBrush_.Get());
     }
-    if (deck != 2 && deck != 4 && deck != 5) {
+    if (deck == 0 || deck == 1) {
         drawText(deck == 0 ? (musicLine.empty() ? L"No active track" : musicLine)
-                : deck == 1 ? musicLine
-                : (rigLine.empty() ? L"Controllers unavailable" : rigLine),
+                : musicLine,
             titleFormat_.Get(), D2D1::RectF(42.0F, 154.0F,
                 deck == 0 ? 540.0F : 690.0F, 202.0F), textBrush_.Get());
     }
@@ -405,22 +431,155 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             drawText(L"SLIMEVR OFFLINE FOR THIS SESSION", bodyFormat_.Get(),
                 D2D1::RectF(122, 224, 650, 262), mutedTextBrush_.Get());
         } else {
-        constexpr const wchar_t* slots[] = {
-            L"L ELB", L"R ELB", L"CHEST", L"HIP",
-            L"L THI", L"R THI", L"L FOOT", L"R FOOT",
+        // Orbital diagnostic figure: location carries the label, leaving only battery values.
+        const auto center = D2D1::Point2F(384, 226);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(center, 105, 105), structureDimBrush_.Get(), 1.0F);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(center, 88, 88), structureDimBrush_.Get(), 0.8F);
+        if (rigBodyArt_) {
+            d2dContext_->DrawBitmap(rigBodyArt_.Get(), D2D1::RectF(319, 98, 449, 351), 0.92F,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1::RectF(160, 100, 864, 1470));
+        } else {
+        d2dContext_->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(384, 242), 111, 12), scanFillBrush_.Get());
+        d2dContext_->DrawEllipse(
+            D2D1::Ellipse(D2D1::Point2F(384, 242), 111, 12), accentBrush_.Get(), 1.0F);
+
+        Microsoft::WRL::ComPtr<ID2D1Factory> rigFactory;
+        d2dContext_->GetFactory(&rigFactory);
+        const auto fillShell = [&](const auto& points) {
+            Microsoft::WRL::ComPtr<ID2D1PathGeometry> geometry;
+            Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+            if (FAILED(rigFactory->CreatePathGeometry(&geometry))
+                || FAILED(geometry->Open(&sink))) return;
+            sink->BeginFigure(points.front(), D2D1_FIGURE_BEGIN_FILLED);
+            sink->AddLines(points.data() + 1, static_cast<UINT32>(points.size() - 1));
+            sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+            if (SUCCEEDED(sink->Close())) {
+                d2dContext_->FillGeometry(geometry.Get(), bodyFillBrush_.Get());
+            }
         };
-        for (int index = 0; index < 8; ++index) {
-            const auto column = index % 4;
-            const auto row = index / 4;
-            const float left = 42.0F + column * 174.0F;
-            const float top = 212.0F + row * 48.0F;
-            d2dContext_->FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(left, top, left + 150.0F, top + 38.0F), 8.0F, 8.0F),
-                buttonBrush_.Get());
-            drawText(slots[index], labelFormat_.Get(), D2D1::RectF(left + 14.0F, top + 12.0F,
-                left + 132.0F, top + 33.0F), mutedTextBrush_.Get());
+        // Faceted cranial shell and visor, closer to a diagnostic scan than a head icon.
+        const std::array<D2D1_POINT_2F, 8> head{
+            D2D1::Point2F(384, 125), D2D1::Point2F(399, 135),
+            D2D1::Point2F(402, 153), D2D1::Point2F(394, 171),
+            D2D1::Point2F(384, 177), D2D1::Point2F(374, 171),
+            D2D1::Point2F(366, 153), D2D1::Point2F(369, 135)};
+        fillShell(head);
+        for (size_t index = 0; index < head.size(); ++index) {
+            d2dContext_->DrawLine(head[index], head[(index + 1) % head.size()],
+                structureBrush_.Get(), 1.8F);
+        }
+        d2dContext_->DrawLine(D2D1::Point2F(369, 147), D2D1::Point2F(399, 147),
+            accentBrush_.Get(), 1.2F);
+        d2dContext_->DrawLine(D2D1::Point2F(375, 158), D2D1::Point2F(393, 158),
+            structureDimBrush_.Get(), 1.0F);
+
+        // Tapered double contours give the limbs a scanned-volume silhouette.
+        const auto limb = [&](D2D1_POINT_2F a, D2D1_POINT_2F b,
+                              float startWidth, float endWidth) {
+            const float dx = b.x - a.x;
+            const float dy = b.y - a.y;
+            const float length = std::sqrt(dx * dx + dy * dy);
+            const float nx = -dy / length;
+            const float ny = dx / length;
+            const auto aLeft = D2D1::Point2F(a.x + nx * startWidth, a.y + ny * startWidth);
+            const auto aRight = D2D1::Point2F(a.x - nx * startWidth, a.y - ny * startWidth);
+            const auto bLeft = D2D1::Point2F(b.x + nx * endWidth, b.y + ny * endWidth);
+            const auto bRight = D2D1::Point2F(b.x - nx * endWidth, b.y - ny * endWidth);
+            const std::array<D2D1_POINT_2F, 4> shell{aLeft, bLeft, bRight, aRight};
+            fillShell(shell);
+            d2dContext_->DrawLine(aLeft, bLeft, structureBrush_.Get(), 1.6F);
+            d2dContext_->DrawLine(aRight, bRight, structureBrush_.Get(), 1.6F);
+            d2dContext_->DrawLine(aLeft, aRight, structureDimBrush_.Get(), 1.0F);
+            d2dContext_->DrawLine(bLeft, bRight, structureDimBrush_.Get(), 1.0F);
+            d2dContext_->DrawLine(a, b, structureDimBrush_.Get(), 0.8F);
+        };
+        // Armored torso shell, inner core and segmented pelvis.
+        const std::array<D2D1_POINT_2F, 8> torso{
+            D2D1::Point2F(350, 184), D2D1::Point2F(375, 177),
+            D2D1::Point2F(393, 177), D2D1::Point2F(418, 184),
+            D2D1::Point2F(407, 231), D2D1::Point2F(397, 249),
+            D2D1::Point2F(371, 249), D2D1::Point2F(361, 231)};
+        fillShell(torso);
+        for (size_t index = 0; index < torso.size(); ++index) {
+            d2dContext_->DrawLine(torso[index], torso[(index + 1) % torso.size()],
+                structureBrush_.Get(), 1.8F);
+        }
+        d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(384, 210), 20, 32),
+            structureDimBrush_.Get(), 1.1F);
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(384, 210), 9, 25),
+            scanFillBrush_.Get());
+        d2dContext_->DrawLine(D2D1::Point2F(384, 178), D2D1::Point2F(384, 249),
+            structureDimBrush_.Get(), 0.9F);
+        for (float y : {194.0F, 207.0F, 220.0F, 233.0F}) {
+            const float halfWidth = 20.0F - (y - 194.0F) * 0.25F;
+            d2dContext_->DrawLine(D2D1::Point2F(384 - halfWidth, y),
+                D2D1::Point2F(384 + halfWidth, y), structureDimBrush_.Get(), 0.8F);
+        }
+        limb(D2D1::Point2F(351, 188), D2D1::Point2F(319, 219), 7.0F, 5.0F);
+        limb(D2D1::Point2F(319, 219), D2D1::Point2F(302, 258), 5.0F, 3.5F);
+        limb(D2D1::Point2F(417, 188), D2D1::Point2F(449, 219), 7.0F, 5.0F);
+        limb(D2D1::Point2F(449, 219), D2D1::Point2F(466, 258), 5.0F, 3.5F);
+        limb(D2D1::Point2F(373, 247), D2D1::Point2F(363, 286), 8.0F, 6.0F);
+        limb(D2D1::Point2F(363, 286), D2D1::Point2F(358, 331), 6.0F, 4.0F);
+        limb(D2D1::Point2F(395, 247), D2D1::Point2F(405, 286), 8.0F, 6.0F);
+        limb(D2D1::Point2F(405, 286), D2D1::Point2F(410, 331), 6.0F, 4.0F);
+        }
+
+        const std::array<D2D1_POINT_2F, 8> nodes{
+            D2D1::Point2F(347, 190), D2D1::Point2F(421, 190),
+            D2D1::Point2F(384, 166), D2D1::Point2F(384, 226),
+            D2D1::Point2F(369, 250), D2D1::Point2F(399, 250),
+            D2D1::Point2F(374, 330), D2D1::Point2F(394, 330),
+        };
+        const auto batteryBrush = [&](const std::wstring& value) -> ID2D1Brush* {
+            const int percent = value.empty() ? -1 : _wtoi(value.c_str());
+            if (percent >= 0 && percent <= 10) return criticalBrush_.Get();
+            if (percent <= 20 && percent >= 0) return warningBrush_.Get();
+            return value.empty() ? structureDimBrush_.Get() : accentBrush_.Get();
+        };
+        for (size_t index = 0; index < nodes.size(); ++index) {
+            auto* brush = batteryBrush(rigSlots[index]);
+            d2dContext_->FillEllipse(D2D1::Ellipse(nodes[index], 5.5F, 5.5F), brush);
+            d2dContext_->DrawEllipse(D2D1::Ellipse(nodes[index], 9.5F, 9.5F), brush, 1.0F);
+            if (index == 2 || index == 3) continue;
+            const float textLeft = index == 0 || index == 4 || index == 6
+                ? nodes[index].x - 49.0F : nodes[index].x + 11.0F;
             drawText(rigSlots[index].empty() ? L"--" : rigSlots[index], labelFormat_.Get(),
-                D2D1::RectF(left + 105.0F, top + 8.0F, left + 148.0F, top + 33.0F), textBrush_.Get());
+                D2D1::RectF(textLeft, nodes[index].y - 12, textLeft + 45, nodes[index].y + 15), brush);
+        }
+        const auto drawBatteryLeader = [&](size_t index, D2D1_POINT_2F elbow,
+                                           D2D1_POINT_2F terminal, bool textOnRight) {
+            auto* brush = batteryBrush(rigSlots[index]);
+            d2dContext_->DrawLine(nodes[index], elbow, brush, 1.2F);
+            d2dContext_->DrawLine(elbow, terminal, brush, 1.2F);
+            d2dContext_->DrawEllipse(D2D1::Ellipse(terminal, 3.0F, 3.0F), brush, 1.2F);
+            const float left = textOnRight ? terminal.x + 8.0F : terminal.x - 52.0F;
+            drawText(rigSlots[index].empty() ? L"--" : rigSlots[index], labelFormat_.Get(),
+                D2D1::RectF(left, terminal.y - 12, left + 45, terminal.y + 15), brush);
+        };
+        drawBatteryLeader(2, D2D1::Point2F(402, 154), D2D1::Point2F(466, 154), true);
+        drawBatteryLeader(3, D2D1::Point2F(366, 238), D2D1::Point2F(302, 238), false);
+        const auto controllerValue = [&](bool right) {
+            const auto divider = rigLine.find(L"    ");
+            const auto field = right
+                ? (divider == std::wstring::npos ? std::wstring{} : rigLine.substr(divider + 4))
+                : rigLine.substr(0, divider);
+            const auto firstDigit = field.find_first_of(L"0123456789");
+            const auto percent = field.find(L'%', firstDigit);
+            return firstDigit == std::wstring::npos || percent == std::wstring::npos
+                ? std::wstring{} : field.substr(firstDigit, percent - firstDigit + 1);
+        };
+        const std::array<D2D1_POINT_2F, 2> hands{
+            D2D1::Point2F(337, 228), D2D1::Point2F(431, 228)};
+        for (size_t index = 0; index < hands.size(); ++index) {
+            const auto value = controllerValue(index == 1);
+            auto* brush = batteryBrush(value);
+            d2dContext_->FillEllipse(D2D1::Ellipse(hands[index], 5.5F, 5.5F), brush);
+            d2dContext_->DrawEllipse(D2D1::Ellipse(hands[index], 9.5F, 9.5F), brush, 1.0F);
+            const float textLeft = index == 0 ? hands[index].x - 50.0F : hands[index].x + 12.0F;
+            drawText(value.empty() ? L"--" : value, labelFormat_.Get(),
+                D2D1::RectF(textLeft, hands[index].y - 12, textLeft + 45, hands[index].y + 15), brush);
         }
         const auto drawRigHoldControl = [&](D2D1_POINT_2F center, wchar_t glyph,
                                              float progress, bool enabled) {
@@ -442,12 +601,16 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                     index < lit ? accentBrush_.Get() : structureDimBrush_.Get());
             }
             const wchar_t text[]{glyph, L'\0'};
+            titleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            titleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             drawText(text, titleFormat_.Get(),
-                D2D1::RectF(center.x - 11, center.y - 20, center.x + 14, center.y + 21),
+                D2D1::RectF(center.x - 24, center.y - 24, center.x + 24, center.y + 24),
                 enabled ? accentBrush_.Get() : mutedTextBrush_.Get());
+            titleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            titleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         };
-        drawRigHoldControl(D2D1::Point2F(260, 338), L'R', rigResetHoldProgress_, true);
-        drawRigHoldControl(D2D1::Point2F(508, 338), L'M', rigMountHoldProgress_, mountReady);
+        drawRigHoldControl(D2D1::Point2F(118, 274), L'R', rigResetHoldProgress_, true);
+        drawRigHoldControl(D2D1::Point2F(650, 274), L'M', rigMountHoldProgress_, mountReady);
         }
     } else if (deck == 2) {
         const auto stateBrush = playspaceAdjusted_ ? accentBrush_.Get() : structureBrush_.Get();
@@ -734,6 +897,16 @@ void OverlayRenderer::SetRigHoldProgress(float resetProgress, float mountProgres
 
 void OverlayRenderer::SetClockText(const std::wstring& text) {
     clockText_ = text;
+}
+
+void OverlayRenderer::SetLowestBattery(int percent) {
+    lowestBatteryPercent_ = percent < 0 ? -1 : (std::min)(100, percent);
+}
+
+void OverlayRenderer::SetRigBodyArtPath(const std::wstring& path) {
+    if (rigBodyArtPath_ == path) return;
+    rigBodyArtPath_ = path;
+    rigBodyArt_.Reset();
 }
 
 }  // namespace interfayce
