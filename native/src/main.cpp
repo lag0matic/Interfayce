@@ -2,6 +2,7 @@
 #include <WS2tcpip.h>
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <dwmapi.h>
 #include <openvr.h>
 
 #include "overlay_renderer.h"
@@ -842,6 +843,54 @@ int main(int argc, char** argv) {
         CoUninitialize();
         return receivedFrame ? 0 : 1;
     }
+    const bool windowGeometryProbe = argc > 2
+        && std::string_view(argv[1]) == "--window-geometry-probe";
+    if (windowGeometryProbe) {
+        Microsoft::WRL::ComPtr<ID3D11Device> captureDevice;
+        Microsoft::WRL::ComPtr<ID3D11DeviceContext> captureContext;
+        D3D_FEATURE_LEVEL featureLevel{};
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+                &captureDevice, &featureLevel, &captureContext))) {
+            CoUninitialize();
+            return 1;
+        }
+        const auto query = Utf8ToWide(argv[2]);
+        const auto windows = interfayce::DesktopSurfaceManager{}.EnumerateWindows();
+        const auto source = std::find_if(windows.begin(), windows.end(), [&](const auto& item) {
+            return item.label.find(query) != std::wstring::npos;
+        });
+        if (source == windows.end()) {
+            std::wcerr << L"No captured window matched: " << query << L'\n';
+            CoUninitialize();
+            return 1;
+        }
+        interfayce::DesktopCapture capture;
+        if (!capture.Start(captureDevice.Get(), *source)) {
+            CoUninitialize();
+            return 1;
+        }
+        RECT windowBounds{};
+        RECT frameBounds{};
+        RECT clientBounds{};
+        GetWindowRect(source->window, &windowBounds);
+        DwmGetWindowAttribute(source->window, DWMWA_EXTENDED_FRAME_BOUNDS,
+            &frameBounds, sizeof(frameBounds));
+        GetClientRect(source->window, &clientBounds);
+        POINT clientOrigin{clientBounds.left, clientBounds.top};
+        ClientToScreen(source->window, &clientOrigin);
+        std::wcout << source->label << L"\nWGC=" << capture.Width() << L'x' << capture.Height()
+            << L"\nWINDOW=" << windowBounds.left << L',' << windowBounds.top << L' '
+            << windowBounds.right - windowBounds.left << L'x' << windowBounds.bottom - windowBounds.top
+            << L"\nDWM=" << frameBounds.left << L',' << frameBounds.top << L' '
+            << frameBounds.right - frameBounds.left << L'x' << frameBounds.bottom - frameBounds.top
+            << L"\nCLIENT=" << clientOrigin.x << L',' << clientOrigin.y << L' '
+            << clientBounds.right - clientBounds.left << L'x' << clientBounds.bottom - clientBounds.top
+            << L"\nDPI=" << GetDpiForWindow(source->window) << L'\n';
+        capture.Stop();
+        CoUninitialize();
+        return 0;
+    }
     const bool probeOnly = argc > 1 && std::string_view(argv[1]) == "--probe";
     const bool overlayProbe = argc > 1 && std::string_view(argv[1]) == "--overlay-probe";
     const bool inputCapture = argc > 1 && std::string_view(argv[1]) == "--input-capture";
@@ -1380,6 +1429,16 @@ int main(int argc, char** argv) {
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
         desktopSurfaces.SetHoveredKeyboard(
             keyboardSurfaceHit ? keyboardSurfaceHit : leftKeyboardSurfaceHit);
+        const std::optional<uint64_t> rightAimSurface = keyboardSurfaceHit
+            ? std::optional<uint64_t>{keyboardSurfaceHit->id}
+            : desktopSurfaceHit ? std::optional<uint64_t>{desktopSurfaceHit->id}
+            : desktopFrameHit;
+        const std::optional<uint64_t> leftAimSurface = leftKeyboardSurfaceHit
+            ? std::optional<uint64_t>{leftKeyboardSurfaceHit->id}
+            : leftDesktopSurfaceHit ? std::optional<uint64_t>{leftDesktopSurfaceHit->id}
+            : leftDesktopFrameHit;
+        const auto rightGrabTarget = rightAimSurface;
+        const auto leftGrabTarget = leftAimSurface;
         std::optional<uint64_t> highlightedSurface;
         if (keyboardSurfaceHit) highlightedSurface = keyboardSurfaceHit->id;
         else if (leftKeyboardSurfaceHit) highlightedSurface = leftKeyboardSurfaceHit->id;
@@ -1467,20 +1526,20 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(leftCursorOverlay);
         }
-        if (leftSurfaceGrab.bChanged && leftSurfaceGrab.bState && leftDesktopFrameHit) {
+        if (leftSurfaceGrab.bChanged && leftSurfaceGrab.bState && leftGrabTarget) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Left)) {
-                if (desktopSurfaces.BeginGrab(*leftDesktopFrameHit,
+                if (desktopSurfaces.BeginGrab(*leftGrabTarget,
                         interfayce::DesktopGrabHand::Left, *handPose)) {
-                    std::cout << "Desktop surface " << *leftDesktopFrameHit
+                    std::cout << "Desktop surface " << *leftGrabTarget
                               << " grabbed with left hand.\n";
                 }
             }
         }
-        if (rightSurfaceGrab.bChanged && rightSurfaceGrab.bState && desktopFrameHit) {
+        if (rightSurfaceGrab.bChanged && rightSurfaceGrab.bState && rightGrabTarget) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Right)) {
-                if (desktopSurfaces.BeginGrab(*desktopFrameHit,
+                if (desktopSurfaces.BeginGrab(*rightGrabTarget,
                         interfayce::DesktopGrabHand::Right, *handPose)) {
-                    std::cout << "Desktop surface " << *desktopFrameHit
+                    std::cout << "Desktop surface " << *rightGrabTarget
                               << " grabbed with right hand.\n";
                 }
             }

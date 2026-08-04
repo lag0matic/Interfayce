@@ -150,8 +150,6 @@ std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source,
         bounds = info.rcMonitor;
     } else {
         if (source.window == nullptr || !IsWindow(source.window)) return std::nullopt;
-        if (IsIconic(source.window)) ShowWindowAsync(source.window, SW_RESTORE);
-        SetForegroundWindow(source.window);
         if (FAILED(DwmGetWindowAttribute(source.window, DWMWA_EXTENDED_FRAME_BOUNDS,
                 &bounds, sizeof(bounds))) && !GetWindowRect(source.window, &bounds)) return std::nullopt;
     }
@@ -163,21 +161,65 @@ std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source,
     };
 }
 
+void PrepareWindowForInput(HWND window) {
+    if (window == nullptr || !IsWindow(window)) return;
+    if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+    SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    BringWindowToTop(window);
+    SetForegroundWindow(window);
+}
+
 bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent event) {
     const auto virtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
     const auto virtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const auto virtualWidth = (std::max)(GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1, 1);
     const auto virtualHeight = (std::max)(GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1, 1);
-    INPUT input{};
-    input.type = INPUT_MOUSE;
-    input.mi.dx = static_cast<LONG>(std::lround(
+    INPUT movement{};
+    movement.type = INPUT_MOUSE;
+    movement.mi.dx = static_cast<LONG>(std::lround(
         static_cast<double>(point.x - virtualLeft) * 65535.0 / virtualWidth));
-    input.mi.dy = static_cast<LONG>(std::lround(
+    movement.mi.dy = static_cast<LONG>(std::lround(
         static_cast<double>(point.y - virtualTop) * 65535.0 / virtualHeight));
-    input.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE;
-    if (event == interfayce::DesktopPointerEvent::PrimaryDown) input.mi.dwFlags |= MOUSEEVENTF_LEFTDOWN;
-    if (event == interfayce::DesktopPointerEvent::PrimaryUp) input.mi.dwFlags |= MOUSEEVENTF_LEFTUP;
-    return SendInput(1, &input, sizeof(input)) == 1;
+    movement.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
+        | MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE;
+    if (event == interfayce::DesktopPointerEvent::Move) {
+        return SendInput(1, &movement, sizeof(movement)) == 1;
+    }
+    INPUT button{};
+    button.type = INPUT_MOUSE;
+    button.mi.dwFlags = event == interfayce::DesktopPointerEvent::PrimaryDown
+        ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
+    std::array<INPUT, 2> inputs{movement, button};
+    return SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT))
+        == inputs.size();
+}
+
+bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
+                         interfayce::DesktopPointerEvent event) {
+    if (rootWindow == nullptr || !IsWindow(rootWindow)) return false;
+    // Some retained-mode/web UI frameworks validate posted client messages
+    // against the global cursor position. Keep both coordinate spaces aligned.
+    SetCursorPos(screenPoint.x, screenPoint.y);
+    HWND target = WindowFromPoint(screenPoint);
+    if (target == nullptr
+        || (target != rootWindow && !IsChild(rootWindow, target))) {
+        target = rootWindow;
+    }
+    POINT clientPoint = screenPoint;
+    if (!ScreenToClient(target, &clientPoint)) return false;
+    const LPARAM coordinates = MAKELPARAM(
+        static_cast<short>(clientPoint.x), static_cast<short>(clientPoint.y));
+    const WPARAM buttons = event == interfayce::DesktopPointerEvent::PrimaryUp
+        ? 0 : MK_LBUTTON;
+    if (!PostMessageW(target, WM_MOUSEMOVE,
+            event == interfayce::DesktopPointerEvent::Move ? buttons : 0, coordinates)) {
+        return false;
+    }
+    const UINT message = event == interfayce::DesktopPointerEvent::PrimaryDown
+        ? WM_LBUTTONDOWN : event == interfayce::DesktopPointerEvent::PrimaryUp
+            ? WM_LBUTTONUP : 0;
+    return message == 0 || PostMessageW(target, message, buttons, coordinates) != FALSE;
 }
 
 bool InjectDesktopScroll(const POINT point, int32_t verticalDelta, int32_t horizontalDelta) {
@@ -955,6 +997,10 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         || *found->assignedSource >= found->sources.size()) return false;
     if (event == DesktopPointerEvent::PrimaryDown) {
         focusedSurfaceId_ = found->id;
+        const auto& source = found->sources[*found->assignedSource];
+        if (source.kind == DesktopSource::Kind::Window) {
+            PrepareWindowForInput(source.window);
+        }
         for (auto& surface : surfaces_) {
             if (surface.keyboard) {
                 surface.texture->RenderKeyboard(
@@ -963,8 +1009,12 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
             }
         }
     }
-    const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
-    return point && InjectDesktopPointer(*point, event);
+    const auto& source = found->sources[*found->assignedSource];
+    const auto point = DesktopPointForHit(source, hit.u, hit.v);
+    const bool injected = point && (source.kind == DesktopSource::Kind::Window
+        ? InjectWindowPointer(source.window, *point, event)
+        : InjectDesktopPointer(*point, event));
+    return injected;
 }
 
 bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
@@ -1002,8 +1052,7 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
             || *target->assignedSource >= target->sources.size()) return false;
         const auto& source = target->sources[*target->assignedSource];
         if (source.kind == DesktopSource::Kind::Window && source.window != nullptr) {
-            if (IsIconic(source.window)) ShowWindowAsync(source.window, SW_RESTORE);
-            SetForegroundWindow(source.window);
+            PrepareWindowForInput(source.window);
         }
         if (!InjectKeyboardKey(key, keyboard->keyboardControlled, keyboard->keyboardAltered)) {
             return false;
