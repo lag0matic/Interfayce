@@ -35,6 +35,7 @@ add_executable(InterfayceOverlay
     src/desktop_surface_manager.cpp
     src/desktop_surface_registry.cpp
     src/overlay_renderer.cpp
+    src/tray_icon.cpp
 )
 target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
 target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32)

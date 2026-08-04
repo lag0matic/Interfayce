@@ -9,6 +9,7 @@
 #include "broadcast_controller.h"
 #include "desktop_surface_manager.h"
 #include "desktop_surface_registry.h"
+#include "tray_icon.h"
 
 #include <algorithm>
 #include <chrono>
@@ -279,6 +280,23 @@ bool LaunchDesktopSettings(const std::filesystem::path& executableDirectory,
     } else {
         SetEnvironmentVariableW(L"PYTHONPATH", nullptr);
     }
+    if (!launched) return false;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
+bool RelaunchInterfayce(const std::filesystem::path& executable,
+                        const std::filesystem::path& workingDirectory) {
+    std::wstring command = L"\"" + executable.wstring() + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
+    startup.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION process{};
+    const bool launched = CreateProcessW(executable.wstring().c_str(), command.data(),
+        nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+        workingDirectory.wstring().c_str(), &startup, &process) != FALSE;
     if (!launched) return false;
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
@@ -1155,7 +1173,12 @@ int main(int argc, char** argv) {
 
     std::cout << "Interfayce overlay host is running.\n";
     const HANDLE shutdownEvent = CreateEventW(nullptr, TRUE, FALSE, kShutdownEventName);
+    interfayce::TrayIcon tray;
+    if (argc == 1 && !tray.Initialize(GetModuleHandleW(nullptr))) {
+        std::cerr << "Could not create the Interfayce notification icon.\n";
+    }
     bool running = true;
+    bool restartRequested = false;
     const bool boundedCapture = inputCapture || dragPreview || temporaryDrag
         || (argc > 1 && std::string_view(argv[1]) == "--session-drag");
     const auto captureDeadline = std::chrono::steady_clock::now()
@@ -1214,6 +1237,16 @@ int main(int argc, char** argv) {
     };
     auto lastPreviewLog = std::chrono::steady_clock::now();
     while (running && (!boundedCapture || std::chrono::steady_clock::now() < captureDeadline)) {
+        if (const auto trayAction = tray.Poll()) {
+            if (*trayAction == interfayce::TrayAction::OpenSettings) {
+                if (!LaunchDesktopSettings(directory, projectRoot)) {
+                    std::cerr << "Could not launch the desktop settings window.\n";
+                }
+            } else {
+                restartRequested = *trayAction == interfayce::TrayAction::Restart;
+                running = false;
+            }
+        }
         if (shutdownEvent != nullptr && WaitForSingleObject(shutdownEvent, 0) == WAIT_OBJECT_0) {
             running = false;
             continue;
@@ -2237,6 +2270,11 @@ int main(int argc, char** argv) {
     vr::VROverlay()->DestroyOverlay(cursorOverlay);
     vr::VROverlay()->DestroyOverlay(leftCursorOverlay);
     if (shutdownEvent != nullptr) CloseHandle(shutdownEvent);
+    tray.Shutdown();
     vr::VR_Shutdown();
+    CoUninitialize();
+    if (restartRequested && !RelaunchInterfayce(std::filesystem::absolute(argv[0]), directory)) {
+        return 1;
+    }
     return 0;
 }
