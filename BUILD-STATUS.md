@@ -32,7 +32,8 @@ The independent keyboard:
 - is a wide, staggered QWERTY layout rather than SteamVR's modal keyboard;
 - accepts trigger input from either hand with cyan/violet pointer dots;
 - targets the most recently clicked captured surface;
-- supports Shift, Ctrl, Alt, Backspace, Enter, arrows, and Space;
+- supports Shift, Ctrl, Alt, Backspace, Enter, and Space;
+- replaces the low-value arrow cluster with wide Copy and Paste glyph controls that target the most recently clicked captured surface and release their Ctrl modifier cleanly;
 - gives a short key glow and a haptic tap on the hand that pressed it;
 - uses direct panel geometry with only a small edge tolerance, allowing rays to pass naturally through the space between keyboard and monitor;
 - participates in the same Bring to me, Close, one-hand move, and two-hand resize behavior as desktop surfaces.
@@ -115,16 +116,15 @@ The independent keyboard:
 
 ## Larger features intentionally deferred
 
-1. Clipboard paste and other VR text-entry conveniences.
-2. First-run diagnostics plus installed version and update support.
-3. Personal favorite-application shortcuts for one-action desktop surface spawning.
-4. Active/glanceable/sleeping capture update policies.
-5. Additional diagnostics or visual polish only when live use identifies a concrete need.
-6. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
+1. First-run diagnostics plus installed version and update support.
+2. Personal favorite-application shortcuts for one-action desktop surface spawning.
+3. Active/glanceable/sleeping capture update policies.
+4. Additional diagnostics or visual polish only when live use identifies a concrete need.
+5. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
     selection glow, and interaction feedback across every wrist deck and desktop surface.
 
-The intended next expansion is clipboard and keyboard text-entry conveniences, followed by
-first-run diagnostics/version support. Battery/status handling is implemented; its low/critical behavior is
+The intended next expansion is first-run diagnostics/version support, followed by favorite-application
+shortcuts. Battery/status handling is implemented; its low/critical behavior is
 covered by deterministic tests and awaits a natural depleted-battery playtest.
 
 ## Verification record
@@ -135,6 +135,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
 - Picker selection and paging, application icons, surface reuse, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, wrist recovery controls, and wrist visibility fading have passed live VR testing.
 - Per-surface movement locks and grouped Bring All recovery, including independent keyboard placement, have passed live VR testing.
+- Keyboard Copy/Paste glyph controls passed live cross-surface clipboard and post-command modifier-release testing.
 - Left/right wrist mirroring, automatic opposite-hand wrist input, live six-axis placement offsets, reset-to-fit, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
 - Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.

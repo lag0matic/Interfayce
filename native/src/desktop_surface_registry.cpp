@@ -20,6 +20,8 @@ constexpr UINT kKeyboardHeight = 440;
 constexpr float kFrameAspectRatio = 128.0F;
 constexpr float kGlowAspectRatio = 16.0F;
 
+enum class KeyboardCommand { None, Copy, Paste };
+
 struct KeyboardKeyDefinition {
     D2D1_RECT_F bounds{};
     std::wstring label;
@@ -28,6 +30,7 @@ struct KeyboardKeyDefinition {
     bool togglesShift{};
     bool togglesControl{};
     bool togglesAlt{};
+    KeyboardCommand command{KeyboardCommand::None};
 };
 
 std::vector<KeyboardKeyDefinition> KeyboardLayout(bool shifted) {
@@ -54,10 +57,10 @@ std::vector<KeyboardKeyDefinition> KeyboardLayout(bool shifted) {
     keys.push_back({D2D1::RectF(24, 340, 114, 420), L"CTRL", 0, 0, false, true});
     keys.push_back({D2D1::RectF(126, 340, 216, 420), L"ALT", 0, 0, false, false, true});
     keys.push_back({D2D1::RectF(228, 340, 920, 420), L"SPACE", L' '});
-    keys.push_back({D2D1::RectF(932, 340, 986, 420), L"LEFT", 0, VK_LEFT});
-    keys.push_back({D2D1::RectF(994, 340, 1048, 420), L"DOWN", 0, VK_DOWN});
-    keys.push_back({D2D1::RectF(1056, 340, 1110, 420), L"UP", 0, VK_UP});
-    keys.push_back({D2D1::RectF(1118, 340, 1176, 420), L"RIGHT", 0, VK_RIGHT});
+    keys.push_back({D2D1::RectF(932, 340, 1050, 420), L"", 0, 0,
+        false, false, false, KeyboardCommand::Copy});
+    keys.push_back({D2D1::RectF(1058, 340, 1176, 420), L"", 0, 0,
+        false, false, false, KeyboardCommand::Paste});
     return keys;
 }
 
@@ -250,6 +253,14 @@ bool InjectKeyboardKey(const KeyboardKeyDefinition& key, bool controlled, bool a
         input.ki.dwFlags = release ? KEYEVENTF_KEYUP : 0;
         inputs.push_back(input);
     };
+    if (key.command != KeyboardCommand::None) {
+        addVirtual(VK_CONTROL, false);
+        addVirtual(key.command == KeyboardCommand::Copy ? 'C' : 'V', false);
+        addVirtual(key.command == KeyboardCommand::Copy ? 'C' : 'V', true);
+        addVirtual(VK_CONTROL, true);
+        const auto count = static_cast<UINT>(inputs.size());
+        return SendInput(count, inputs.data(), sizeof(INPUT)) == count;
+    }
     if (controlled) addVirtual(VK_CONTROL, false);
     if (altered) addVirtual(VK_MENU, false);
     if (key.character != 0 && (controlled || altered)) {
@@ -544,9 +555,33 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
         context_->DrawRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
             pressed ? cyanBrush_.Get() : modifierSelected ? violetBrush_.Get() : violetDimBrush_.Get(),
             pressed ? 3.0F : modifierSelected ? 2.0F : 1.0F);
-        drawText(key.label, itemFormat_.Get(),
-            D2D1::RectF(key.bounds.left + 8, key.bounds.top + 18,
-                key.bounds.right - 8, key.bounds.bottom - 8), textBrush_.Get());
+        if (key.command == KeyboardCommand::Copy) {
+            auto* brush = pressed ? cyanBrush_.Get() : textBrush_.Get();
+            const float centerX = (key.bounds.left + key.bounds.right) * 0.5F;
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 22, key.bounds.top + 20,
+                    centerX + 12, key.bounds.bottom - 15), 3, 3), brush, 2.2F);
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 10, key.bounds.top + 13,
+                    centerX + 24, key.bounds.bottom - 22), 3, 3), brush, 2.2F);
+        } else if (key.command == KeyboardCommand::Paste) {
+            auto* brush = pressed ? cyanBrush_.Get() : textBrush_.Get();
+            const float centerX = (key.bounds.left + key.bounds.right) * 0.5F;
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 22, key.bounds.top + 20,
+                    centerX + 22, key.bounds.bottom - 13), 4, 4), brush, 2.2F);
+            context_->FillRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 10, key.bounds.top + 13,
+                    centerX + 10, key.bounds.top + 25), 4, 4), brush);
+            context_->DrawLine(D2D1::Point2F(centerX - 12, key.bounds.top + 42),
+                D2D1::Point2F(centerX + 12, key.bounds.top + 42), brush, 1.7F);
+            context_->DrawLine(D2D1::Point2F(centerX - 12, key.bounds.top + 52),
+                D2D1::Point2F(centerX + 7, key.bounds.top + 52), brush, 1.7F);
+        } else {
+            drawText(key.label, itemFormat_.Get(),
+                D2D1::RectF(key.bounds.left + 8, key.bounds.top + 18,
+                    key.bounds.right - 8, key.bounds.bottom - 8), textBrush_.Get());
+        }
     }
     return SUCCEEDED(context_->EndDraw());
 }
