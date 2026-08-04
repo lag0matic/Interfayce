@@ -131,9 +131,25 @@ bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wst
             DWRITE_FONT_STRETCH_NORMAL, 32.0F, L"en-us", &titleFormat_))
         || FAILED(writeFactory->CreateTextFormat(
             L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 20.0F, L"en-us", &bodyFormat_))) {
+            DWRITE_FONT_STRETCH_NORMAL, 20.0F, L"en-us", &bodyFormat_))
+        || FAILED(writeFactory->CreateTextFormat(
+            L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, 20.0F, L"en-us", &bodyWrapFormat_))) {
         return false;
     }
+    labelFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    titleFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    bodyFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    bodyWrapFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    const DWRITE_TRIMMING characterTrim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    if (FAILED(writeFactory->CreateEllipsisTrimmingSign(labelFormat_.Get(), &labelEllipsis_))
+        || FAILED(writeFactory->CreateEllipsisTrimmingSign(titleFormat_.Get(), &titleEllipsis_))
+        || FAILED(writeFactory->CreateEllipsisTrimmingSign(bodyFormat_.Get(), &bodyEllipsis_))) {
+        return false;
+    }
+    labelFormat_->SetTrimming(&characterTrim, labelEllipsis_.Get());
+    titleFormat_->SetTrimming(&characterTrim, titleEllipsis_.Get());
+    bodyFormat_->SetTrimming(&characterTrim, bodyEllipsis_.Get());
 
     // Orbital Utility: ultraviolet owns structure; cyan is reserved for live/action state.
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.012F, 0.020F, 0.038F, 0.92F), &glassBrush_);
@@ -277,15 +293,15 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     if (lowestBatteryPercent_ >= 0) {
         auto* batteryBrush = lowestBatteryPercent_ <= 10 ? criticalBrush_.Get()
             : lowestBatteryPercent_ <= 20 ? warningBrush_.Get() : structureBrush_.Get();
-        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(620, 49), 4, 4), batteryBrush);
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(622, 49), 4, 4), batteryBrush);
         drawText(std::to_wstring(lowestBatteryPercent_) + L"%", labelFormat_.Get(),
-            D2D1::RectF(628, 36, 670, 66), batteryBrush);
+            D2D1::RectF(631, 36, 674, 66), batteryBrush);
     }
     if (!clockText_.empty()) {
-        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(666, 36, 716, 66),
+        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(676, 36, 712, 66),
             textBrush_.Get());
     }
-    const auto gearCenter = D2D1::Point2F(724, 49);
+    const auto gearCenter = D2D1::Point2F(730, 49);
     d2dContext_->DrawEllipse(D2D1::Ellipse(gearCenter, 11, 11), gearBrush, 2.5F);
     d2dContext_->DrawEllipse(D2D1::Ellipse(gearCenter, 4, 4), gearBrush, 2.0F);
     for (int index = 0; index < 8; ++index) {
@@ -379,23 +395,33 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         if (desktop.showSurfaceList) {
             d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 110), accentBrush_.Get(), 3.0F);
             d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 146), accentBrush_.Get(), 3.0F);
-            // Grouped targets recover every surface without adding another text label.
-            d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(684, 128), 25, 25),
+            // Bring-all shares the stacked-surface motif and adds inward recall chevrons.
+            const auto bringCenter = D2D1::Point2F(684, 128);
+            d2dContext_->DrawEllipse(D2D1::Ellipse(bringCenter, 27, 27),
                 structureBrush_.Get(), 1.5F);
-            for (float centerX : {674.0F, 684.0F, 694.0F}) {
-                d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, 128), 5, 5),
-                    accentBrush_.Get(), 1.4F);
-                d2dContext_->DrawLine(D2D1::Point2F(centerX - 8, 128),
-                    D2D1::Point2F(centerX + 8, 128), accentBrush_.Get(), 1.1F);
-                d2dContext_->DrawLine(D2D1::Point2F(centerX, 120),
-                    D2D1::Point2F(centerX, 136), accentBrush_.Get(), 1.1F);
+            for (int layer = 0; layer < 3; ++layer) {
+                const float inset = static_cast<float>(layer) * 4.0F;
+                d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(669 + inset, 116 - inset, 694 + inset, 135 - inset), 3, 3),
+                    layer == 2 ? accentBrush_.Get() : structureDimBrush_.Get(), 1.4F);
             }
+            d2dContext_->DrawLine(D2D1::Point2F(657, 128), D2D1::Point2F(665, 122), accentBrush_.Get(), 2.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(657, 128), D2D1::Point2F(665, 134), accentBrush_.Get(), 2.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(711, 128), D2D1::Point2F(703, 122), accentBrush_.Get(), 2.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(711, 128), D2D1::Point2F(703, 134), accentBrush_.Get(), 2.0F);
             const auto count = std::min<size_t>(desktop.surfaces.size(), 3);
             for (size_t index = 0; index < count; ++index) {
                 const float top = 166.0F + static_cast<float>(index) * 62.0F;
-                d2dContext_->FillRectangle(D2D1::RectF(42, top, 722, top + 50), buttonBrush_.Get());
+                d2dContext_->FillRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(42, top, 722, top + 50), 10, 10), buttonBrush_.Get());
                 drawText(desktop.surfaces[index].label, bodyFormat_.Get(),
                     D2D1::RectF(58, top + 12, 410, top + 42), textBrush_.Get());
+                for (float centerX : {450.0F, 520.0F, 590.0F, 674.0F}) {
+                    d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, top + 25), 20, 20),
+                        stripBrush_.Get());
+                    d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, top + 25), 20, 20),
+                        structureDimBrush_.Get(), 1.0F);
+                }
                 // Circular arrow returns captured content to the source picker.
                 const auto reuseBrush = desktop.surfaces[index].reusable
                     ? accentBrush_.Get() : structureDimBrush_.Get();
@@ -444,13 +470,13 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             for (size_t index = 0; index < desktop.favorites.size(); ++index) {
                 if (desktop.favorites[index].empty()) continue;
                 const auto bounds = D2D1::RectF(
-                    favoriteLeft[index], 142.0F, favoriteLeft[index] + 160.0F, 222.0F);
+                    favoriteLeft[index], 132.0F, favoriteLeft[index] + 160.0F, 200.0F);
                 d2dContext_->FillRoundedRectangle(
                     D2D1::RoundedRect(bounds, 10, 10), buttonBrush_.Get());
                 d2dContext_->DrawRoundedRectangle(
                     D2D1::RoundedRect(bounds, 10, 10), structureBrush_.Get(), 1.5F);
                 // Compact launch aperture; the label carries application identity.
-                const auto center = D2D1::Point2F(favoriteLeft[index] + 28.0F, 182.0F);
+                const auto center = D2D1::Point2F(favoriteLeft[index] + 28.0F, 166.0F);
                 d2dContext_->DrawEllipse(D2D1::Ellipse(center, 12, 12), accentBrush_.Get(), 2.0F);
                 d2dContext_->DrawLine(D2D1::Point2F(center.x - 5, center.y + 5),
                     D2D1::Point2F(center.x + 7, center.y - 7), accentBrush_.Get(), 2.0F);
@@ -459,13 +485,13 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 d2dContext_->DrawLine(D2D1::Point2F(center.x + 7, center.y - 7),
                     D2D1::Point2F(center.x + 7, center.y - 1), accentBrush_.Get(), 2.0F);
                 drawText(desktop.favorites[index], labelFormat_.Get(),
-                    D2D1::RectF(favoriteLeft[index] + 50.0F, 166.0F,
-                        favoriteLeft[index] + 150.0F, 202.0F), textBrush_.Get());
+                    D2D1::RectF(favoriteLeft[index] + 50.0F, 150.0F,
+                        favoriteLeft[index] + 150.0F, 184.0F), textBrush_.Get());
             }
             const std::array<D2D1_POINT_2F, 3> centers{
-                D2D1::Point2F(150, 295),
-                D2D1::Point2F(384, 295),
-                D2D1::Point2F(618, 295),
+                D2D1::Point2F(150, 278),
+                D2D1::Point2F(384, 278),
+                D2D1::Point2F(618, 278),
             };
             for (const auto center : centers) {
                 d2dContext_->FillEllipse(D2D1::Ellipse(center, 43, 43), buttonBrush_.Get());
@@ -475,19 +501,32 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                     structureDimBrush_.Get(), 1.0F);
             }
             // New surface: plus. Keyboard: key grid. Current surfaces: stacked windows.
-            d2dContext_->DrawLine(D2D1::Point2F(150, 276), D2D1::Point2F(150, 314), accentBrush_.Get(), 4.0F);
-            d2dContext_->DrawLine(D2D1::Point2F(131, 295), D2D1::Point2F(169, 295), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(150, 259), D2D1::Point2F(150, 297), accentBrush_.Get(), 4.0F);
+            d2dContext_->DrawLine(D2D1::Point2F(131, 278), D2D1::Point2F(169, 278), accentBrush_.Get(), 4.0F);
             d2dContext_->DrawRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(338, 276, 430, 315), 4, 4), accentBrush_.Get(), 2.0F);
+                D2D1::RoundedRect(D2D1::RectF(350, 263, 418, 293), 4, 4), accentBrush_.Get(), 2.0F);
             for (int row = 0; row < 2; ++row) {
                 for (int column = 0; column < 5; ++column) {
-                    d2dContext_->FillRectangle(D2D1::RectF(348.0F + column * 15.0F,
-                        284.0F + row * 11.0F, 357.0F + column * 15.0F,
-                        291.0F + row * 11.0F), textBrush_.Get());
+                    d2dContext_->FillRectangle(D2D1::RectF(357.0F + column * 11.0F,
+                        269.0F + row * 9.0F, 364.0F + column * 11.0F,
+                        274.0F + row * 9.0F), textBrush_.Get());
                 }
             }
-            d2dContext_->DrawRectangle(D2D1::RectF(588, 282, 648, 314), textBrush_.Get(), 2.0F);
-            d2dContext_->DrawRectangle(D2D1::RectF(596, 274, 656, 306), mutedTextBrush_.Get(), 2.0F);
+            // Current surfaces: a compact stack plus a live count badge.
+            for (int layer = 0; layer < 3; ++layer) {
+                const float inset = static_cast<float>(layer) * 5.0F;
+                d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(592 + inset, 267 - inset, 630 + inset, 290 - inset), 4, 4),
+                    layer == 2 ? accentBrush_.Get() : structureDimBrush_.Get(), 1.8F);
+            }
+            const auto countText = std::to_wstring(desktop.surfaces.size());
+            d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(642, 291), 12, 12), activeFillBrush_.Get());
+            d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(642, 291), 12, 12), accentBrush_.Get(), 1.5F);
+            labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            drawText(countText, labelFormat_.Get(), D2D1::RectF(630, 279, 654, 303), textBrush_.Get());
+            labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         }
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
@@ -719,12 +758,12 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     } else if (deck == 5) {
         const auto stateBrush = commsActive_ ? accentBrush_.Get() : structureBrush_.Get();
         drawText(commsTranscript_.empty() ? L"Voice transcription will appear here"
-                : commsTranscript_, bodyFormat_.Get(), D2D1::RectF(42, 116, 726, 190),
+                : commsTranscript_, bodyWrapFormat_.Get(), D2D1::RectF(42, 116, 726, 190),
             commsTranscript_.empty() ? mutedTextBrush_.Get() : textBrush_.Get());
 
         const std::array<D2D1_RECT_F, 4> shortcutButtons{
-            D2D1::RectF(42, 208, 198, 250), D2D1::RectF(218, 208, 374, 250),
-            D2D1::RectF(394, 208, 550, 250), D2D1::RectF(570, 208, 726, 250)};
+            D2D1::RectF(42, 198, 198, 236), D2D1::RectF(218, 198, 374, 236),
+            D2D1::RectF(394, 198, 550, 236), D2D1::RectF(570, 198, 726, 236)};
         labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         for (size_t index = 0; index < shortcutButtons.size(); ++index) {
@@ -740,7 +779,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
 
-        const auto micCenter = D2D1::Point2F(270, 302);
+        const auto micCenter = D2D1::Point2F(270, 285);
         d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 38, 38),
             commsActive_ ? activeFillBrush_.Get() : buttonBrush_.Get());
         d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 38, 38), stateBrush,
@@ -748,36 +787,38 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 45, 45),
             structureDimBrush_.Get(), 1.0F);
         d2dContext_->DrawRoundedRectangle(
-            D2D1::RoundedRect(D2D1::RectF(257, 278, 283, 308), 13, 13),
+            D2D1::RoundedRect(D2D1::RectF(257, 261, 283, 291), 13, 13),
             stateBrush, 4.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(250, 299), D2D1::Point2F(250, 307),
+        d2dContext_->DrawLine(D2D1::Point2F(250, 282), D2D1::Point2F(250, 290),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(250, 307), D2D1::Point2F(258, 315),
+        d2dContext_->DrawLine(D2D1::Point2F(250, 290), D2D1::Point2F(258, 298),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(258, 315), D2D1::Point2F(282, 315),
+        d2dContext_->DrawLine(D2D1::Point2F(258, 298), D2D1::Point2F(282, 298),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(282, 315), D2D1::Point2F(290, 307),
+        d2dContext_->DrawLine(D2D1::Point2F(282, 298), D2D1::Point2F(290, 290),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(290, 307), D2D1::Point2F(290, 299),
+        d2dContext_->DrawLine(D2D1::Point2F(290, 290), D2D1::Point2F(290, 282),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(270, 316), D2D1::Point2F(270, 328),
+        d2dContext_->DrawLine(D2D1::Point2F(270, 299), D2D1::Point2F(270, 311),
             stateBrush, 3.5F);
 
-        const auto clearCenter = D2D1::Point2F(560, 302);
+        const auto clearCenter = D2D1::Point2F(560, 285);
         d2dContext_->FillEllipse(D2D1::Ellipse(clearCenter, 32, 32), buttonBrush_.Get());
         d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 32, 32), structureBrush_.Get(), 2.0F);
         d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 39, 39), structureDimBrush_.Get(), 1.0F);
         // Empty chatbox pulse: an erased speech cell, kept icon-only.
         d2dContext_->DrawRoundedRectangle(
-            D2D1::RoundedRect(D2D1::RectF(542, 290, 578, 316), 6, 6),
+            D2D1::RoundedRect(D2D1::RectF(542, 273, 578, 299), 6, 6),
             accentBrush_.Get(), 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(550, 316), D2D1::Point2F(546, 324),
+        d2dContext_->DrawLine(D2D1::Point2F(550, 299), D2D1::Point2F(546, 307),
             accentBrush_.Get(), 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(546, 324), D2D1::Point2F(558, 317),
+        d2dContext_->DrawLine(D2D1::Point2F(546, 307), D2D1::Point2F(558, 300),
             accentBrush_.Get(), 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(540, 326), D2D1::Point2F(580, 286),
+        d2dContext_->DrawLine(D2D1::Point2F(540, 309), D2D1::Point2F(580, 269),
             accentBrush_.Get(), 3.5F);
 
+        d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
+            structureDimBrush_.Get(), 1.0F);
         d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(49, 355), 5, 5), stateBrush);
         drawText(commsStatus_, labelFormat_.Get(), D2D1::RectF(64, 344, 724, 374),
             commsActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
@@ -900,6 +941,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         d2dContext_->DrawEllipse(D2D1::Ellipse(shutdownCenter, 17, 17),
             accentBrush_.Get(), 3.5F);
     }
+    if (pressFeedbackActive_) {
+        d2dContext_->FillEllipse(D2D1::Ellipse(pressFeedbackCenter_, 15, 15), scanFillBrush_.Get());
+        d2dContext_->DrawEllipse(D2D1::Ellipse(pressFeedbackCenter_, 21, 21), accentBrush_.Get(), 1.5F);
+    }
     if (FAILED(d2dContext_->EndDraw())) {
         return false;
     }
@@ -980,6 +1025,11 @@ void OverlayRenderer::SetClockText(const std::wstring& text) {
 
 void OverlayRenderer::SetLowestBattery(int percent) {
     lowestBatteryPercent_ = percent < 0 ? -1 : (std::min)(100, percent);
+}
+
+void OverlayRenderer::SetPressFeedback(float x, float y, bool active) {
+    pressFeedbackCenter_ = D2D1::Point2F(x, y);
+    pressFeedbackActive_ = active;
 }
 
 void OverlayRenderer::SetRigBodyArtPath(const std::wstring& path) {

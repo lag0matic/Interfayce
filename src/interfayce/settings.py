@@ -27,6 +27,7 @@ class AppSettings:
     tts_voice: str = ""
     tts_output: str = ""
     stt_microphone: str = ""
+    comms_silence_timeout_seconds: float = 3.0
     haptic_strength: float = 0.22
     broadcast_gain_db: float = 12.0
     spotify_client_id: str = ""
@@ -93,6 +94,8 @@ def _clamp(settings: AppSettings) -> AppSettings:
         tts_voice=str(settings.tts_voice).strip(),
         tts_output=str(settings.tts_output).strip(),
         stt_microphone=str(settings.stt_microphone).strip(),
+        comms_silence_timeout_seconds=max(
+            1.0, min(30.0, float(settings.comms_silence_timeout_seconds))),
         haptic_strength=max(0.0, min(1.0, float(settings.haptic_strength))),
         broadcast_gain_db=max(0.0, min(24.0, float(settings.broadcast_gain_db))),
         spotify_client_id=str(settings.spotify_client_id).strip(),
@@ -127,6 +130,7 @@ def load_settings() -> AppSettings:
                 tts_voice=data.get("tts_voice", ""),
                 tts_output=data.get("tts_output", ""),
                 stt_microphone=data.get("stt_microphone", ""),
+                comms_silence_timeout_seconds=data.get("comms_silence_timeout_seconds", 3.0),
                 haptic_strength=data.get("haptic_strength", 0.22),
                 broadcast_gain_db=data.get("broadcast_gain_db", 12.0),
                 spotify_client_id=data.get("spotify_client_id", ""),
@@ -210,7 +214,8 @@ def set_llm_profile(*, endpoint: str, model: str, reasoning_effort: str = "",
 def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               tts_speed: float, tts_endpoint: str,
                               tts_model: str, tts_voice: str, tts_output: str,
-                              stt_microphone: str, haptic_strength: float,
+                              stt_microphone: str, comms_silence_timeout_seconds: float,
+                              haptic_strength: float,
                               broadcast_gain_db: float, spotify_client_id: str,
                               llm_enabled: bool, llm_endpoint: str,
                               llm_model: str, llm_reasoning_effort: str,
@@ -235,6 +240,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         tts_voice=tts_voice,
         tts_output=tts_output,
         stt_microphone=stt_microphone,
+        comms_silence_timeout_seconds=comms_silence_timeout_seconds,
         haptic_strength=haptic_strength,
         broadcast_gain_db=broadcast_gain_db,
         spotify_client_id=spotify_client_id,

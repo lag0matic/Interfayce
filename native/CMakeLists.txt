@@ -43,7 +43,7 @@ target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
 target_compile_definitions(InterfayceOverlay PRIVATE
     INTERFAYCE_VERSION="${PROJECT_VERSION}"
 )
-target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32)
+target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32 crypt32)
 # The installed overlay is a background VR utility, so a normal launch must not
 # allocate a console window. Keep main/mainCRTStartup so the existing command
 # probes and argument handling continue to work unchanged.

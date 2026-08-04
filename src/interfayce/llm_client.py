@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .secure_store import delete_secret, read_secret, write_secret
@@ -17,6 +18,17 @@ _KEY_NAME = "llm-api-key"
 
 class LlmError(RuntimeError):
     pass
+
+
+def valid_llm_endpoint(endpoint: str) -> bool:
+    parsed = urlparse(endpoint.strip())
+    if not parsed.hostname or parsed.username or parsed.password:
+        return False
+    if parsed.scheme == "https":
+        return True
+    return parsed.scheme == "http" and parsed.hostname.casefold() in {
+        "localhost", "127.0.0.1", "::1"
+    }
 
 
 @dataclass(frozen=True)
@@ -101,6 +113,7 @@ class OpenAiCompatibleClient:
     @property
     def configured(self) -> bool:
         return bool(self.settings.llm_enabled and self.settings.llm_endpoint
+                    and valid_llm_endpoint(self.settings.llm_endpoint)
                     and self.settings.llm_model and load_api_key())
 
     def chat_json(self, *, system: str, user: str, timeout: float = 20.0) -> LlmResponse:
@@ -108,6 +121,8 @@ class OpenAiCompatibleClient:
             raise LlmError("LLM commands are disabled in Interfayce settings.")
         if not self.settings.llm_endpoint or not self.settings.llm_model:
             raise LlmError("The LLM endpoint and model have not been configured.")
+        if not valid_llm_endpoint(self.settings.llm_endpoint):
+            raise LlmError("The LLM endpoint must use HTTPS unless it is on this computer.")
         api_key = load_api_key()
         if not api_key:
             raise LlmError("The LLM API key has not been configured.")

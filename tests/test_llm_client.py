@@ -73,6 +73,21 @@ class LlmClientTests(unittest.TestCase):
         read_key.assert_not_called()
         send.assert_not_called()
 
+    def test_plain_http_is_limited_to_loopback(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SECURE_DIRECTORY": directory
+        }):
+            set_api_key("secret-token")
+            remote = OpenAiCompatibleClient(AppSettings(
+                llm_enabled=True, llm_endpoint="http://example.test/v1", llm_model="model"))
+            self.assertFalse(remote.configured)
+            with self.assertRaisesRegex(LlmError, "HTTPS"):
+                remote.chat_json(system="s", user="u")
+
+            local = OpenAiCompatibleClient(AppSettings(
+                llm_enabled=True, llm_endpoint="http://127.0.0.1:8080/v1", llm_model="model"))
+            self.assertTrue(local.configured)
+
 
 if __name__ == "__main__":
     unittest.main()

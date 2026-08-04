@@ -2,6 +2,7 @@
 #include <WS2tcpip.h>
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <wincrypt.h>
 #include <dwmapi.h>
 #include <openvr.h>
 
@@ -57,6 +58,13 @@ std::filesystem::path ExecutableDirectory(char* executablePath) {
 }
 
 std::filesystem::path ProjectRoot(const std::filesystem::path& executableDirectory) {
+    // A staged/package build may live inside the source tree. Prefer its complete
+    // colocated runtime so bundled tools do not accidentally resolve against the
+    // surrounding development checkout.
+    if (std::filesystem::exists(executableDirectory / "runtime" / "node.exe")
+        && std::filesystem::exists(executableDirectory / "tools" / "slimevr_probe.cjs")) {
+        return executableDirectory;
+    }
     const auto developmentRoot = executableDirectory.parent_path().parent_path().parent_path();
     return std::filesystem::exists(developmentRoot / "src" / "interfayce")
         ? developmentRoot : executableDirectory;
@@ -74,13 +82,44 @@ std::filesystem::path UserCacheFile(std::wstring_view filename) {
     return directory / filename;
 }
 
+std::optional<std::string> LocalServiceToken() {
+    wchar_t localAppData[32768]{};
+    const auto length = GetEnvironmentVariableW(
+        L"LOCALAPPDATA", localAppData, static_cast<DWORD>(std::size(localAppData)));
+    if (length == 0 || length >= std::size(localAppData)) return std::nullopt;
+    const auto path = std::filesystem::path(localAppData) / "Interfayce" / "secure"
+        / "local-service-token.dpapi";
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return std::nullopt;
+    const std::vector<BYTE> protectedBytes(
+        (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    if (protectedBytes.empty() || protectedBytes.size() > MAXDWORD) return std::nullopt;
+    static constexpr BYTE entropyBytes[] = "Interfayce secure settings v1";
+    DATA_BLOB protectedBlob{static_cast<DWORD>(protectedBytes.size()),
+        const_cast<BYTE*>(protectedBytes.data())};
+    DATA_BLOB entropyBlob{static_cast<DWORD>(sizeof(entropyBytes) - 1),
+        const_cast<BYTE*>(entropyBytes)};
+    DATA_BLOB clearBlob{};
+    if (!CryptUnprotectData(&protectedBlob, nullptr, &entropyBlob, nullptr, nullptr,
+            CRYPTPROTECT_UI_FORBIDDEN, &clearBlob)) {
+        return std::nullopt;
+    }
+    std::string token(reinterpret_cast<char*>(clearBlob.pbData), clearBlob.cbData);
+    LocalFree(clearBlob.pbData);
+    return token.empty() ? std::nullopt : std::optional<std::string>{std::move(token)};
+}
+
 std::wstring LocalClockText() {
     SYSTEMTIME localTime{};
     GetLocalTime(&localTime);
     wchar_t formatted[64]{};
     const int length = GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS,
         &localTime, nullptr, formatted, static_cast<int>(std::size(formatted)));
-    return length > 1 ? std::wstring(formatted, static_cast<size_t>(length - 1)) : L"";
+    if (length <= 1) return L"";
+    std::wstring result(formatted, static_cast<size_t>(length - 1));
+    const auto suffix = result.find(L' ');
+    if (suffix != std::wstring::npos) result.erase(suffix);
+    return result;
 }
 
 std::filesystem::path NodeExecutable(const std::filesystem::path& projectRoot) {
@@ -160,6 +199,8 @@ bool IsLocalTcpPortOpen(uint16_t port, std::chrono::milliseconds timeout) {
 std::optional<std::string> LocalHttpRequest(std::string_view method, std::string_view path,
                                             std::chrono::milliseconds timeout,
                                             std::string_view body = {}) {
+    const auto serviceToken = LocalServiceToken();
+    if (!serviceToken) return std::nullopt;
     WSADATA winsock{};
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return std::nullopt;
     const SOCKET socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -176,13 +217,41 @@ std::optional<std::string> LocalHttpRequest(std::string_view method, std::string
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(kVoiceServicePort);
-    if (connect(socketHandle, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    u_long nonBlocking = 1;
+    ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
+    bool connected = connect(socketHandle, reinterpret_cast<sockaddr*>(&address),
+        sizeof(address)) == 0;
+    if (!connected) {
+        const int connectError = WSAGetLastError();
+        if (connectError == WSAEWOULDBLOCK || connectError == WSAEINPROGRESS
+            || connectError == WSAEINVAL) {
+            fd_set writable;
+            FD_ZERO(&writable);
+            FD_SET(socketHandle, &writable);
+            timeval wait{};
+            // Localhost should complete immediately. Never let service traffic
+            // stall the latency-sensitive OpenVR input loop.
+            wait.tv_usec = 50000;
+            if (select(0, nullptr, &writable, nullptr, &wait) > 0) {
+                int socketError = 0;
+                int length = sizeof(socketError);
+                connected = getsockopt(socketHandle, SOL_SOCKET, SO_ERROR,
+                    reinterpret_cast<char*>(&socketError), &length) == 0
+                    && socketError == 0;
+            }
+        }
+    }
+    nonBlocking = 0;
+    ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
+    if (!connected) {
         closesocket(socketHandle);
         WSACleanup();
         return std::nullopt;
     }
     const std::string request = std::string(method) + " " + std::string(path)
-        + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
+        + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(kVoiceServicePort)
+        + "\r\nX-Interfayce-Token: " + *serviceToken
+        + "\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
         + std::to_string(body.size()) + "\r\n\r\n" + std::string(body);
     size_t sent = 0;
     while (sent < request.size()) {
@@ -213,6 +282,11 @@ std::optional<std::string> LocalHttpRequest(std::string_view method, std::string
     const auto bodyStart = response.find("\r\n\r\n");
     return bodyStart == std::string::npos
         ? std::optional<std::string>{} : response.substr(bodyStart + 4);
+}
+
+bool VoiceServiceAvailable() {
+    const auto response = LocalHttpRequest("GET", "/health", std::chrono::milliseconds(150));
+    return response && *response == "ready";
 }
 
 bool LaunchVoiceService(const std::filesystem::path& executableDirectory,
@@ -1077,8 +1151,7 @@ int main(int argc, char** argv) {
     const auto projectRoot = ProjectRoot(directory);
     const auto musicArtPath = UserCacheFile(L"spotify-art.jpg");
     const auto actionManifest = directory / "assets" / "steamvr" / "actions.json";
-    bool voiceServiceAvailable = IsLocalTcpPortOpen(
-        kVoiceServicePort, std::chrono::milliseconds(75));
+    bool voiceServiceAvailable = VoiceServiceAvailable();
     if (!voiceServiceAvailable) LaunchVoiceService(directory, projectRoot);
     bool slimeAvailable = SlimeAdapterAvailable(projectRoot)
         && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
@@ -1376,6 +1449,8 @@ int main(int argc, char** argv) {
     auto restoreHoldStarted = std::chrono::steady_clock::now();
     auto rigResetHoldStarted = std::chrono::steady_clock::now();
     auto shutdownHoldStarted = std::chrono::steady_clock::now();
+    auto pressFeedbackUntil = std::chrono::steady_clock::time_point{};
+    bool pressFeedbackActive = false;
     int rigResetHoldSegment = 0;
     int shutdownHoldSegment = 0;
     std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
@@ -1425,6 +1500,15 @@ int main(int argc, char** argv) {
                     const auto updatedTexture = renderer.Texture();
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
+            }
+        }
+        if (pressFeedbackActive && std::chrono::steady_clock::now() >= pressFeedbackUntil) {
+            pressFeedbackActive = false;
+            renderer.SetPressFeedback(0.0F, 0.0F, false);
+            if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         }
         const auto wristFadeNow = std::chrono::steady_clock::now();
@@ -1515,6 +1599,9 @@ int main(int argc, char** argv) {
         bool desktopBringAllHit = false;
         bool musicMicHit = false;
         bool musicBroadcastHit = false;
+        bool musicPreviousHit = false;
+        bool musicToggleHit = false;
+        bool musicNextHit = false;
         bool commsMicHit = false;
         bool commsClearHit = false;
         std::optional<size_t> commsShortcutHit;
@@ -1554,17 +1641,22 @@ int main(int argc, char** argv) {
                 const auto y = (1.0F - panelHit.vUVs.v[1]) * 384.0F;
                 panelX = x;
                 panelY = y;
+                const auto circleHit = [&](float centerX, float centerY, float radius) {
+                    const float dx = x - centerX;
+                    const float dy = y - centerY;
+                    return dx * dx + dy * dy <= radius * radius;
+                };
                 const auto restoreX = x - 199.0F;
                 const auto restoreY = y - 250.0F;
                 restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
                     && restoreX * restoreX + restoreY * restoreY <= 98.0F * 98.0F;
-                musicMicHit = selectedDeck == 0
-                    && x >= 480.0F && x <= 560.0F && y >= 190.0F && y <= 260.0F;
-                musicBroadcastHit = selectedDeck == 0
-                    && x >= 480.0F && x <= 560.0F && y >= 108.0F && y <= 182.0F;
-                commsClearHit = selectedDeck == 5
-                    && x >= 521.0F && x <= 599.0F && y >= 263.0F && y <= 341.0F;
-                if (selectedDeck == 5 && y >= 208.0F && y <= 250.0F) {
+                musicMicHit = selectedDeck == 0 && circleHit(520, 225, 35);
+                musicBroadcastHit = selectedDeck == 0 && circleHit(520, 145, 35);
+                musicPreviousHit = selectedDeck == 0 && spotifyAvailable && circleHit(140, 287, 39);
+                musicToggleHit = selectedDeck == 0 && spotifyAvailable && circleHit(384, 287, 49);
+                musicNextHit = selectedDeck == 0 && spotifyAvailable && circleHit(628, 287, 39);
+                commsClearHit = selectedDeck == 5 && circleHit(560, 285, 40);
+                if (selectedDeck == 5 && y >= 198.0F && y <= 236.0F) {
                     constexpr std::array<float, 4> shortcutLeft{42, 218, 394, 570};
                     for (size_t index = 0; index < shortcutLeft.size(); ++index) {
                         if (!commsShortcuts[index].empty() && x >= shortcutLeft[index]
@@ -1574,42 +1666,32 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
-                commsMicHit = selectedDeck == 5
-                    && x >= 225.0F && x <= 315.0F && y >= 257.0F && y <= 347.0F;
-                ttsVolumeDownHit = selectedDeck == 4
-                    && x >= 126.0F && x <= 226.0F && y >= 250.0F && y <= 350.0F;
-                ttsMuteHit = selectedDeck == 4
-                    && x >= 334.0F && x <= 434.0F && y >= 250.0F && y <= 350.0F;
-                ttsVolumeUpHit = selectedDeck == 4
-                    && x >= 542.0F && x <= 642.0F && y >= 250.0F && y <= 350.0F;
-                broadcastGainDownHit = selectedDeck == 4
-                    && x >= 500.0F && x <= 580.0F && y >= 184.0F && y <= 256.0F;
-                broadcastGainUpHit = selectedDeck == 4
-                    && x >= 610.0F && x <= 680.0F && y >= 184.0F && y <= 256.0F;
-                desktopSettingsHit = selectedDeck == 4
-                    && x >= 650.0F && x <= 730.0F && y >= 94.0F && y <= 170.0F;
-                shutdownButtonHit = selectedDeck == 4
-                    && x >= 666.0F && x <= 748.0F && y >= 260.0F && y <= 340.0F;
-                rigFullResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 80.0F && x <= 156.0F && y >= 236.0F && y <= 312.0F;
-                rigMountResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 612.0F && x <= 688.0F && y >= 236.0F && y <= 312.0F;
+                commsMicHit = selectedDeck == 5 && circleHit(270, 285, 46);
+                ttsVolumeDownHit = selectedDeck == 4 && circleHit(176, 300, 49);
+                ttsMuteHit = selectedDeck == 4 && circleHit(384, 300, 49);
+                ttsVolumeUpHit = selectedDeck == 4 && circleHit(592, 300, 49);
+                broadcastGainDownHit = selectedDeck == 4 && circleHit(540, 220, 36);
+                broadcastGainUpHit = selectedDeck == 4 && circleHit(650, 220, 36);
+                desktopSettingsHit = selectedDeck == 4 && circleHit(690, 132, 37);
+                shutdownButtonHit = selectedDeck == 4 && circleHit(704, 300, 41);
+                rigFullResetHit = slimeAvailable && selectedDeck == 3 && circleHit(118, 274, 36);
+                rigMountResetHit = slimeAvailable && selectedDeck == 3 && circleHit(650, 274, 36);
                 if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
                     desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
-                    desktopBringAllHit = !desktopPanel.surfaces.empty()
-                        && x >= 650.0F && x <= 722.0F && y >= 100.0F && y <= 156.0F;
+                    desktopBringAllHit = !desktopPanel.surfaces.empty() && circleHit(684, 128, 31);
                     if (y >= 166.0F && y < 352.0F) {
                         const auto row = static_cast<size_t>((y - 166.0F) / 62.0F);
                         if (row < desktopPanel.surfaces.size() && row < 3) {
-                            if (x >= 420.0F && x <= 480.0F
+                            const float rowCenterY = 166.0F + static_cast<float>(row) * 62.0F + 25.0F;
+                            if (circleHit(450, rowCenterY, 23)
                                 && desktopPanel.surfaces[row].reusable) desktopReuseIndex = row;
-                            if (x >= 490.0F && x <= 550.0F) desktopLockIndex = row;
-                            if (x >= 560.0F && x <= 620.0F) desktopBringIndex = row;
-                            if (x >= 636.0F && x <= 712.0F) desktopCloseIndex = row;
+                            if (circleHit(520, rowCenterY, 23)) desktopLockIndex = row;
+                            if (circleHit(590, rowCenterY, 23)) desktopBringIndex = row;
+                            if (circleHit(674, rowCenterY, 23)) desktopCloseIndex = row;
                         }
                     }
                 } else {
-                    if (selectedDeck == 1 && y >= 142.0F && y <= 222.0F) {
+                    if (selectedDeck == 1 && y >= 132.0F && y <= 200.0F) {
                         constexpr std::array<float, 3> favoriteLeft{70, 304, 538};
                         for (size_t index = 0; index < favoriteLeft.size(); ++index) {
                             if (!desktopFavorites[index].label.empty()
@@ -1620,7 +1702,7 @@ int main(int argc, char** argv) {
                             }
                         }
                     }
-                    const auto deskY = y - 295.0F;
+                    const auto deskY = y - 278.0F;
                     const auto newX = x - 150.0F;
                     const auto keyboardX = x - 384.0F;
                     const auto listX = x - 618.0F;
@@ -1691,6 +1773,17 @@ int main(int argc, char** argv) {
         else if (leftDesktopSurfaceHit) highlightedSurface = leftDesktopSurfaceHit->id;
         else highlightedSurface = desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit;
         desktopSurfaces.SetHoveredFrame(highlightedSurface);
+        const bool panelActionable = (panelHitFound && panelY <= 82.0F)
+            || restoreButtonHit || rigFullResetHit
+            || (rigMountResetHit && mountReady)
+            || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
+            || desktopFavoriteHit || desktopListBackHit || desktopBringAllHit
+            || desktopBringIndex.has_value() || desktopLockIndex.has_value()
+            || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
+            || musicMicHit || musicBroadcastHit || musicPreviousHit || musicToggleHit || musicNextHit
+            || commsMicHit || commsClearHit || commsShortcutHit.has_value()
+            || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
+            || broadcastGainDownHit || broadcastGainUpHit || shutdownButtonHit;
         if (panelHitFound) {
             vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0035F);
             vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 11);
@@ -1707,19 +1800,8 @@ int main(int argc, char** argv) {
             if (wristController != vr::k_unTrackedDeviceIndexInvalid) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
                     cursorOverlay, wristController, &cursorTransform);
-                const bool actionable = restoreButtonHit || rigFullResetHit
-                    || (rigMountResetHit && mountReady)
-                    || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
-                    || desktopFavoriteHit
-                    || desktopListBackHit || desktopBringAllHit || desktopBringIndex.has_value()
-                    || desktopLockIndex.has_value()
-                    || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
-                    || musicMicHit || musicBroadcastHit || commsMicHit || commsClearHit
-                    || commsShortcutHit.has_value()
-                    || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
-                    || broadcastGainDownHit || broadcastGainUpHit || shutdownButtonHit;
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
-                    actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
+                    panelActionable ? 0.20F : 0.02F, panelActionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
             }
         } else if (keyboardSurfaceHit) {
@@ -1808,6 +1890,19 @@ int main(int argc, char** argv) {
         }
         if (rightSurfaceGrab.bChanged && !rightSurfaceGrab.bState) {
             desktopSurfaces.EndGrab(interfayce::DesktopGrabHand::Right);
+        }
+        if (wristUiClick.bChanged && wristUiClick.bState && panelHitFound && panelActionable) {
+            pressFeedbackActive = true;
+            pressFeedbackUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(130);
+            renderer.SetPressFeedback(panelX, panelY, true);
+            const auto feedbackHaptic = ttsSettings.wristRight ? leftHapticAction : rightHapticAction;
+            vr::VRInput()->TriggerHapticVibrationAction(feedbackHaptic, 0.0F, 0.025F, 105.0F,
+                ttsSettings.hapticStrength * 0.65F, vr::k_ulInvalidInputValueHandle);
+            if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
         }
         if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit && !panelHitFound) {
             if (desktopSurfaces.ActivateKeyboardHit(*leftKeyboardSurfaceHit)) {
@@ -1913,8 +2008,7 @@ int main(int argc, char** argv) {
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && musicMicHit) {
             if (!musicVoiceCommand.valid()) {
-                voiceServiceAvailable = IsLocalTcpPortOpen(
-                    kVoiceServicePort, std::chrono::milliseconds(75));
+                voiceServiceAvailable = VoiceServiceAvailable();
                 if (!voiceServiceAvailable) {
                     LaunchVoiceService(directory, projectRoot);
                     renderer.SetMusicVoiceStatus(L"VOICE WARMING", false);
@@ -1946,8 +2040,7 @@ int main(int argc, char** argv) {
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (commsMicHit || commsClearHit)) {
-            voiceServiceAvailable = IsLocalTcpPortOpen(
-                kVoiceServicePort, std::chrono::milliseconds(75));
+            voiceServiceAvailable = VoiceServiceAvailable();
             if (!voiceServiceAvailable) {
                 LaunchVoiceService(directory, projectRoot);
                 commsState = {L"VOICE WARMING", L"", false};
@@ -2018,15 +2111,13 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (wristUiClick.bChanged && wristUiClick.bState && selectedDeck == 0
-                   && panelY >= 245.0F && panelY <= 333.0F) {
-            if (!spotifyAvailable) {
-                // Controls remain inert while no Spotify media session can exist.
-            } else if (panelX >= 70.0F && panelX <= 210.0F) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState
+                   && (musicPreviousHit || musicToggleHit || musicNextHit)) {
+            if (musicPreviousHit) {
                 LaunchSpotifyControl(projectRoot, L"previous");
-            } else if (panelX >= 314.0F && panelX <= 454.0F) {
+            } else if (musicToggleHit) {
                 LaunchSpotifyControl(projectRoot, L"toggle");
-            } else if (panelX >= 558.0F && panelX <= 698.0F) {
+            } else if (musicNextHit) {
                 LaunchSpotifyControl(projectRoot, L"next");
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && desktopFavoriteHit) {
@@ -2220,8 +2311,7 @@ int main(int argc, char** argv) {
             }
             if (!voiceServiceAvailable && musicNow >= nextVoiceHealthPoll) {
                 nextVoiceHealthPoll = musicNow + std::chrono::seconds(1);
-                voiceServiceAvailable = IsLocalTcpPortOpen(
-                    kVoiceServicePort, std::chrono::milliseconds(75));
+                voiceServiceAvailable = VoiceServiceAvailable();
                 if (voiceServiceAvailable) {
                     renderer.SetMusicVoiceStatus(L"VOICE READY", false);
                     if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),

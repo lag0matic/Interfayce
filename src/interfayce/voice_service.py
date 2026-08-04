@@ -13,6 +13,7 @@ import threading
 from .comms import CommsDictation
 from .battery_alerts import BatteryAlertMonitor
 from .kokoro import speak_in_background
+from .local_service import get_or_create_token, request_is_authorized
 from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interpret_music_request
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
@@ -75,7 +76,7 @@ class VoiceRuntime:
     @staticmethod
     def _announce_song(message: str) -> None:
         VrchatOscClient().send_chatbox_message(message)
-        LOGGER.info("Sent Spotify track announcement: %r", message)
+        LOGGER.info("Sent Spotify track announcement: chars=%s", len(message))
 
     def _read_current_song(self):
         try:
@@ -115,13 +116,15 @@ class VoiceRuntime:
                 LOGGER.exception("Parakeet transcription failed")
                 return f"ERROR\t\t{_safe_field(str(error))}"
             intent = parse_music_intent(transcript)
-            LOGGER.info("Transcript=%r intent=%s", transcript, intent.kind.value)
+            LOGGER.info("Music transcript classified: chars=%s intent=%s",
+                        len(transcript), intent.kind.value)
             if intent.kind is MusicIntentKind.UNKNOWN and OpenAiCompatibleClient().configured:
                 try:
                     llm_intent = interpret_music_request(transcript)
-                    LOGGER.info("Validated LLM music tool=%s play_type=%s query=%r artist=%r command=%s",
-                                llm_intent.tool, llm_intent.play_type, llm_intent.query,
-                                llm_intent.artist, llm_intent.command)
+                    LOGGER.info("Validated LLM music tool=%s play_type=%s query_chars=%s "
+                                "artist_chars=%s command=%s", llm_intent.tool,
+                                llm_intent.play_type, len(llm_intent.query or ""),
+                                len(llm_intent.artist or ""), llm_intent.command)
                     result = execute_music_llm_intent(llm_intent)
                 except (LlmError, MusicLlmValidationError) as error:
                     LOGGER.warning("LLM music fallback rejected: %s", error)
@@ -131,7 +134,8 @@ class VoiceRuntime:
                     result = MusicCommandResult(False, "Spotify rejected that command.")
             else:
                 result = asyncio.run(execute_music_intent(intent))
-            LOGGER.info("Music command succeeded=%s message=%r", result.succeeded, result.message)
+            LOGGER.info("Music command completed: succeeded=%s response_chars=%s",
+                        result.succeeded, len(result.message))
             # In-headset failures are as important as successes; the user should
             # not need to stop and read the wrist to learn that nothing happened.
             speak_in_background(result.message)
@@ -177,6 +181,8 @@ class VoiceRuntime:
         return self.comms.snapshot().wire_text()
 
     def toggle_comms(self) -> str:
+        self.comms.set_silence_auto_stop_seconds(
+            load_settings().comms_silence_timeout_seconds)
         return self.comms.toggle().wire_text()
 
     def clear_comms(self) -> str:
@@ -204,8 +210,15 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
     log_path = configure_logging()
     LOGGER.info("Voice service starting on 127.0.0.1:%s; log=%s", port, log_path)
     runtime = VoiceRuntime()
+    auth_token = get_or_create_token()
 
     class Handler(BaseHTTPRequestHandler):
+        def _authorized(self) -> bool:
+            if request_is_authorized(self.headers, port=port, token=auth_token):
+                return True
+            self._reply(403, "forbidden")
+            return False
+
         def _reply_bytes(self, status: int, encoded: bytes, content_type: str) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -217,6 +230,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
             self._reply_bytes(status, body.encode("utf-8"), "text/plain; charset=utf-8")
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._authorized():
+                return
             if self.path == "/health":
                 self._reply(200, "ready")
             elif self.path == "/music/current":
@@ -235,6 +250,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(404, "not found")
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._authorized():
+                return
             if self.path == "/listen/music":
                 self._reply(200, runtime.music_command())
             elif self.path.startswith("/music/control/"):
@@ -253,7 +270,7 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                     self._reply(200, runtime.send_comms_shortcut(index))
             elif self.path == "/tts/announce":
                 try:
-                    length = min(int(self.headers.get("Content-Length", "0")), 512)
+                    length = max(0, min(int(self.headers.get("Content-Length", "0")), 512))
                 except ValueError:
                     length = 0
                 message = self.rfile.read(length).decode("utf-8", errors="replace").strip()
@@ -264,7 +281,7 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                     self._reply(200, "queued")
             elif self.path == "/battery/status":
                 try:
-                    length = min(int(self.headers.get("Content-Length", "0")), 2048)
+                    length = max(0, min(int(self.headers.get("Content-Length", "0")), 2048))
                 except ValueError:
                     length = 0
                 readings: dict[str, int] = {}

@@ -61,7 +61,8 @@ class SettingsTests(unittest.TestCase):
                 tts_volume=0.4, tts_muted=False, tts_speed=1.1,
                 tts_endpoint="http://tts.example.test/v1/audio/speech/",
                 tts_model="voice-model", tts_voice="voice-a", tts_output="Headset",
-                stt_microphone="Microphone", haptic_strength=0.3,
+                stt_microphone="Microphone", comms_silence_timeout_seconds=7,
+                haptic_strength=0.3,
                 broadcast_gain_db=9, spotify_client_id="client-id",
                 llm_enabled=True, llm_endpoint="https://llm.example.test/v1/",
                 llm_model="chat-model", llm_reasoning_effort="low",
@@ -75,6 +76,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(saved.tts_endpoint, "http://tts.example.test/v1/audio/speech")
             self.assertEqual(saved.llm_endpoint, "https://llm.example.test/v1")
             self.assertEqual(saved.comms_shortcuts[0], ("BRB", "Be right back."))
+            self.assertEqual(saved.comms_silence_timeout_seconds, 7.0)
             self.assertEqual(len(saved.comms_shortcuts), 4)
             self.assertEqual(saved.wrist_hand, "right")
             self.assertAlmostEqual(saved.wrist_offset_x, 0.025)

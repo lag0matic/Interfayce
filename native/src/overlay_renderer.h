@@ -40,6 +40,7 @@ public:
     void SetRigHoldProgress(float resetProgress, float mountProgress);
     void SetClockText(const std::wstring& text);
     void SetLowestBattery(int percent);
+    void SetPressFeedback(float x, float y, bool active);
     void SetRigBodyArtPath(const std::wstring& path);
     void SetPlayspaceResetArtPath(const std::wstring& path);
     ID3D11Device* Device() const;
@@ -58,6 +59,10 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> labelFormat_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> titleFormat_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> bodyFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> bodyWrapFormat_;
+    Microsoft::WRL::ComPtr<IDWriteInlineObject> labelEllipsis_;
+    Microsoft::WRL::ComPtr<IDWriteInlineObject> titleEllipsis_;
+    Microsoft::WRL::ComPtr<IDWriteInlineObject> bodyEllipsis_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> glassBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> stripBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> textBrush_;
@@ -94,6 +99,8 @@ private:
     float rigMountHoldProgress_{};
     std::wstring clockText_;
     int lowestBatteryPercent_{-1};
+    D2D1_POINT_2F pressFeedbackCenter_{};
+    bool pressFeedbackActive_{};
     std::wstring rigBodyArtPath_;
     std::wstring playspaceResetArtPath_;
 };

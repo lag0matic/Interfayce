@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import socket
 import json
 import subprocess
 import threading
@@ -11,10 +10,12 @@ from tkinter import filedialog, messagebox, ttk
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from .app_info import APP_VERSION, RELEASES_URL, check_for_update
 from .diagnostics import DiagnosticReport, load_report, run_diagnostics, save_report
-from .llm_client import delete_api_key, load_api_key, set_api_key
+from .llm_client import delete_api_key, load_api_key, set_api_key, valid_llm_endpoint
+from .local_service import TOKEN_HEADER, get_or_create_token
 from .settings import load_settings, set_desktop_configuration
 from .spotify_oauth import (SpotifyOAuthError, SpotifyWebApi, connect as connect_spotify,
                             disconnect as disconnect_spotify, load_token)
@@ -51,9 +52,11 @@ def output_device_names() -> list[str]:
 
 def voice_service_available() -> bool:
     try:
-        with socket.create_connection(("127.0.0.1", VOICE_SERVICE_PORT), timeout=0.15):
-            return True
-    except OSError:
+        request = Request(f"http://127.0.0.1:{VOICE_SERVICE_PORT}/health",
+                          headers={TOKEN_HEADER: get_or_create_token()})
+        with urlopen(request, timeout=0.15) as response:
+            return response.status == 200 and response.read() == b"ready"
+    except (OSError, ValueError):
         return False
 
 
@@ -84,6 +87,8 @@ class SettingsWindow:
         self.muted = tk.BooleanVar(value=current.tts_muted)
         self.speed = tk.DoubleVar(value=current.tts_speed)
         self.microphone = tk.StringVar(value=current.stt_microphone)
+        self.comms_silence_timeout = tk.DoubleVar(
+            value=current.comms_silence_timeout_seconds)
         self.tts_output = tk.StringVar(value=current.tts_output)
         self.haptic = tk.DoubleVar(value=round(current.haptic_strength * 100))
         self.broadcast_gain = tk.DoubleVar(value=current.broadcast_gain_db)
@@ -335,7 +340,16 @@ class SettingsWindow:
         panel.columnconfigure(1, weight=2)
 
     def _build_comms(self, panel: ttk.Frame) -> None:
-        row = self._section(panel, 0, "OSC CHATBOX SHORTCUTS")
+        row = self._section(panel, 0, "VOICE PRIVACY")
+        ttk.Label(panel, text="Stop listening after silence", style="Panel.TLabel").grid(
+            row=row, column=0, sticky="w")
+        timeout_row = ttk.Frame(panel, style="Panel.TFrame")
+        timeout_row.grid(row=row, column=1, sticky="e")
+        ttk.Spinbox(timeout_row, from_=1, to=30, increment=1,
+                    textvariable=self.comms_silence_timeout, width=6).pack(side="left")
+        ttk.Label(timeout_row, text="seconds", style="Muted.Panel.TLabel").pack(
+            side="left", padx=(8, 0))
+        row = self._section(panel, row + 1, "OSC CHATBOX SHORTCUTS")
         ttk.Label(panel, text="Short labels appear on the wrist. Messages are sent immediately to VRChat.",
                   style="Muted.Panel.TLabel").grid(
                       row=row, column=0, columnspan=2, sticky="w", pady=(0, 14))
@@ -603,8 +617,9 @@ class SettingsWindow:
         if tts_endpoint and not _valid_http_url(tts_endpoint):
             messagebox.showerror("Interfayce", "Kokoro needs a valid HTTP or HTTPS endpoint.", parent=self.root)
             return False
-        if llm_endpoint and not _valid_http_url(llm_endpoint):
-            messagebox.showerror("Interfayce", "The LLM needs a valid HTTP or HTTPS endpoint.", parent=self.root)
+        if llm_endpoint and not valid_llm_endpoint(llm_endpoint):
+            messagebox.showerror("Interfayce",
+                "The LLM endpoint must use HTTPS unless it is localhost.", parent=self.root)
             return False
         selected_input = self.microphone.get()
         selected_output = self.tts_output.get()
@@ -617,6 +632,7 @@ class SettingsWindow:
             tts_voice=self.tts_voice.get(),
             tts_output="" if selected_output == "System default" else selected_output,
             stt_microphone="" if selected_input == "System default" else selected_input,
+            comms_silence_timeout_seconds=self.comms_silence_timeout.get(),
             haptic_strength=self.haptic.get() / 100.0,
             broadcast_gain_db=round(self.broadcast_gain.get()),
             spotify_client_id=self.spotify_client_id.get(),

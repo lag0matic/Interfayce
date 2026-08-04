@@ -107,6 +107,19 @@ class CommsDictationTests(unittest.TestCase):
         comms.toggle()
         release.set()
 
+    def test_auto_stops_after_three_seconds_of_silence(self):
+        def capture(**_kwargs):
+            time.sleep(0.01)
+            raise type("WaitTimeoutError", (Exception,), {})()
+
+        comms = CommsDictation(FakeTranscriber(), threading.Lock(), capture=capture,
+                               osc=FakeOsc(), silence_auto_stop_seconds=0.04)
+        self.assertEqual(comms.toggle().state, "LISTENING")
+        deadline = time.monotonic() + 1.0
+        while comms.snapshot().state != "IDLE" and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(comms.snapshot().state, "IDLE")
+
 
 if __name__ == "__main__":
     unittest.main()
