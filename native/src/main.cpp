@@ -1187,10 +1187,13 @@ int main(int argc, char** argv) {
     auto nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     bool restoreHoldActive = false;
     bool rigResetHoldActive = false;
+    bool rigResetHoldCompleted = false;
     bool shutdownHoldActive = false;
     const wchar_t* rigResetKind = nullptr;
     auto restoreHoldStarted = std::chrono::steady_clock::now();
+    auto rigResetHoldStarted = std::chrono::steady_clock::now();
     auto shutdownHoldStarted = std::chrono::steady_clock::now();
+    int rigResetHoldSegment = 0;
     int shutdownHoldSegment = 0;
     std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
     std::optional<uint64_t> activeScrollSurface;
@@ -1374,9 +1377,9 @@ int main(int argc, char** argv) {
                 shutdownButtonHit = selectedDeck == 4
                     && x >= 666.0F && x <= 748.0F && y >= 260.0F && y <= 340.0F;
                 rigFullResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 42.0F && x <= 350.0F && y >= 320.0F && y <= 366.0F;
+                    && x >= 222.0F && x <= 298.0F && y >= 300.0F && y <= 376.0F;
                 rigMountResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 414.0F && x <= 722.0F && y >= 320.0F && y <= 366.0F;
+                    && x >= 470.0F && x <= 546.0F && y >= 300.0F && y <= 376.0F;
                 if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
                     desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
                     if (y >= 166.0F && y < 352.0F) {
@@ -1462,7 +1465,8 @@ int main(int argc, char** argv) {
             if (leftController != vr::k_unTrackedDeviceIndexInvalid) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
                     cursorOverlay, leftController, &cursorTransform);
-                const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
+                const bool actionable = restoreButtonHit || rigFullResetHit
+                    || (rigMountResetHit && mountReady)
                     || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
                     || desktopListBackHit || desktopBringIndex.has_value()
                     || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
@@ -1839,8 +1843,18 @@ int main(int argc, char** argv) {
             restoreHoldStarted = std::chrono::steady_clock::now();
         } else if (rightUiClick.bChanged && rightUiClick.bState && (rigFullResetHit || (rigMountResetHit && mountReady))) {
             rigResetHoldActive = true;
+            rigResetHoldCompleted = false;
             rigResetKind = rigFullResetHit ? L"full" : L"mounting";
-            restoreHoldStarted = std::chrono::steady_clock::now();
+            rigResetHoldStarted = std::chrono::steady_clock::now();
+            rigResetHoldSegment = 1;
+            renderer.SetRigHoldProgress(
+                rigFullResetHit ? 1.0F / 12.0F : 0.0F,
+                rigMountResetHit ? 1.0F / 12.0F : 0.0F);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
         }
         if (rightUiClick.bState && activeDesktopPointer && desktopSurfaceHit
             && desktopSurfaceHit->captured && desktopSurfaceHit->id == activeDesktopPointer->id) {
@@ -2069,15 +2083,48 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (rightUiClick.bChanged && !rightUiClick.bState && rigResetHoldActive) {
-            const auto heldFor = std::chrono::steady_clock::now() - restoreHoldStarted;
-            const bool stillOnControl = rigResetKind == std::wstring_view(L"full") ? rigFullResetHit : rigMountResetHit;
-            if (stillOnControl && heldFor >= std::chrono::milliseconds(1000)) {
+        if (rigResetHoldActive) {
+            const bool fullReset = rigResetKind == std::wstring_view(L"full");
+            const bool stillHolding = rightUiClick.bState
+                && (fullReset ? rigFullResetHit : (rigMountResetHit && mountReady));
+            const auto elapsed = std::chrono::steady_clock::now() - rigResetHoldStarted;
+            if (!stillHolding) {
+                rigResetHoldActive = false;
+                rigResetHoldCompleted = false;
+                rigResetHoldSegment = 0;
+                rigResetKind = nullptr;
+                renderer.SetRigHoldProgress(0.0F, 0.0F);
+                if (selectedDeck == 3 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else if (!rigResetHoldCompleted && elapsed >= std::chrono::seconds(1)) {
+                rigResetHoldCompleted = true;
+                renderer.SetRigHoldProgress(fullReset ? 1.0F : 0.0F, fullReset ? 0.0F : 1.0F);
                 LaunchSlimeReset(projectRoot, rigResetKind);
-                std::cout << "SlimeVR " << (rigResetKind == std::wstring_view(L"full") ? "full" : "mounting") << " reset requested\n";
+                std::cout << "SlimeVR " << (fullReset ? "full" : "mounting")
+                          << " reset requested\n";
+                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else if (!rigResetHoldCompleted) {
+                const float progress = std::chrono::duration<float>(elapsed).count();
+                const int segment = (std::min)(12,
+                    1 + static_cast<int>(progress * 12.0F));
+                if (segment != rigResetHoldSegment) {
+                    rigResetHoldSegment = segment;
+                    renderer.SetRigHoldProgress(
+                        fullReset ? progress : 0.0F, fullReset ? 0.0F : progress);
+                    if (renderer.Initialize(system, selectedDeck, musicLine,
+                            musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                }
             }
-            rigResetHoldActive = false;
-            rigResetKind = nullptr;
         }
 
         const auto desiredHand = leftDrag.bState ? DragHand::Left

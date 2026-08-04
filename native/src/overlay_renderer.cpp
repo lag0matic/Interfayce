@@ -422,11 +422,32 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             drawText(rigSlots[index].empty() ? L"--" : rigSlots[index], labelFormat_.Get(),
                 D2D1::RectF(left + 105.0F, top + 8.0F, left + 148.0F, top + 33.0F), textBrush_.Get());
         }
-        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(42, 320, 350, 366), 8, 8), buttonBrush_.Get());
-        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(414, 320, 722, 366), 8, 8), buttonBrush_.Get());
-        drawText(L"HOLD  FULL RESET", labelFormat_.Get(), D2D1::RectF(70, 330, 330, 358), textBrush_.Get());
-        drawText(mountReady ? L"HOLD  BODY MOUNT" : L"BODY MOUNT / WAIT", labelFormat_.Get(),
-            D2D1::RectF(438, 330, 700, 358), mountReady ? textBrush_.Get() : mutedTextBrush_.Get());
+        const auto drawRigHoldControl = [&](D2D1_POINT_2F center, wchar_t glyph,
+                                             float progress, bool enabled) {
+            const bool armed = enabled && progress > 0.0F;
+            d2dContext_->FillEllipse(D2D1::Ellipse(center, 24, 24),
+                armed ? activeFillBrush_.Get() : buttonBrush_.Get());
+            d2dContext_->DrawEllipse(D2D1::Ellipse(center, 24, 24),
+                !enabled ? structureDimBrush_.Get()
+                    : armed ? accentBrush_.Get() : structureBrush_.Get(), 2.0F);
+            constexpr int segments = 12;
+            const int lit = enabled ? static_cast<int>(
+                std::ceil(progress * static_cast<float>(segments))) : 0;
+            for (int index = 0; index < segments; ++index) {
+                const float angle = -1.5707963F
+                    + static_cast<float>(index) * 6.2831853F / segments;
+                const auto point = D2D1::Point2F(center.x + std::cos(angle) * 32.0F,
+                    center.y + std::sin(angle) * 32.0F);
+                d2dContext_->FillEllipse(D2D1::Ellipse(point, 2.25F, 2.25F),
+                    index < lit ? accentBrush_.Get() : structureDimBrush_.Get());
+            }
+            const wchar_t text[]{glyph, L'\0'};
+            drawText(text, titleFormat_.Get(),
+                D2D1::RectF(center.x - 11, center.y - 20, center.x + 14, center.y + 21),
+                enabled ? accentBrush_.Get() : mutedTextBrush_.Get());
+        };
+        drawRigHoldControl(D2D1::Point2F(260, 338), L'R', rigResetHoldProgress_, true);
+        drawRigHoldControl(D2D1::Point2F(508, 338), L'M', rigMountHoldProgress_, mountReady);
         }
     } else if (deck == 2) {
         const auto stateBrush = playspaceAdjusted_ ? accentBrush_.Get() : structureBrush_.Get();
@@ -704,6 +725,11 @@ void OverlayRenderer::SetBroadcastGainDb(int gainDb) {
 
 void OverlayRenderer::SetShutdownHoldProgress(float progress) {
     shutdownHoldProgress_ = (std::max)(0.0F, (std::min)(1.0F, progress));
+}
+
+void OverlayRenderer::SetRigHoldProgress(float resetProgress, float mountProgress) {
+    rigResetHoldProgress_ = (std::max)(0.0F, (std::min)(1.0F, resetProgress));
+    rigMountHoldProgress_ = (std::max)(0.0F, (std::min)(1.0F, mountProgress));
 }
 
 void OverlayRenderer::SetClockText(const std::wstring& text) {

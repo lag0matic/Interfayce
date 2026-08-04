@@ -139,7 +139,7 @@ private:
         std::optional<size_t> pressedKey;
         std::chrono::steady_clock::time_point keyFlashUntil{};
         float aspectRatio{1.6F};
-        float widthMeters{0.92F};
+        float widthMeters{0.69F};
         vr::HmdMatrix34_t transform{};
         bool visible{true};
     };

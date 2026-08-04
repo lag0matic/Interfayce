@@ -34,6 +34,7 @@ public:
     void SetTtsSettings(int volumePercent, bool muted);
     void SetBroadcastGainDb(int gainDb);
     void SetShutdownHoldProgress(float progress);
+    void SetRigHoldProgress(float resetProgress, float mountProgress);
     void SetClockText(const std::wstring& text);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
@@ -75,6 +76,8 @@ private:
     bool ttsMuted_{};
     int broadcastGainDb_{12};
     float shutdownHoldProgress_{};
+    float rigResetHoldProgress_{};
+    float rigMountHoldProgress_{};
     std::wstring clockText_;
 };
 

@@ -760,7 +760,7 @@ uint64_t DesktopSurfaceRegistry::SpawnKeyboard() {
     surface.overlayKey = "com.lag0matic.interfayce.keyboard";
     surface.label = L"Keyboard";
     surface.keyboard = true;
-    surface.widthMeters = 0.96F;
+    surface.widthMeters = 0.72F;
     surface.aspectRatio = static_cast<float>(kKeyboardWidth) / kKeyboardHeight;
     surface.texture = std::make_unique<DesktopPickerTexture>();
     std::wstring targetLabel;
