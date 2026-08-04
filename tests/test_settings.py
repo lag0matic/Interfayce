@@ -65,12 +65,27 @@ class SettingsTests(unittest.TestCase):
                 llm_enabled=True, llm_endpoint="https://llm.example.test/v1/",
                 llm_model="chat-model", llm_reasoning_effort="low",
                 llm_temperature=0.5,
+                comms_shortcuts=(("BRB", "Be right back."), ("MUTED", "I am muted.")),
             )
 
             self.assertTrue(saved.llm_enabled)
             self.assertEqual(saved.tts_endpoint, "http://tts.example.test/v1/audio/speech")
             self.assertEqual(saved.llm_endpoint, "https://llm.example.test/v1")
+            self.assertEqual(saved.comms_shortcuts[0], ("BRB", "Be right back."))
+            self.assertEqual(len(saved.comms_shortcuts), 4)
             self.assertEqual(load_settings(), saved)
+
+    def test_comms_shortcuts_are_bounded_and_sanitized(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            saved = save_settings(AppSettings(comms_shortcuts=(
+                ("  TOO   LONG LABEL  ", " hello\nthere "),
+                ("", "disabled"),
+            )))
+            self.assertEqual(saved.comms_shortcuts[0], ("TOO LONG LAB", "hello there"))
+            self.assertEqual(saved.comms_shortcuts[1], ("", "disabled"))
+            self.assertEqual(len(saved.comms_shortcuts), 4)
 
     def test_fresh_install_has_no_personal_service_configuration(self) -> None:
         defaults = AppSettings()

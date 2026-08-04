@@ -363,6 +363,22 @@ std::optional<CommsState> RequestCommsState(std::string_view method, std::string
     return response ? ParseCommsState(*response) : std::nullopt;
 }
 
+std::optional<std::array<std::wstring, 4>> RequestCommsShortcutLabels() {
+    const auto response = LocalHttpRequest(
+        "GET", "/comms/shortcuts", std::chrono::milliseconds(750));
+    if (!response) return std::nullopt;
+    std::array<std::wstring, 4> labels;
+    size_t start = 0;
+    for (size_t index = 0; index < labels.size(); ++index) {
+        const auto end = response->find('\t', start);
+        labels[index] = Utf8ToWide(response->substr(
+            start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return labels;
+}
+
 void LaunchSpotifyControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
     static_cast<void>(projectRoot);
     std::string operationPath;
@@ -1218,7 +1234,9 @@ int main(int argc, char** argv) {
     std::future<std::wstring> musicVoiceCommand;
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
+    std::array<std::wstring, 4> commsShortcuts;
     auto nextCommsPoll = std::chrono::steady_clock::now();
+    auto nextCommsShortcutPoll = std::chrono::steady_clock::now();
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
     auto nextRigPoll = std::chrono::steady_clock::now();
     std::future<SlimeRigStatus> slimeBatteryPoll;
@@ -1371,6 +1389,7 @@ int main(int argc, char** argv) {
         bool musicBroadcastHit = false;
         bool commsMicHit = false;
         bool commsClearHit = false;
+        std::optional<size_t> commsShortcutHit;
         bool ttsVolumeDownHit = false;
         bool ttsMuteHit = false;
         bool ttsVolumeUpHit = false;
@@ -1409,10 +1428,20 @@ int main(int argc, char** argv) {
                     && x >= 480.0F && x <= 560.0F && y >= 190.0F && y <= 260.0F;
                 musicBroadcastHit = selectedDeck == 0
                     && x >= 480.0F && x <= 560.0F && y >= 108.0F && y <= 182.0F;
-                commsMicHit = selectedDeck == 5
-                    && x >= 195.0F && x <= 345.0F && y >= 205.0F && y <= 355.0F;
                 commsClearHit = selectedDeck == 5
-                    && x >= 495.0F && x <= 625.0F && y >= 215.0F && y <= 345.0F;
+                    && x >= 521.0F && x <= 599.0F && y >= 263.0F && y <= 341.0F;
+                if (selectedDeck == 5 && y >= 208.0F && y <= 250.0F) {
+                    constexpr std::array<float, 4> shortcutLeft{42, 218, 394, 570};
+                    for (size_t index = 0; index < shortcutLeft.size(); ++index) {
+                        if (!commsShortcuts[index].empty() && x >= shortcutLeft[index]
+                            && x <= shortcutLeft[index] + 156.0F) {
+                            commsShortcutHit = index;
+                            break;
+                        }
+                    }
+                }
+                commsMicHit = selectedDeck == 5
+                    && x >= 225.0F && x <= 315.0F && y >= 257.0F && y <= 347.0F;
                 ttsVolumeDownHit = selectedDeck == 4
                     && x >= 126.0F && x <= 226.0F && y >= 250.0F && y <= 350.0F;
                 ttsMuteHit = selectedDeck == 4
@@ -1522,6 +1551,7 @@ int main(int argc, char** argv) {
                     || desktopListBackHit || desktopBringIndex.has_value()
                     || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
                     || musicMicHit || musicBroadcastHit || commsMicHit || commsClearHit
+                    || commsShortcutHit.has_value()
                     || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
                     || broadcastGainDownHit || broadcastGainUpHit || shutdownButtonHit;
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
@@ -1672,12 +1702,17 @@ int main(int argc, char** argv) {
                     static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
             }
             if (requestedDeck == 5) {
+                if (const auto labels = RequestCommsShortcutLabels()) {
+                    commsShortcuts = *labels;
+                    renderer.SetCommsShortcuts(commsShortcuts);
+                }
                 if (const auto current = RequestCommsState("GET", "/comms/status")) {
                     commsState = *current;
                     renderer.SetCommsStatus(
                         commsState.status, commsState.transcript, commsState.active);
                 }
                 nextCommsPoll = std::chrono::steady_clock::now();
+                nextCommsShortcutPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             }
             if (requestedDeck != selectedDeck && renderer.Initialize(
                     system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
@@ -1723,6 +1758,21 @@ int main(int argc, char** argv) {
                     const auto updatedTexture = renderer.Texture();
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && commsShortcutHit) {
+            const auto path = "/comms/shortcut/" + std::to_string(*commsShortcutHit);
+            if (const auto changed = RequestCommsState("POST", path)) {
+                commsState = *changed;
+            } else {
+                commsState = {L"COMMS ERROR", L"Shortcut service did not respond", false};
+            }
+            renderer.SetCommsStatus(
+                commsState.status, commsState.transcript, commsState.active);
+            nextCommsPoll = std::chrono::steady_clock::now();
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState
                    && (commsMicHit || commsClearHit)) {
@@ -2022,6 +2072,19 @@ int main(int argc, char** argv) {
                         const auto updatedTexture = renderer.Texture();
                         vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                     }
+                }
+            }
+        }
+        if (selectedDeck == 5
+            && std::chrono::steady_clock::now() >= nextCommsShortcutPoll) {
+            nextCommsShortcutPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            if (const auto labels = RequestCommsShortcutLabels(); labels && *labels != commsShortcuts) {
+                commsShortcuts = *labels;
+                renderer.SetCommsShortcuts(commsShortcuts);
+                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
         }

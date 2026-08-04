@@ -91,6 +91,10 @@ class SettingsWindow:
         self.llm_reasoning = tk.StringVar(value=current.llm_reasoning_effort)
         self.llm_temperature = tk.DoubleVar(value=current.llm_temperature)
         self.llm_key = tk.StringVar()
+        self.comms_shortcut_labels = [
+            tk.StringVar(value=label) for label, _message in current.comms_shortcuts]
+        self.comms_shortcut_messages = [
+            tk.StringVar(value=message) for _label, message in current.comms_shortcuts]
 
         self.volume_label = tk.StringVar()
         self.haptic_label = tk.StringVar()
@@ -156,10 +160,13 @@ class SettingsWindow:
         notebook.pack(fill="both", expand=True)
         general = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         integrations = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
+        comms = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         notebook.add(general, text="GENERAL")
         notebook.add(integrations, text="INTEGRATIONS")
+        notebook.add(comms, text="COMMS")
         self._build_general(general)
         self._build_integrations(integrations)
+        self._build_comms(comms)
 
         footer = ttk.Frame(outer)
         footer.pack(fill="x", pady=(14, 0))
@@ -260,6 +267,29 @@ class SettingsWindow:
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=2)
 
+    def _build_comms(self, panel: ttk.Frame) -> None:
+        row = self._section(panel, 0, "OSC CHATBOX SHORTCUTS")
+        ttk.Label(panel, text="Short labels appear on the wrist. Messages are sent immediately to VRChat.",
+                  style="Muted.Panel.TLabel").grid(
+                      row=row, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        row += 1
+        ttk.Label(panel, text="WRIST LABEL (12 MAX)", style="Muted.Panel.TLabel").grid(
+            row=row, column=0, sticky="w")
+        ttk.Label(panel, text="CHATBOX MESSAGE (144 MAX)", style="Muted.Panel.TLabel").grid(
+            row=row, column=1, sticky="w")
+        row += 1
+        for index in range(4):
+            ttk.Entry(panel, textvariable=self.comms_shortcut_labels[index], width=16).grid(
+                row=row, column=0, sticky="ew", padx=(0, 10), pady=6)
+            ttk.Entry(panel, textvariable=self.comms_shortcut_messages[index]).grid(
+                row=row, column=1, sticky="ew", pady=6)
+            row += 1
+        ttk.Label(panel, text="A slot with a blank label or message stays disabled on the wrist.",
+                  style="Muted.Panel.TLabel").grid(
+                      row=row, column=0, columnspan=2, sticky="w", pady=(14, 0))
+        panel.columnconfigure(0, weight=1)
+        panel.columnconfigure(1, weight=4)
+
     @staticmethod
     def _entry_row(panel: ttk.Frame, row: int, label: str, variable: tk.StringVar) -> int:
         ttk.Label(panel, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=4)
@@ -316,6 +346,10 @@ class SettingsWindow:
             llm_model=self.llm_model.get(),
             llm_reasoning_effort=self.llm_reasoning.get(),
             llm_temperature=self.llm_temperature.get(),
+            comms_shortcuts=tuple(zip(
+                (item.get() for item in self.comms_shortcut_labels),
+                (item.get() for item in self.comms_shortcut_messages),
+            )),
         )
         return True
 

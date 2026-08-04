@@ -30,7 +30,15 @@ Allowed tools:
 Use play/track for a named song and put its performer in artist when known. Use
 artist_top for requests for an artist's popular songs. Use none if the request
 is not clearly about Spotify. Do not invent tools, URLs, Spotify URIs, or extra
-fields. The transcript may contain harmless speech-recognition mistakes."""
+fields. The transcript may contain harmless speech-recognition mistakes.
+
+For volume_up and volume_down, value is the requested number of percentage
+points; use null for the default 10-point step. For volume_set, value is the
+absolute target percentage. Examples:
+- "Bump the volume up 5%" -> {"tool":"control","command":"volume_up","value":5}
+- "Hey, turn this down 10%" -> {"tool":"control","command":"volume_down","value":10}
+- "Turn down Spotify" -> {"tool":"control","command":"volume_down","value":null}
+- "Set Spotify to 35%" -> {"tool":"control","command":"volume_set","value":35}"""
 
 
 class MusicLlmValidationError(ValueError):
@@ -95,6 +103,13 @@ def validate_music_intent(payload: Any) -> MusicLlmIntent:
         if command == "volume_set":
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
                 raise MusicLlmValidationError("volume_set requires an integer from 0 through 100.")
+        elif command in {"volume_up", "volume_down"}:
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100
+            ):
+                raise MusicLlmValidationError(
+                    f"{command} requires null or an integer from 1 through 100."
+                )
         elif value is not None:
             raise MusicLlmValidationError("This control command does not accept a value.")
         return MusicLlmIntent(tool="control", command=command, value=value)
@@ -204,7 +219,8 @@ def execute_music_llm_intent(intent: MusicLlmIntent,
         if command in {"volume_up", "volume_down"}:
             state = spotify.playback_state() or {}
             current = int((state.get("device") or {}).get("volume_percent") or 0)
-            updated = max(0, min(100, current + (10 if command == "volume_up" else -10)))
+            step = intent.value if intent.value is not None else 10
+            updated = max(0, min(100, current + (step if command == "volume_up" else -step)))
             spotify.set_volume(updated, device_id=device_id)
             return LlmMusicResult(True, f"Spotify volume set to {updated}%.")
         return LlmMusicResult(False, "That Spotify control was not implemented.")

@@ -61,6 +61,14 @@ class CommsDictationTests(unittest.TestCase):
         self.assertEqual(osc.clears, 1)
         self.assertEqual(snapshot.state, "CLEARED")
 
+    def test_shortcut_sends_bounded_normalized_message(self):
+        osc = FakeOsc()
+        comms = CommsDictation(FakeTranscriber(), threading.Lock(), osc=osc)
+        snapshot = comms.send_shortcut("  Be   right back.  ")
+        self.assertEqual(osc.messages, ["Be right back."])
+        self.assertEqual(snapshot.state, "SHORTCUT")
+        self.assertEqual(snapshot.transcript, "Be right back.")
+
     def test_refuses_to_cross_route_while_other_voice_capture_owns_lock(self):
         lock = threading.Lock()
         lock.acquire()

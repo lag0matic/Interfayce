@@ -85,6 +85,17 @@ class CommsDictation:
         LOGGER.info("Comms chatbox clear pulse sent")
         return self.snapshot()
 
+    def send_shortcut(self, message: str) -> CommsSnapshot:
+        text = " ".join(message.split())[:144]
+        if not text:
+            raise ValueError("Comms shortcut is empty.")
+        self._osc.send_chatbox_message(text)
+        thread = self._thread
+        listening = thread is not None and thread.is_alive() and not self._stop.is_set()
+        self._set_snapshot("SENT" if listening else "SHORTCUT", text)
+        LOGGER.info("Comms shortcut sent: %r", text)
+        return self.snapshot()
+
     def _run(self) -> None:
         if not self._command_lock.acquire(blocking=False):
             self._set_snapshot("ERROR", "Voice capture is already active.")

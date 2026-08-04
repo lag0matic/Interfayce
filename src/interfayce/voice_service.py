@@ -17,8 +17,8 @@ from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interpret_music_request
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
 from .osc import VrchatOscClient
-from .settings import (adjust_broadcast_gain, adjust_tts_volume, load_settings,
-                       settings_wire_text, toggle_tts_mute)
+from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
+                       load_settings, settings_wire_text, toggle_tts_mute)
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
 from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
@@ -185,6 +185,19 @@ class VoiceRuntime:
             LOGGER.exception("Comms chatbox clear failed")
             return f"ERROR\t{_safe_field(str(error))}"
 
+    def send_comms_shortcut(self, index: int) -> str:
+        try:
+            shortcuts = load_settings().comms_shortcuts
+            if index < 0 or index >= len(shortcuts):
+                raise ValueError("Comms shortcut does not exist.")
+            label, message = shortcuts[index]
+            if not label or not message:
+                raise ValueError("Comms shortcut is not configured.")
+            return self.comms.send_shortcut(message).wire_text()
+        except Exception as error:
+            LOGGER.exception("Comms shortcut failed: %s", index)
+            return f"ERROR\t{_safe_field(str(error))}"
+
 
 def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
     log_path = configure_logging()
@@ -213,6 +226,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, settings_wire_text())
             elif self.path == "/comms/status":
                 self._reply(200, runtime.comms_status())
+            elif self.path == "/comms/shortcuts":
+                self._reply(200, comms_shortcut_labels())
             else:
                 self._reply(404, "not found")
 
@@ -226,6 +241,13 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, runtime.toggle_comms())
             elif self.path == "/comms/clear":
                 self._reply(200, runtime.clear_comms())
+            elif self.path.startswith("/comms/shortcut/"):
+                try:
+                    index = int(self.path.rsplit("/", 1)[-1])
+                except ValueError:
+                    self._reply(400, "ERROR\tInvalid shortcut index.")
+                else:
+                    self._reply(200, runtime.send_comms_shortcut(index))
             elif self.path == "/tts/announce":
                 try:
                     length = min(int(self.headers.get("Content-Length", "0")), 512)

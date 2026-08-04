@@ -32,6 +32,8 @@ class MusicLlmTests(unittest.TestCase):
             {"tool": "open_program", "query": "browser"},
             {"tool": "status", "debug": True},
             {"tool": "control", "command": "volume_set", "value": 500},
+            {"tool": "control", "command": "volume_up", "value": 0},
+            {"tool": "control", "command": "volume_down", "value": 101},
         ):
             with self.subTest(payload=payload), self.assertRaises(MusicLlmValidationError):
                 validate_music_intent(payload)
@@ -40,6 +42,8 @@ class MusicLlmTests(unittest.TestCase):
         expected = {
             "turn it up": ("volume_up", None),
             "turn it down": ("volume_down", None),
+            "bump it up five percent": ("volume_up", 5),
+            "turn this down ten percent": ("volume_down", 10),
             "set it": ("volume_set", 35),
             "mute": ("mute", None),
             "unmute": ("unmute", None),
@@ -47,6 +51,8 @@ class MusicLlmTests(unittest.TestCase):
         payloads = {
             "turn it up": {"tool": "control", "command": "volume_up", "value": None},
             "turn it down": {"tool": "control", "command": "volume_down", "value": None},
+            "bump it up five percent": {"tool": "control", "command": "volume_up", "value": 5},
+            "turn this down ten percent": {"tool": "control", "command": "volume_down", "value": 10},
             "set it": {"tool": "control", "command": "volume_set", "value": 35},
             "mute": {"tool": "control", "command": "mute", "value": None},
             "unmute": {"tool": "control", "command": "unmute", "value": None},
@@ -62,6 +68,34 @@ class MusicLlmTests(unittest.TestCase):
         self.assertEqual(intent.play_type, "artist")
         self.assertIn('\\n', client.user)
         self.assertIn("Do not invent tools", client.system)
+        self.assertIn("default 10-point step", client.system)
+
+    def test_executor_applies_requested_relative_volume_and_clamps(self) -> None:
+        class Api:
+            volume = None
+
+            def devices(self):
+                return [{"id": "device", "is_active": True, "is_restricted": False}]
+
+            def playback_state(self):
+                return {"device": {"volume_percent": 96}}
+
+            def set_volume(self, value, *, device_id):
+                self.volume = (value, device_id)
+
+        api = Api()
+        result = execute_music_llm_intent(MusicLlmIntent(
+            tool="control", command="volume_up", value=10
+        ), api)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(api.volume, (100, "device"))
+
+        api.playback_state = lambda: {"device": {"volume_percent": 12}}
+        result = execute_music_llm_intent(MusicLlmIntent(
+            tool="control", command="volume_down", value=5
+        ), api)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(api.volume, (7, "device"))
 
     def test_executor_uses_only_validated_track_and_device(self) -> None:
         class Api:

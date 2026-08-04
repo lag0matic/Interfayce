@@ -669,42 +669,60 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 : commsTranscript_, bodyFormat_.Get(), D2D1::RectF(42, 150, 726, 202),
             commsTranscript_.empty() ? mutedTextBrush_.Get() : textBrush_.Get());
 
-        const auto micCenter = D2D1::Point2F(270, 280);
-        d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 58, 58),
+        const std::array<D2D1_RECT_F, 4> shortcutButtons{
+            D2D1::RectF(42, 208, 198, 250), D2D1::RectF(218, 208, 374, 250),
+            D2D1::RectF(394, 208, 550, 250), D2D1::RectF(570, 208, 726, 250)};
+        labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        for (size_t index = 0; index < shortcutButtons.size(); ++index) {
+            const bool configured = !commsShortcutLabels_[index].empty();
+            d2dContext_->FillRoundedRectangle(
+                D2D1::RoundedRect(shortcutButtons[index], 10, 10), buttonBrush_.Get());
+            d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(shortcutButtons[index], 10, 10),
+                configured ? structureBrush_.Get() : structureDimBrush_.Get(), configured ? 1.5F : 0.8F);
+            drawText(configured ? commsShortcutLabels_[index] : L"\u00b7\u00b7\u00b7",
+                labelFormat_.Get(), shortcutButtons[index],
+                configured ? textBrush_.Get() : structureDimBrush_.Get());
+        }
+        labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+        const auto micCenter = D2D1::Point2F(270, 302);
+        d2dContext_->FillEllipse(D2D1::Ellipse(micCenter, 38, 38),
             commsActive_ ? activeFillBrush_.Get() : buttonBrush_.Get());
-        d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 58, 58), stateBrush,
+        d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 38, 38), stateBrush,
             commsActive_ ? 3.0F : 2.0F);
-        d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 67, 67),
+        d2dContext_->DrawEllipse(D2D1::Ellipse(micCenter, 45, 45),
             structureDimBrush_.Get(), 1.0F);
         d2dContext_->DrawRoundedRectangle(
-            D2D1::RoundedRect(D2D1::RectF(253, 246, 287, 286), 17, 17),
+            D2D1::RoundedRect(D2D1::RectF(257, 278, 283, 308), 13, 13),
             stateBrush, 4.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(244, 274), D2D1::Point2F(244, 286),
+        d2dContext_->DrawLine(D2D1::Point2F(250, 299), D2D1::Point2F(250, 307),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(244, 286), D2D1::Point2F(255, 297),
+        d2dContext_->DrawLine(D2D1::Point2F(250, 307), D2D1::Point2F(258, 315),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(255, 297), D2D1::Point2F(285, 297),
+        d2dContext_->DrawLine(D2D1::Point2F(258, 315), D2D1::Point2F(282, 315),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(285, 297), D2D1::Point2F(296, 286),
+        d2dContext_->DrawLine(D2D1::Point2F(282, 315), D2D1::Point2F(290, 307),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(296, 286), D2D1::Point2F(296, 274),
+        d2dContext_->DrawLine(D2D1::Point2F(290, 307), D2D1::Point2F(290, 299),
             stateBrush, 3.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(270, 298), D2D1::Point2F(270, 313),
+        d2dContext_->DrawLine(D2D1::Point2F(270, 316), D2D1::Point2F(270, 328),
             stateBrush, 3.5F);
 
-        const auto clearCenter = D2D1::Point2F(560, 280);
-        d2dContext_->FillEllipse(D2D1::Ellipse(clearCenter, 45, 45), buttonBrush_.Get());
-        d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 45, 45), structureBrush_.Get(), 2.0F);
-        d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 53, 53), structureDimBrush_.Get(), 1.0F);
+        const auto clearCenter = D2D1::Point2F(560, 302);
+        d2dContext_->FillEllipse(D2D1::Ellipse(clearCenter, 32, 32), buttonBrush_.Get());
+        d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 32, 32), structureBrush_.Get(), 2.0F);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(clearCenter, 39, 39), structureDimBrush_.Get(), 1.0F);
         // Empty chatbox pulse: an erased speech cell, kept icon-only.
         d2dContext_->DrawRoundedRectangle(
-            D2D1::RoundedRect(D2D1::RectF(538, 258, 582, 290), 7, 7),
+            D2D1::RoundedRect(D2D1::RectF(542, 290, 578, 316), 6, 6),
             accentBrush_.Get(), 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(548, 290), D2D1::Point2F(542, 301),
+        d2dContext_->DrawLine(D2D1::Point2F(550, 316), D2D1::Point2F(546, 324),
             accentBrush_.Get(), 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(542, 301), D2D1::Point2F(558, 291),
+        d2dContext_->DrawLine(D2D1::Point2F(546, 324), D2D1::Point2F(558, 317),
             accentBrush_.Get(), 2.5F);
-        d2dContext_->DrawLine(D2D1::Point2F(536, 304), D2D1::Point2F(584, 256),
+        d2dContext_->DrawLine(D2D1::Point2F(540, 326), D2D1::Point2F(580, 286),
             accentBrush_.Get(), 3.5F);
 
         d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(49, 355), 5, 5), stateBrush);
@@ -875,6 +893,10 @@ void OverlayRenderer::SetCommsStatus(const std::wstring& status,
     commsStatus_ = status;
     commsTranscript_ = transcript;
     commsActive_ = active;
+}
+
+void OverlayRenderer::SetCommsShortcuts(const std::array<std::wstring, 4>& labels) {
+    commsShortcutLabels_ = labels;
 }
 
 void OverlayRenderer::SetTtsSettings(int volumePercent, bool muted) {

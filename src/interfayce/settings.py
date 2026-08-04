@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 import threading
 
+DEFAULT_COMMS_SHORTCUTS: tuple[tuple[str, str], ...] = (("", ""),) * 4
+
 
 @dataclass(frozen=True)
 class AppSettings:
@@ -31,6 +33,7 @@ class AppSettings:
     llm_model: str = ""
     llm_reasoning_effort: str = ""
     llm_temperature: float = 0.65
+    comms_shortcuts: tuple[tuple[str, str], ...] = DEFAULT_COMMS_SHORTCUTS
 
 
 _LOCK = threading.Lock()
@@ -44,6 +47,16 @@ def settings_path() -> Path:
 
 
 def _clamp(settings: AppSettings) -> AppSettings:
+    shortcuts: list[tuple[str, str]] = []
+    for item in tuple(settings.comms_shortcuts)[:4]:
+        try:
+            label, message = item
+        except (TypeError, ValueError):
+            continue
+        clean_label = " ".join(str(label).split())[:12]
+        clean_message = " ".join(str(message).split())[:144]
+        shortcuts.append((clean_label, clean_message))
+    shortcuts.extend((("", ""),) * (4 - len(shortcuts)))
     return AppSettings(
         tts_volume=max(0.0, min(1.0, float(settings.tts_volume))),
         tts_muted=bool(settings.tts_muted),
@@ -61,6 +74,7 @@ def _clamp(settings: AppSettings) -> AppSettings:
         llm_model=str(settings.llm_model).strip(),
         llm_reasoning_effort=str(settings.llm_reasoning_effort).strip(),
         llm_temperature=max(0.0, min(2.0, float(settings.llm_temperature))),
+        comms_shortcuts=tuple(shortcuts),
     )
 
 
@@ -86,6 +100,8 @@ def load_settings() -> AppSettings:
                 llm_model=data.get("llm_model", ""),
                 llm_reasoning_effort=data.get("llm_reasoning_effort", ""),
                 llm_temperature=data.get("llm_temperature", 0.65),
+                comms_shortcuts=tuple(tuple(item) for item in
+                    data.get("comms_shortcuts", DEFAULT_COMMS_SHORTCUTS)),
             ))
         except (FileNotFoundError, OSError, TypeError, ValueError, json.JSONDecodeError):
             return AppSettings()
@@ -154,9 +170,11 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               broadcast_gain_db: float, spotify_client_id: str,
                               llm_enabled: bool, llm_endpoint: str,
                               llm_model: str, llm_reasoning_effort: str,
-                              llm_temperature: float) -> AppSettings:
+                              llm_temperature: float,
+                              comms_shortcuts: tuple[tuple[str, str], ...] | None = None) -> AppSettings:
+    current = load_settings()
     return save_settings(replace(
-        load_settings(),
+        current,
         tts_volume=tts_volume,
         tts_muted=tts_muted,
         tts_speed=tts_speed,
@@ -173,7 +191,13 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         llm_model=llm_model,
         llm_reasoning_effort=llm_reasoning_effort,
         llm_temperature=llm_temperature,
+        comms_shortcuts=current.comms_shortcuts if comms_shortcuts is None else comms_shortcuts,
     ))
+
+
+def comms_shortcut_labels(settings: AppSettings | None = None) -> str:
+    current = settings or load_settings()
+    return "\t".join(label if label and message else "" for label, message in current.comms_shortcuts)
 
 
 def settings_wire_text(settings: AppSettings | None = None) -> str:
