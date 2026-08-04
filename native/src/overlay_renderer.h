@@ -33,6 +33,8 @@ public:
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetTtsSettings(int volumePercent, bool muted);
     void SetBroadcastGainDb(int gainDb);
+    void SetShutdownHoldProgress(float progress);
+    void SetClockText(const std::wstring& text);
     ID3D11Device* Device() const;
     vr::Texture_t Texture() const;
 
@@ -72,6 +74,8 @@ private:
     int ttsVolumePercent_{85};
     bool ttsMuted_{};
     int broadcastGainDb_{12};
+    float shutdownHoldProgress_{};
+    std::wstring clockText_;
 };
 
 }  // namespace interfayce

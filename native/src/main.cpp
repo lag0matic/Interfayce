@@ -72,6 +72,15 @@ std::filesystem::path UserCacheFile(std::wstring_view filename) {
     return directory / filename;
 }
 
+std::wstring LocalClockText() {
+    SYSTEMTIME localTime{};
+    GetLocalTime(&localTime);
+    wchar_t formatted[64]{};
+    const int length = GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS,
+        &localTime, nullptr, formatted, static_cast<int>(std::size(formatted)));
+    return length > 1 ? std::wstring(formatted, static_cast<size_t>(length - 1)) : L"";
+}
+
 std::filesystem::path NodeExecutable(const std::filesystem::path& projectRoot) {
     const auto bundled = projectRoot / "runtime" / "node.exe";
     return std::filesystem::exists(bundled) ? bundled : std::filesystem::path(L"node.exe");
@@ -441,28 +450,86 @@ struct SlimeRigStatus {
     bool mountReady{};
 };
 
+std::optional<std::string> RunHiddenAndCapture(std::wstring command,
+                                               const std::filesystem::path& workingDirectory,
+                                               std::chrono::milliseconds timeout) {
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (!CreatePipe(&readPipe, &writePipe, &security, 0)) return std::nullopt;
+    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+    const HANDLE nullInput = CreateFileW(L"NUL", GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING, 0, nullptr);
+    if (nullInput == INVALID_HANDLE_VALUE) {
+        CloseHandle(writePipe);
+        CloseHandle(readPipe);
+        return std::nullopt;
+    }
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
+    startup.wShowWindow = SW_HIDE;
+    startup.hStdOutput = writePipe;
+    startup.hStdError = writePipe;
+    startup.hStdInput = nullInput;
+    PROCESS_INFORMATION process{};
+    const bool launched = CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, workingDirectory.wstring().c_str(), &startup, &process) != FALSE;
+    CloseHandle(writePipe);
+    CloseHandle(nullInput);
+    if (!launched) {
+        CloseHandle(readPipe);
+        return std::nullopt;
+    }
+    CloseHandle(process.hThread);
+
+    const DWORD waitResult = WaitForSingleObject(process.hProcess,
+        static_cast<DWORD>(timeout.count()));
+    if (waitResult == WAIT_TIMEOUT) {
+        TerminateProcess(process.hProcess, 1);
+        WaitForSingleObject(process.hProcess, 1000);
+    }
+    std::string output;
+    std::array<char, 512> buffer{};
+    DWORD bytesRead = 0;
+    while (ReadFile(readPipe, buffer.data(), static_cast<DWORD>(buffer.size()),
+            &bytesRead, nullptr) && bytesRead > 0) {
+        output.append(buffer.data(), bytesRead);
+    }
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hProcess);
+    CloseHandle(readPipe);
+    return waitResult == WAIT_OBJECT_0 && exitCode == 0
+        ? std::optional<std::string>{std::move(output)} : std::nullopt;
+}
+
 SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoot) {
     SlimeRigStatus status;
-    const std::string command = "\"" + NodeExecutable(projectRoot).string() + "\" \""
-        + (projectRoot / "tools" / "slimevr_probe.cjs").string() + "\" --summary";
-    if (FILE* pipe = _popen(command.c_str(), "r")) {
-        char buffer[512]{};
-        if (std::fgets(buffer, sizeof(buffer), pipe)) {
-            std::string line(buffer);
-            size_t start = 0;
-            for (size_t index = 0; index < status.slots.size() && start <= line.size(); ++index) {
-                const auto end = line.find('\t', start);
-                const auto value = line.substr(start, end == std::string::npos ? std::string::npos : end - start);
-                status.slots[index].assign(value.begin(), value.end());
-                while (!status.slots[index].empty() && (status.slots[index].back() == L'\n' || status.slots[index].back() == L'\r')) {
-                    status.slots[index].pop_back();
-                }
-                if (end == std::string::npos) break;
-                start = end + 1;
+    std::wstring command = L"\"" + NodeExecutable(projectRoot).wstring() + L"\" \""
+        + (projectRoot / "tools" / "slimevr_probe.cjs").wstring() + L"\" --summary";
+    if (const auto captured = RunHiddenAndCapture(
+            std::move(command), projectRoot, std::chrono::milliseconds(6500))) {
+        const auto newline = captured->find_first_of("\r\n");
+        const std::string line = captured->substr(0, newline);
+        size_t start = 0;
+        for (size_t index = 0; index < status.slots.size() && start <= line.size(); ++index) {
+            const auto end = line.find('\t', start);
+            const auto value = line.substr(
+                start, end == std::string::npos ? std::string::npos : end - start);
+            status.slots[index] = Utf8ToWide(value);
+            if (end == std::string::npos) {
+                start = line.size() + 1;
+                break;
             }
-            if (start <= line.size()) status.mountReady = line.substr(start).starts_with("MOUNT_OK");
+            start = end + 1;
         }
-        _pclose(pipe);
+        if (start <= line.size()) {
+            status.mountReady = line.substr(start).starts_with("MOUNT_OK");
+        }
     }
     return status;
 }
@@ -699,6 +766,18 @@ int main(int argc, char** argv) {
         CoUninitialize();
         return 0;
     }
+    const bool slimeSummary = argc > 1 && std::string_view(argv[1]) == "--slime-summary";
+    if (slimeSummary) {
+        const auto root = ProjectRoot(ExecutableDirectory(argv[0]));
+        const auto status = ReadSlimeTrackerBatteries(root);
+        for (size_t index = 0; index < status.slots.size(); ++index) {
+            if (index > 0) std::wcout << L'\t';
+            std::wcout << (status.slots[index].empty() ? L"--" : status.slots[index]);
+        }
+        std::wcout << L'\t' << (status.mountReady ? L"MOUNT_OK" : L"MOUNT_WAIT") << L'\n';
+        CoUninitialize();
+        return 0;
+    }
     const bool broadcastControllerProbe = argc > 1
         && std::string_view(argv[1]) == "--broadcast-controller-probe";
     if (broadcastControllerProbe) {
@@ -836,6 +915,8 @@ int main(int argc, char** argv) {
         kRightHapticActionPath, &rightHapticAction);
 
     interfayce::OverlayRenderer renderer;
+    std::wstring clockText = LocalClockText();
+    renderer.SetClockText(clockText);
     interfayce::BroadcastController broadcast(
         directory / "InterfayceAudioEngine.exe");
     renderer.SetSlimeAvailable(slimeAvailable);
@@ -1054,10 +1135,14 @@ int main(int argc, char** argv) {
     auto nextCommsPoll = std::chrono::steady_clock::now();
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
     auto nextRigPoll = std::chrono::steady_clock::now();
+    auto nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     bool restoreHoldActive = false;
     bool rigResetHoldActive = false;
+    bool shutdownHoldActive = false;
     const wchar_t* rigResetKind = nullptr;
     auto restoreHoldStarted = std::chrono::steady_clock::now();
+    auto shutdownHoldStarted = std::chrono::steady_clock::now();
+    int shutdownHoldSegment = 0;
     std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
     std::optional<uint64_t> activeScrollSurface;
     double verticalScrollRemainder = 0.0;
@@ -1083,6 +1168,19 @@ int main(int argc, char** argv) {
         }
         if (!wristAttached) {
             wristAttached = attachWristOverlay();
+        }
+        if (std::chrono::steady_clock::now() >= nextClockPoll) {
+            nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            const auto updatedClock = LocalClockText();
+            if (updatedClock != clockText) {
+                clockText = updatedClock;
+                renderer.SetClockText(clockText);
+                if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
         }
         const auto wristFadeNow = std::chrono::steady_clock::now();
         const float wristFadeSeconds = static_cast<float>((std::min)(
@@ -1176,6 +1274,7 @@ int main(int argc, char** argv) {
         bool broadcastGainDownHit = false;
         bool broadcastGainUpHit = false;
         bool desktopSettingsHit = false;
+        bool shutdownButtonHit = false;
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopReuseIndex;
         std::optional<size_t> desktopCloseIndex;
@@ -1220,9 +1319,11 @@ int main(int argc, char** argv) {
                 broadcastGainDownHit = selectedDeck == 4
                     && x >= 500.0F && x <= 580.0F && y >= 184.0F && y <= 256.0F;
                 broadcastGainUpHit = selectedDeck == 4
-                    && x >= 610.0F && x <= 690.0F && y >= 184.0F && y <= 256.0F;
+                    && x >= 610.0F && x <= 680.0F && y >= 184.0F && y <= 256.0F;
                 desktopSettingsHit = selectedDeck == 4
                     && x >= 650.0F && x <= 730.0F && y >= 94.0F && y <= 170.0F;
+                shutdownButtonHit = selectedDeck == 4
+                    && x >= 666.0F && x <= 748.0F && y >= 260.0F && y <= 340.0F;
                 rigFullResetHit = slimeAvailable && selectedDeck == 3
                     && x >= 42.0F && x <= 350.0F && y >= 320.0F && y <= 366.0F;
                 rigMountResetHit = slimeAvailable && selectedDeck == 3
@@ -1308,7 +1409,7 @@ int main(int argc, char** argv) {
                     || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
                     || musicMicHit || musicBroadcastHit || commsMicHit || commsClearHit
                     || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
-                    || broadcastGainDownHit || broadcastGainUpHit;
+                    || broadcastGainDownHit || broadcastGainUpHit || shutdownButtonHit;
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
                     actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
@@ -1585,6 +1686,16 @@ int main(int argc, char** argv) {
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSettingsHit) {
             if (!LaunchDesktopSettings(directory, projectRoot)) {
                 std::cerr << "Could not launch the desktop settings window.\n";
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && shutdownButtonHit) {
+            shutdownHoldActive = true;
+            shutdownHoldStarted = std::chrono::steady_clock::now();
+            shutdownHoldSegment = 1;
+            renderer.SetShutdownHoldProgress(1.0F / 12.0F);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && selectedDeck == 0
                    && panelY >= 245.0F && panelY <= 333.0F) {
@@ -1867,6 +1978,37 @@ int main(int argc, char** argv) {
                 std::cout << "wrist restore cancelled: hold for 0.75 seconds\n";
             }
             restoreHoldActive = false;
+        }
+        if (shutdownHoldActive) {
+            const bool stillHolding = rightUiClick.bState && shutdownButtonHit;
+            const auto elapsed = std::chrono::steady_clock::now() - shutdownHoldStarted;
+            constexpr auto requiredHold = std::chrono::seconds(3);
+            if (!stillHolding) {
+                shutdownHoldActive = false;
+                shutdownHoldSegment = 0;
+                renderer.SetShutdownHoldProgress(0.0F);
+                if (selectedDeck == 4 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else if (elapsed >= requiredHold) {
+                renderer.SetShutdownHoldProgress(1.0F);
+                running = false;
+            } else {
+                const float progress = std::chrono::duration<float>(elapsed).count() / 3.0F;
+                const int segment = (std::min)(12,
+                    1 + static_cast<int>(progress * 12.0F));
+                if (segment != shutdownHoldSegment) {
+                    shutdownHoldSegment = segment;
+                    renderer.SetShutdownHoldProgress(progress);
+                    if (selectedDeck == 4 && renderer.Initialize(system, selectedDeck, musicLine,
+                            musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                }
+            }
         }
         if (rightUiClick.bChanged && !rightUiClick.bState && rigResetHoldActive) {
             const auto heldFor = std::chrono::steady_clock::now() - restoreHoldStarted;

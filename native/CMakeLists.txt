@@ -38,6 +38,11 @@ add_executable(InterfayceOverlay
 )
 target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
 target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32)
+# The installed overlay is a background VR utility, so a normal launch must not
+# allocate a console window. Keep main/mainCRTStartup so the existing command
+# probes and argument handling continue to work unchanged.
+set_target_properties(InterfayceOverlay PROPERTIES WIN32_EXECUTABLE TRUE)
+target_link_options(InterfayceOverlay PRIVATE /ENTRY:mainCRTStartup)
 
 add_library(interfayce_process_audio STATIC
     src/process_loopback_capture.cpp

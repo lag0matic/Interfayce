@@ -238,7 +238,11 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
 
     // Compact orbital gear; it opens settings without spending another text tab.
     const auto gearBrush = deck == 4 ? accentBrush_.Get() : mutedTextBrush_.Get();
-    const auto gearCenter = D2D1::Point2F(699, 49);
+    if (!clockText_.empty()) {
+        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(618, 36, 694, 66),
+            textBrush_.Get());
+    }
+    const auto gearCenter = D2D1::Point2F(724, 49);
     d2dContext_->DrawEllipse(D2D1::Ellipse(gearCenter, 11, 11), gearBrush, 2.5F);
     d2dContext_->DrawEllipse(D2D1::Ellipse(gearCenter, 4, 4), gearBrush, 2.0F);
     for (int index = 0; index < 8; ++index) {
@@ -615,6 +619,31 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             d2dContext_->DrawLine(D2D1::Point2F(408, 304), D2D1::Point2F(400, 311),
                 accentBrush_.Get(), 2.5F);
         }
+
+        // Graceful shutdown: a deliberately separate power control with a
+        // segmented confirmation ring that fills over the required hold.
+        const auto shutdownCenter = D2D1::Point2F(704, 300);
+        const bool shutdownArmed = shutdownHoldProgress_ > 0.0F;
+        d2dContext_->FillEllipse(D2D1::Ellipse(shutdownCenter, 30, 30),
+            shutdownArmed ? activeFillBrush_.Get() : buttonBrush_.Get());
+        d2dContext_->DrawEllipse(D2D1::Ellipse(shutdownCenter, 30, 30),
+            shutdownArmed ? accentBrush_.Get() : structureBrush_.Get(), 2.0F);
+        constexpr int shutdownSegments = 12;
+        const int litSegments = static_cast<int>(
+            std::ceil(shutdownHoldProgress_ * static_cast<float>(shutdownSegments)));
+        for (int index = 0; index < shutdownSegments; ++index) {
+            const float angle = -1.5707963F
+                + static_cast<float>(index) * 6.2831853F / shutdownSegments;
+            const auto point = D2D1::Point2F(
+                shutdownCenter.x + std::cos(angle) * 39.0F,
+                shutdownCenter.y + std::sin(angle) * 39.0F);
+            d2dContext_->FillEllipse(D2D1::Ellipse(point, 2.5F, 2.5F),
+                index < litSegments ? accentBrush_.Get() : structureDimBrush_.Get());
+        }
+        d2dContext_->DrawLine(D2D1::Point2F(704, 279), D2D1::Point2F(704, 299),
+            accentBrush_.Get(), 3.5F);
+        d2dContext_->DrawEllipse(D2D1::Ellipse(shutdownCenter, 17, 17),
+            accentBrush_.Get(), 3.5F);
     }
     if (FAILED(d2dContext_->EndDraw())) {
         return false;
@@ -671,6 +700,14 @@ void OverlayRenderer::SetTtsSettings(int volumePercent, bool muted) {
 
 void OverlayRenderer::SetBroadcastGainDb(int gainDb) {
     broadcastGainDb_ = (std::max)(0, (std::min)(24, gainDb));
+}
+
+void OverlayRenderer::SetShutdownHoldProgress(float progress) {
+    shutdownHoldProgress_ = (std::max)(0.0F, (std::min)(1.0F, progress));
+}
+
+void OverlayRenderer::SetClockText(const std::wstring& text) {
+    clockText_ = text;
 }
 
 }  // namespace interfayce
