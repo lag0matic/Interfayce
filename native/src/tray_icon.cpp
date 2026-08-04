@@ -4,6 +4,10 @@
 
 #include <string>
 
+#ifndef INTERFAYCE_VERSION
+#define INTERFAYCE_VERSION "development"
+#endif
+
 namespace interfayce {
 namespace {
 
@@ -52,7 +56,10 @@ bool TrayIcon::AddNotificationIcon() {
     notification.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     notification.uCallbackMessage = kTrayMessage;
     notification.hIcon = icon_;
-    wcscpy_s(notification.szTip, L"Interfayce - Running");
+    const std::wstring tip = L"Interfayce " + std::wstring(
+        INTERFAYCE_VERSION, INTERFAYCE_VERSION + std::char_traits<char>::length(INTERFAYCE_VERSION))
+        + L" - Running";
+    wcscpy_s(notification.szTip, tip.c_str());
     if (!Shell_NotifyIconW(NIM_ADD, &notification)) return false;
     notification.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &notification);
@@ -122,7 +129,9 @@ LRESULT TrayIcon::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
 void TrayIcon::ShowMenu() {
     HMENU menu = CreatePopupMenu();
     if (menu == nullptr) return;
-    AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0, L"Interfayce - Running");
+    const std::string versionText = std::string("Interfayce ") + INTERFAYCE_VERSION;
+    const std::wstring version(versionText.begin(), versionText.end());
+    AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0, version.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kOpenSettings, L"Open Settings");
     AppendMenuW(menu, MF_STRING, kRestart, L"Restart Interfayce");

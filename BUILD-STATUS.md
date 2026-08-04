@@ -9,7 +9,7 @@ Updated: 2026-08-04
 - Checkpoint scope: feature-complete personal build and first installer
 - Native host: `native/build/bin/InterfayceOverlay.exe`
 - Native audio engine: `native/build/bin/InterfayceAudioEngine.exe`
-- Python suite: 61 passing tests
+- Python suite: 71 passing tests
 
 The desktop interaction slice is now **usably complete**. Spotify OAuth, constrained conversational Music control, local STT, and Kokoro acknowledgments have also passed live in-headset testing.
 
@@ -97,6 +97,9 @@ The independent keyboard:
 ## Settings and packaging
 
 - The desktop settings window now owns General and Integrations tabs: input/output devices, TTS level/mute/speed, haptics, broadcast gain, Kokoro endpoint/model/voice, Spotify OAuth, and the constrained LLM provider.
+- Its Diagnostics tab refreshes bounded, network-free local health checks whenever Settings opens, separates required attention from optional offline integrations, and persists no credentials or device details beyond the small status report.
+- Update discovery is explicit rather than periodic: the user-requested check reads the latest GitHub release and can open the release page, but never downloads or executes software automatically.
+- `VERSION` now drives native build metadata, the bundled service, and installer compilation. Settings, the tray, `--version`, Windows executable properties, and Add/Remove Programs all expose `0.1.0`.
 - LLM fallback has an enforced enable toggle. Fresh installs are disabled and blank; when disabled, the client does not read a key or contact a network endpoint.
 - Spotify tokens and the LLM key remain DPAPI-protected. No personal endpoint, client ID, device name, settings JSON, or credential blob is embedded in the source or installer payload.
 - Spotify song announcements now run inside the resident service lifecycle instead of depending on an orphanable `spotify-watch` process.
@@ -116,15 +119,14 @@ The independent keyboard:
 
 ## Larger features intentionally deferred
 
-1. First-run diagnostics plus installed version and update support.
-2. Personal favorite-application shortcuts for one-action desktop surface spawning.
-3. Active/glanceable/sleeping capture update policies.
-4. Additional diagnostics or visual polish only when live use identifies a concrete need.
-5. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
+1. Personal favorite-application shortcuts for one-action desktop surface spawning.
+2. Active/glanceable/sleeping capture update policies.
+3. Additional diagnostics or visual polish only when live use identifies a concrete need.
+4. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
     selection glow, and interaction feedback across every wrist deck and desktop surface.
 
-The intended next expansion is first-run diagnostics/version support, followed by favorite-application
-shortcuts. Battery/status handling is implemented; its low/critical behavior is
+The intended next expansion is favorite-application shortcuts, followed by capture update policies.
+Battery/status handling is implemented; its low/critical behavior is
 covered by deterministic tests and awaits a natural depleted-battery playtest.
 
 ## Verification record
@@ -136,6 +138,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Picker selection and paging, application icons, surface reuse, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, wrist recovery controls, and wrist visibility fading have passed live VR testing.
 - Per-surface movement locks and grouped Bring All recovery, including independent keyboard placement, have passed live VR testing.
 - Keyboard Copy/Paste glyph controls passed live cross-surface clipboard and post-command modifier-release testing.
+- First-run diagnostics, persisted report round-tripping, explicit release comparison, shared version identity, native `--version`, EXE metadata, and installer packaging pass automated checks.
 - Left/right wrist mirroring, automatic opposite-hand wrist input, live six-axis placement offsets, reset-to-fit, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
 - Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.
@@ -143,7 +146,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Battery location/readability and the redesigned Rig scanner passed a live headset check.
 - Battery low/critical threshold crossings, deduplication, combined speech, and recovery
   re-arming pass deterministic tests; a naturally depleted-device playtest remains outstanding.
-- Python proof-of-concept suite: 65 passing checks.
+- Python proof-of-concept suite: 71 passing checks.
 
 ## North star
 

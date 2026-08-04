@@ -853,6 +853,12 @@ void DestroyStaleOverlay(const char* key) {
 
 int main(int argc, char** argv) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool versionRequested = argc > 1 && std::string_view(argv[1]) == "--version";
+    if (versionRequested) {
+        std::cout << "Interfayce " << INTERFAYCE_VERSION << '\n';
+        CoUninitialize();
+        return 0;
+    }
     const bool requestShutdown = argc > 1 && std::string_view(argv[1]) == "--shutdown";
     if (requestShutdown) {
         const HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, kShutdownEventName);

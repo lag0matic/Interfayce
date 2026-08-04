@@ -12,7 +12,7 @@ $work = Join-Path $PSScriptRoot ".work"
 $protocolRoot = Join-Path $cache "solarxr-protocol"
 $protocolCommit = "00c38a6dc28070b30850a89c26b17928e56245d4"
 $nodeVersion = "24.15.0"
-$appVersion = "0.1.0"
+$appVersion = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
 
 function Reset-GeneratedDirectory([string]$path) {
     $resolvedParent = [IO.Path]::GetFullPath((Split-Path -Parent $path))
@@ -96,7 +96,7 @@ try {
         "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $iscc) { throw "Inno Setup 6 is required to build the installer." }
-    & $iscc (Join-Path $PSScriptRoot "Interfayce.iss")
+    & $iscc "/DAppVersion=$appVersion" (Join-Path $PSScriptRoot "Interfayce.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
 
     Get-FileHash (Join-Path $outRoot "installer\Interfayce-Setup-$appVersion.exe") -Algorithm SHA256

@@ -6,7 +6,7 @@ a = Analysis(
     [str(project_root / "packaging" / "interfayce_service.py")],
     pathex=[str(project_root / "src")],
     binaries=[],
-    datas=[],
+    datas=[(str(project_root / "VERSION"), ".")],
     hiddenimports=[
         "_sherpa_onnx",
         "numpy",

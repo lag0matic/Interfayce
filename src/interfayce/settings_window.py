@@ -6,8 +6,12 @@ import socket
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
+import webbrowser
+from pathlib import Path
 from urllib.parse import urlparse
 
+from .app_info import APP_VERSION, RELEASES_URL, check_for_update
+from .diagnostics import DiagnosticReport, load_report, run_diagnostics, save_report
 from .llm_client import delete_api_key, load_api_key, set_api_key
 from .settings import load_settings, set_desktop_configuration
 from .spotify_oauth import (SpotifyOAuthError, SpotifyWebApi, connect as connect_spotify,
@@ -112,11 +116,22 @@ class SettingsWindow:
         self.device_status = tk.StringVar()
         self.spotify_status = tk.StringVar()
         self.llm_status = tk.StringVar()
+        self.diagnostic_summary = tk.StringVar(value="Diagnostics have not run yet.")
+        self.update_status = tk.StringVar(value="Update checks run only when requested.")
         self.save_status = tk.StringVar(value="Settings are shared with the wrist controls.")
+        self._input_devices: list[str] = []
+        self._output_devices: list[str] = []
+        self._latest_release_url = RELEASES_URL
         self._build()
         self.refresh_devices()
         self._update_labels()
         self._refresh_integration_status()
+        stored_report = load_report()
+        if stored_report is not None:
+            self._render_diagnostics(stored_report)
+        # Local checks are deliberately cheap and network-free. Refresh on every
+        # opening so a previously offline resident service cannot leave stale status.
+        self.root.after(250, self.run_diagnostics)
         self._poll_status()
 
     def _configure_style(self) -> None:
@@ -171,14 +186,17 @@ class SettingsWindow:
         integrations = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         comms = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         wrist = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
+        diagnostics = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         notebook.add(general, text="GENERAL")
         notebook.add(integrations, text="INTEGRATIONS")
         notebook.add(comms, text="COMMS")
         notebook.add(wrist, text="WRIST")
+        notebook.add(diagnostics, text="DIAGNOSTICS")
         self._build_general(general)
         self._build_integrations(integrations)
         self._build_comms(comms)
         self._build_wrist(wrist)
+        self._build_diagnostics(diagnostics)
 
         footer = ttk.Frame(outer)
         footer.pack(fill="x", pady=(14, 0))
@@ -236,6 +254,34 @@ class SettingsWindow:
         ttk.Scale(panel, from_=0, to=24, variable=self.broadcast_gain,
                   command=lambda _value: self._update_labels()).grid(
                       row=row, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        panel.columnconfigure(0, weight=1)
+        panel.columnconfigure(1, weight=1)
+
+    def _build_diagnostics(self, panel: ttk.Frame) -> None:
+        row = self._section(panel, 0, "INSTALLATION HEALTH")
+        ttk.Label(panel, text=f"Interfayce {APP_VERSION}", style="Panel.TLabel",
+                  font=("Segoe UI Semibold", 13)).grid(row=row, column=0, sticky="w")
+        ttk.Button(panel, text="Run diagnostics", command=self.run_diagnostics).grid(
+            row=row, column=1, sticky="e")
+        row += 1
+        ttk.Label(panel, textvariable=self.diagnostic_summary,
+                  style="Muted.Panel.TLabel").grid(
+                      row=row, column=0, columnspan=2, sticky="w", pady=(4, 14))
+        row += 1
+        self.diagnostic_rows = ttk.Frame(panel, style="Panel.TFrame")
+        self.diagnostic_rows.grid(row=row, column=0, columnspan=2, sticky="nsew")
+        self.diagnostic_rows.columnconfigure(1, weight=1)
+        panel.rowconfigure(row, weight=1)
+
+        row = self._section(panel, row + 1, "UPDATES")
+        ttk.Label(panel, textvariable=self.update_status, style="Muted.Panel.TLabel").grid(
+            row=row, column=0, sticky="w")
+        update_buttons = ttk.Frame(panel, style="Panel.TFrame")
+        update_buttons.grid(row=row, column=1, sticky="e")
+        ttk.Button(update_buttons, text="Check for updates", command=self.check_updates).pack(
+            side="left")
+        ttk.Button(update_buttons, text="Open releases", command=self.open_releases).pack(
+            side="left", padx=(8, 0))
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=1)
 
@@ -389,9 +435,59 @@ class SettingsWindow:
     def refresh_devices(self) -> None:
         inputs = microphone_names()
         outputs = output_device_names()
+        self._input_devices = inputs
+        self._output_devices = outputs
         self._select_device(self.microphone_box, self.microphone, inputs, "System default")
         self._select_device(self.output_box, self.tts_output, outputs, "System default")
         self.device_status.set(f"{len(inputs)} inputs / {len(outputs)} outputs")
+
+    def run_diagnostics(self) -> None:
+        self.diagnostic_summary.set("Running local checks…")
+        report = run_diagnostics(
+            load_settings(),
+            voice_service_ready=voice_service_available(),
+            input_devices=self._input_devices,
+            output_devices=self._output_devices,
+            install_root=Path.cwd(),
+        )
+        try:
+            save_report(report)
+        except OSError:
+            pass
+        self._render_diagnostics(report)
+
+    def _render_diagnostics(self, report: DiagnosticReport) -> None:
+        for child in self.diagnostic_rows.winfo_children():
+            child.destroy()
+        colors = {"ready": self.CYAN, "attention": "#ffbd66", "optional": self.MUTED}
+        labels = {"ready": "READY", "attention": "CHECK", "optional": "OPTIONAL"}
+        for row, result in enumerate(report.results):
+            ttk.Label(self.diagnostic_rows, text=labels.get(result.state, result.state.upper()),
+                      foreground=colors.get(result.state, self.MUTED),
+                      background=self.PANEL, width=10).grid(row=row, column=0, sticky="nw", pady=3)
+            detail = ttk.Frame(self.diagnostic_rows, style="Panel.TFrame")
+            detail.grid(row=row, column=1, sticky="ew", pady=3)
+            ttk.Label(detail, text=result.name, style="Panel.TLabel").pack(anchor="w")
+            ttk.Label(detail, text=result.detail, style="Muted.Panel.TLabel",
+                      wraplength=540).pack(anchor="w")
+        if report.attention_count:
+            self.diagnostic_summary.set(
+                f"{report.attention_count} item(s) need attention. Optional integrations may remain offline.")
+        else:
+            self.diagnostic_summary.set("Core checks passed. Optional integrations may remain offline.")
+
+    def check_updates(self) -> None:
+        self.update_status.set("Checking GitHub releases…")
+
+        def worker() -> None:
+            result = check_for_update()
+            self._latest_release_url = result.url
+            self.root.after(0, lambda: self.update_status.set(result.message))
+
+        threading.Thread(target=worker, name="InterfayceUpdateCheck", daemon=True).start()
+
+    def open_releases(self) -> None:
+        webbrowser.open(self._latest_release_url or RELEASES_URL)
 
     def _persist(self) -> bool:
         tts_endpoint = self.tts_endpoint.get().strip()

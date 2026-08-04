@@ -294,7 +294,7 @@ Speak both successful Music actions and completed command failures. In VR, heari
 
 Non-secret runtime preferences are persisted in `%LOCALAPPDATA%\Interfayce\settings.json`. The first settings are TTS volume, mute, and speed; volume and mute are exposed through the wrist gear deck. Kokoro reloads them immediately before synthesis/playback so a wrist change applies without restarting the service. The desktop settings window owns endpoint/device selection and will grow into integration setup. OAuth refresh tokens and API keys must be stored with Windows credential protection and never written to this JSON file or rendered in VR.
 
-The first desktop settings window is now live and opens only through the wrist Settings deck's monitor/launch icon (or the explicit diagnostic command). A Windows named mutex makes it single-instance. It owns the shared Music/Comms microphone selection, TTS volume/mute, and haptic amplitude; the native host refreshes this small resident-service settings packet without spawning helpers. Integration credentials and endpoint/device diagnostics remain the next expansion, while secrets continue to use DPAPI rather than JSON.
+The desktop settings window opens only through the wrist Settings deck's monitor/launch icon (or the explicit development command). A Windows named mutex makes it single-instance. It owns the shared Music/Comms microphone selection, TTS volume/mute, haptic amplitude, integration configuration, and a Diagnostics tab. Bounded, network-free local checks refresh whenever Settings opens and persist only non-secret status under `%LOCALAPPDATA%\Interfayce`; optional integrations are visually distinct from failures that need attention. Update discovery never runs in the background: the explicit button queries the latest GitHub release and can open its release page. Secrets continue to use DPAPI rather than JSON.
 
 The native Music deck queries the resident localhost service for media state and artwork. Do not restore the old pattern of spawning `cmd.exe` and Python for each two-second refresh: Windows displayed recurring application-start cursor feedback even though the child windows used `CREATE_NO_WINDOW`.
 
@@ -305,6 +305,8 @@ Development builds may still launch the support package through the repository's
 The native executables use the static MSVC runtime and resolve all writable artwork/cache output under `%LOCALAPPDATA%\Interfayce\cache`; installed files are never treated as writable state. The SteamVR manifest uses a path relative to its own installed directory. SlimeVR helpers use a pinned SolarXR protocol build and bundled Node executable rather than a developer checkout or a machine-specific path.
 
 The Inno Setup package installs per-user under `%LOCALAPPDATA%\Programs\Interfayce`, requires no elevation, and deliberately preserves `%LOCALAPPDATA%\Interfayce` during uninstall/upgrade. The build stage is audited for known personal literals plus `settings.json` and `.dpapi` files before release.
+
+`VERSION` is the release identity source consumed by CMake, the PyInstaller payload, and the installer build. The native tray, `--version`, Windows executable properties, Settings diagnostics, and Add/Remove Programs therefore expose the same version. GitHub update checks are user-initiated and do not download or execute an installer automatically.
 
 ## Audio routing
 

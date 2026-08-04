@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(InterfayceOverlay LANGUAGES CXX RC)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" INTERFAYCE_PROJECT_VERSION)
+string(STRIP "${INTERFAYCE_PROJECT_VERSION}" INTERFAYCE_PROJECT_VERSION)
+project(InterfayceOverlay VERSION ${INTERFAYCE_PROJECT_VERSION} LANGUAGES CXX RC)
 
 if(NOT WIN32)
     message(FATAL_ERROR "The first native Interfayce host targets Windows + SteamVR.")
@@ -38,6 +40,9 @@ add_executable(InterfayceOverlay
     src/tray_icon.cpp
 )
 target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
+target_compile_definitions(InterfayceOverlay PRIVATE
+    INTERFAYCE_VERSION="${PROJECT_VERSION}"
+)
 target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32)
 # The installed overlay is a background VR utility, so a normal launch must not
 # allocate a console window. Keep main/mainCRTStartup so the existing command
