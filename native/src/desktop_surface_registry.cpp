@@ -996,7 +996,7 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
     if (found == surfaces_.end() || !found->capture || !found->assignedSource
         || *found->assignedSource >= found->sources.size()) return false;
     if (event == DesktopPointerEvent::PrimaryDown) {
-        focusedSurfaceId_ = found->id;
+        RememberFocusedSurface(found->id);
         const auto& source = found->sources[*found->assignedSource];
         if (source.kind == DesktopSource::Kind::Window) {
             PrepareWindowForInput(source.window);
@@ -1015,6 +1015,40 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         ? InjectWindowPointer(source.window, *point, event)
         : InjectDesktopPointer(*point, event));
     return injected;
+}
+
+void DesktopSurfaceRegistry::RememberFocusedSurface(uint64_t id) {
+    focusHistory_.erase(std::remove(focusHistory_.begin(), focusHistory_.end(), id),
+        focusHistory_.end());
+    focusHistory_.push_back(id);
+    focusedSurfaceId_ = id;
+}
+
+void DesktopSurfaceRegistry::ForgetFocusedSurface(uint64_t id) {
+    focusHistory_.erase(std::remove(focusHistory_.begin(), focusHistory_.end(), id),
+        focusHistory_.end());
+    if (!focusedSurfaceId_ || *focusedSurfaceId_ != id) return;
+    focusedSurfaceId_.reset();
+    std::wstring targetLabel;
+    while (!focusHistory_.empty()) {
+        const auto candidateId = focusHistory_.back();
+        const auto candidate = std::find_if(surfaces_.begin(), surfaces_.end(),
+            [candidateId](const auto& surface) {
+                return surface.id == candidateId && surface.capture;
+            });
+        if (candidate != surfaces_.end()) {
+            focusedSurfaceId_ = candidateId;
+            targetLabel = candidate->label;
+            break;
+        }
+        focusHistory_.pop_back();
+    }
+    for (auto& surface : surfaces_) {
+        if (surface.keyboard) {
+            surface.texture->RenderKeyboard(targetLabel, surface.keyboardShifted,
+                surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
+        }
+    }
 }
 
 bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
@@ -1161,7 +1195,15 @@ void DesktopSurfaceRegistry::Update() {
                 surface.hoveredKey, std::nullopt);
         }
         if (!surface.capture) continue;
-        const auto result = surface.capture->Update();
+        bool sourceLost = false;
+        if (surface.assignedSource && *surface.assignedSource < surface.sources.size()) {
+            const auto& source = surface.sources[*surface.assignedSource];
+            sourceLost = source.kind == DesktopSource::Kind::Window
+                && (source.window == nullptr || !IsWindow(source.window)
+                    || !IsWindowVisible(source.window));
+        }
+        const auto result = sourceLost
+            ? DesktopCapture::UpdateResult::Closed : surface.capture->Update();
         if (result == DesktopCapture::UpdateResult::TextureChanged) {
             const auto texture = surface.capture->Texture();
             vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
@@ -1169,17 +1211,8 @@ void DesktopSurfaceRegistry::Update() {
             UpdateFrameOverlays(surface);
         } else if (result == DesktopCapture::UpdateResult::Closed
                    || result == DesktopCapture::UpdateResult::Failed) {
-            surface.capture->Stop();
-            surface.capture.reset();
-            if (focusedSurfaceId_ && *focusedSurfaceId_ == surface.id) focusedSurfaceId_.reset();
-            surface.assignedSource.reset();
-            surface.label = L"Choose source";
-            surface.applicationPage = 0;
-            surface.aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
-            surface.texture->Render(surface.sources);
-            const auto texture = surface.texture->Texture();
-            vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
-            UpdateFrameOverlays(surface);
+            const auto surfaceId = surface.id;
+            ReturnToPicker(surfaceId, DesktopSurfaceManager{}.EnumerateSources());
         }
     }
 }
@@ -1232,15 +1265,7 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
     found->applicationPage = 0;
     found->label = L"Choose source";
     found->aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
-    if (focusedSurfaceId_ && *focusedSurfaceId_ == id) {
-        focusedSurfaceId_.reset();
-        for (auto& surface : surfaces_) {
-            if (surface.keyboard) {
-                surface.texture->RenderKeyboard(L"", surface.keyboardShifted,
-                    surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
-            }
-        }
-    }
+    ForgetFocusedSurface(id);
     if (!found->texture->Render(found->sources)) return false;
     found->additionalPickerPages.clear();
     const auto applicationCount = static_cast<size_t>(std::count_if(
@@ -1268,15 +1293,7 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
         if (grab && grab->id == id) grab.reset();
     }
     if (activeScale_ && activeScale_->id == id) activeScale_.reset();
-    if (focusedSurfaceId_ && *focusedSurfaceId_ == id) {
-        focusedSurfaceId_.reset();
-        for (auto& surface : surfaces_) {
-            if (surface.keyboard && surface.id != id) {
-                surface.texture->RenderKeyboard(L"", surface.keyboardShifted,
-                    surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
-            }
-        }
-    }
+    ForgetFocusedSurface(id);
     DestroySurfaceOverlays(*found);
     surfaces_.erase(found);
     return true;
@@ -1379,6 +1396,7 @@ void DesktopSurfaceRegistry::Shutdown() {
     for (auto& grab : activeGrabs_) grab.reset();
     activeScale_.reset();
     focusedSurfaceId_.reset();
+    focusHistory_.clear();
     for (auto& surface : surfaces_) {
         DestroySurfaceOverlays(surface);
     }

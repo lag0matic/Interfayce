@@ -162,6 +162,8 @@ private:
     bool CreateFrameOverlays(Surface& surface) const;
     bool UpdateFrameOverlays(const Surface& surface) const;
     void DestroySurfaceOverlays(Surface& surface) const;
+    void RememberFocusedSurface(uint64_t id);
+    void ForgetFocusedSurface(uint64_t id);
 
     vr::IVRSystem* system_{};
     ID3D11Device* device_{};
@@ -170,6 +172,7 @@ private:
     std::array<std::optional<GrabState>, 2> activeGrabs_;
     std::optional<ScaleState> activeScale_;
     std::optional<uint64_t> focusedSurfaceId_;
+    std::vector<uint64_t> focusHistory_;
 };
 
 }  // namespace interfayce
