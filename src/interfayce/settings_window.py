@@ -95,10 +95,19 @@ class SettingsWindow:
             tk.StringVar(value=label) for label, _message in current.comms_shortcuts]
         self.comms_shortcut_messages = [
             tk.StringVar(value=message) for _label, message in current.comms_shortcuts]
+        self.wrist_hand = tk.StringVar(value=current.wrist_hand.title())
+        self.wrist_offset_x = tk.DoubleVar(value=current.wrist_offset_x * 100.0)
+        self.wrist_offset_y = tk.DoubleVar(value=current.wrist_offset_y * 100.0)
+        self.wrist_offset_z = tk.DoubleVar(value=current.wrist_offset_z * 100.0)
+        self.wrist_pitch = tk.DoubleVar(value=current.wrist_pitch)
+        self.wrist_yaw = tk.DoubleVar(value=current.wrist_yaw)
+        self.wrist_roll = tk.DoubleVar(value=current.wrist_roll)
 
         self.volume_label = tk.StringVar()
         self.haptic_label = tk.StringVar()
         self.broadcast_label = tk.StringVar()
+        self.wrist_position_labels = [tk.StringVar() for _ in range(3)]
+        self.wrist_rotation_labels = [tk.StringVar() for _ in range(3)]
         self.service_status = tk.StringVar()
         self.device_status = tk.StringVar()
         self.spotify_status = tk.StringVar()
@@ -161,12 +170,15 @@ class SettingsWindow:
         general = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         integrations = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         comms = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
+        wrist = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         notebook.add(general, text="GENERAL")
         notebook.add(integrations, text="INTEGRATIONS")
         notebook.add(comms, text="COMMS")
+        notebook.add(wrist, text="WRIST")
         self._build_general(general)
         self._build_integrations(integrations)
         self._build_comms(comms)
+        self._build_wrist(wrist)
 
         footer = ttk.Frame(outer)
         footer.pack(fill="x", pady=(14, 0))
@@ -290,6 +302,62 @@ class SettingsWindow:
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=4)
 
+    def _build_wrist(self, panel: ttk.Frame) -> None:
+        row = self._section(panel, 0, "HANDEDNESS")
+        ttk.Label(panel, text="Panel wrist", style="Panel.TLabel").grid(
+            row=row, column=0, sticky="w")
+        hand = ttk.Combobox(panel, textvariable=self.wrist_hand,
+                            values=("Left", "Right"), state="readonly", width=12)
+        hand.grid(row=row, column=1, sticky="e")
+        row += 1
+        ttk.Label(panel, text="The opposite hand automatically becomes the wrist UI pointer.",
+                  style="Muted.Panel.TLabel").grid(
+                      row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        row = self._section(panel, row + 1, "POSITION OFFSET")
+        position = (
+            ("Sideways", self.wrist_offset_x, self.wrist_position_labels[0]),
+            ("Up / down", self.wrist_offset_y, self.wrist_position_labels[1]),
+            ("Stand-off", self.wrist_offset_z, self.wrist_position_labels[2]),
+        )
+        for title, variable, label in position:
+            ttk.Label(panel, text=title, style="Panel.TLabel").grid(row=row, column=0, sticky="w")
+            ttk.Label(panel, textvariable=label, style="Muted.Panel.TLabel").grid(
+                row=row, column=1, sticky="e")
+            row += 1
+            ttk.Scale(panel, from_=-10, to=10, variable=variable,
+                      command=lambda _value: self._update_labels()).grid(
+                          row=row, column=0, columnspan=2, sticky="ew", pady=(3, 8))
+            row += 1
+
+        row = self._section(panel, row, "ROTATION OFFSET")
+        rotation = (
+            ("Pitch", self.wrist_pitch, self.wrist_rotation_labels[0]),
+            ("Yaw", self.wrist_yaw, self.wrist_rotation_labels[1]),
+            ("Roll", self.wrist_roll, self.wrist_rotation_labels[2]),
+        )
+        for title, variable, label in rotation:
+            ttk.Label(panel, text=title, style="Panel.TLabel").grid(row=row, column=0, sticky="w")
+            ttk.Label(panel, textvariable=label, style="Muted.Panel.TLabel").grid(
+                row=row, column=1, sticky="e")
+            row += 1
+            ttk.Scale(panel, from_=-45, to=45, variable=variable,
+                      command=lambda _value: self._update_labels()).grid(
+                          row=row, column=0, columnspan=2, sticky="ew", pady=(3, 8))
+            row += 1
+        ttk.Button(panel, text="Reset offsets", command=self._reset_wrist_offsets).grid(
+            row=row, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(panel, text="Apply updates the running wrist panel without a restart.",
+                  style="Muted.Panel.TLabel").grid(row=row, column=1, sticky="e", pady=(4, 0))
+        panel.columnconfigure(0, weight=1)
+        panel.columnconfigure(1, weight=1)
+
+    def _reset_wrist_offsets(self) -> None:
+        for variable in (self.wrist_offset_x, self.wrist_offset_y, self.wrist_offset_z,
+                         self.wrist_pitch, self.wrist_yaw, self.wrist_roll):
+            variable.set(0.0)
+        self._update_labels()
+
     @staticmethod
     def _entry_row(panel: ttk.Frame, row: int, label: str, variable: tk.StringVar) -> int:
         ttk.Label(panel, text=label, style="Panel.TLabel").grid(row=row, column=0, sticky="w", pady=4)
@@ -300,6 +368,13 @@ class SettingsWindow:
         self.volume_label.set(f"{round(self.volume.get())}%")
         self.haptic_label.set(f"{round(self.haptic.get())}%")
         self.broadcast_label.set(f"+{round(self.broadcast_gain.get())} dB")
+        for label, variable in zip(self.wrist_position_labels,
+                                   (self.wrist_offset_x, self.wrist_offset_y,
+                                    self.wrist_offset_z)):
+            label.set(f"{variable.get():+.1f} cm")
+        for label, variable in zip(self.wrist_rotation_labels,
+                                   (self.wrist_pitch, self.wrist_yaw, self.wrist_roll)):
+            label.set(f"{variable.get():+.0f}°")
 
     @staticmethod
     def _select_device(box: ttk.Combobox, variable: tk.StringVar,
@@ -350,6 +425,13 @@ class SettingsWindow:
                 (item.get() for item in self.comms_shortcut_labels),
                 (item.get() for item in self.comms_shortcut_messages),
             )),
+            wrist_hand=self.wrist_hand.get().casefold(),
+            wrist_offset_x=self.wrist_offset_x.get() / 100.0,
+            wrist_offset_y=self.wrist_offset_y.get() / 100.0,
+            wrist_offset_z=self.wrist_offset_z.get() / 100.0,
+            wrist_pitch=self.wrist_pitch.get(),
+            wrist_yaw=self.wrist_yaw.get(),
+            wrist_roll=self.wrist_roll.get(),
         )
         return True
 

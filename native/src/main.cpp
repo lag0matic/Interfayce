@@ -423,30 +423,39 @@ struct TtsSettingsState {
     bool muted{};
     float hapticStrength{0.22F};
     float broadcastGainDb{12.0F};
+    bool wristRight{};
+    float wristOffsetX{};
+    float wristOffsetY{};
+    float wristOffsetZ{};
+    float wristPitch{};
+    float wristYaw{};
+    float wristRoll{};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
-    const auto firstTab = response.find('\t');
-    if (firstTab == std::string::npos) return std::nullopt;
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (start <= response.size()) {
+        const auto end = response.find('\t', start);
+        fields.push_back(response.substr(start,
+            end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (fields.size() < 2) return std::nullopt;
     try {
         TtsSettingsState state;
-        state.volumePercent = (std::max)(0, (std::min)(100,
-            std::stoi(response.substr(0, firstTab))));
-        const auto muteEnd = response.find('\t', firstTab + 1);
-        state.muted = response.substr(firstTab + 1, muteEnd - firstTab - 1) == "1";
-        if (muteEnd != std::string::npos) {
-            const auto speedEnd = response.find('\t', muteEnd + 1);
-            if (speedEnd != std::string::npos && speedEnd + 1 < response.size()) {
-                const auto gainEnd = response.find('\t', speedEnd + 1);
-                state.hapticStrength = std::clamp(
-                    std::stof(response.substr(speedEnd + 1,
-                        gainEnd - speedEnd - 1)), 0.0F, 1.0F);
-                if (gainEnd != std::string::npos && gainEnd + 1 < response.size()) {
-                    state.broadcastGainDb = std::clamp(
-                        std::stof(response.substr(gainEnd + 1)), 0.0F, 24.0F);
-                }
-            }
-        }
+        state.volumePercent = std::clamp(std::stoi(fields[0]), 0, 100);
+        state.muted = fields[1] == "1";
+        if (fields.size() > 3) state.hapticStrength = std::clamp(std::stof(fields[3]), 0.0F, 1.0F);
+        if (fields.size() > 4) state.broadcastGainDb = std::clamp(std::stof(fields[4]), 0.0F, 24.0F);
+        if (fields.size() > 5) state.wristRight = fields[5] == "right";
+        if (fields.size() > 6) state.wristOffsetX = std::clamp(std::stof(fields[6]), -0.10F, 0.10F);
+        if (fields.size() > 7) state.wristOffsetY = std::clamp(std::stof(fields[7]), -0.10F, 0.10F);
+        if (fields.size() > 8) state.wristOffsetZ = std::clamp(std::stof(fields[8]), -0.10F, 0.10F);
+        if (fields.size() > 9) state.wristPitch = std::clamp(std::stof(fields[9]), -45.0F, 45.0F);
+        if (fields.size() > 10) state.wristYaw = std::clamp(std::stof(fields[10]), -45.0F, 45.0F);
+        if (fields.size() > 11) state.wristRoll = std::clamp(std::stof(fields[11]), -45.0F, 45.0F);
         return state;
     } catch (...) {
         return std::nullopt;
@@ -656,6 +665,20 @@ vr::HmdMatrix34_t InnerLeftWristTransform() {
     return transform;
 }
 
+vr::HmdMatrix34_t InnerRightWristTransform() {
+    constexpr float kDiagonal = 0.70710678F;
+    vr::HmdMatrix34_t transform{};
+    transform.m[1][0] = kDiagonal;
+    transform.m[2][0] = -kDiagonal;
+    transform.m[1][1] = -kDiagonal;
+    transform.m[2][1] = -kDiagonal;
+    transform.m[0][2] = -1.0F;
+    transform.m[0][3] = -0.005F;
+    transform.m[1][3] = 0.071F;
+    transform.m[2][3] = 0.189F;
+    return transform;
+}
+
 vr::HmdMatrix34_t MultiplyTransforms(const vr::HmdMatrix34_t& left, const vr::HmdMatrix34_t& right) {
     vr::HmdMatrix34_t result{};
     for (int row = 0; row < 3; ++row) {
@@ -669,6 +692,59 @@ vr::HmdMatrix34_t MultiplyTransforms(const vr::HmdMatrix34_t& left, const vr::Hm
     return result;
 }
 
+vr::HmdMatrix34_t ConfiguredWristTransform(const TtsSettingsState& settings) {
+    constexpr float kDegreesToRadians = 0.01745329252F;
+    const float pitch = settings.wristPitch * kDegreesToRadians;
+    const float yaw = settings.wristYaw * kDegreesToRadians;
+    const float roll = settings.wristRoll * kDegreesToRadians;
+    const float cx = std::cos(pitch);
+    const float sx = std::sin(pitch);
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    const float cz = std::cos(roll);
+    const float sz = std::sin(roll);
+
+    vr::HmdMatrix34_t rotateX{};
+    rotateX.m[0][0] = 1.0F;
+    rotateX.m[1][1] = cx;
+    rotateX.m[1][2] = -sx;
+    rotateX.m[2][1] = sx;
+    rotateX.m[2][2] = cx;
+    vr::HmdMatrix34_t rotateY{};
+    rotateY.m[0][0] = cy;
+    rotateY.m[0][2] = sy;
+    rotateY.m[1][1] = 1.0F;
+    rotateY.m[2][0] = -sy;
+    rotateY.m[2][2] = cy;
+    vr::HmdMatrix34_t rotateZ{};
+    rotateZ.m[0][0] = cz;
+    rotateZ.m[0][1] = -sz;
+    rotateZ.m[1][0] = sz;
+    rotateZ.m[1][1] = cz;
+    rotateZ.m[2][2] = 1.0F;
+    auto adjustment = MultiplyTransforms(rotateZ, MultiplyTransforms(rotateY, rotateX));
+    adjustment.m[0][3] = settings.wristOffsetX;
+    adjustment.m[1][3] = settings.wristOffsetY;
+    adjustment.m[2][3] = settings.wristOffsetZ;
+    return MultiplyTransforms(
+        settings.wristRight ? InnerRightWristTransform() : InnerLeftWristTransform(), adjustment);
+}
+
+vr::ETrackedControllerRole WristControllerRole(const TtsSettingsState& settings) {
+    return settings.wristRight
+        ? vr::TrackedControllerRole_RightHand : vr::TrackedControllerRole_LeftHand;
+}
+
+bool WristPlacementChanged(const TtsSettingsState& left, const TtsSettingsState& right) {
+    return left.wristRight != right.wristRight
+        || left.wristOffsetX != right.wristOffsetX
+        || left.wristOffsetY != right.wristOffsetY
+        || left.wristOffsetZ != right.wristOffsetZ
+        || left.wristPitch != right.wristPitch
+        || left.wristYaw != right.wristYaw
+        || left.wristRoll != right.wristRoll;
+}
+
 struct WristPresentation {
     float gaze{};
     float facing{};
@@ -676,15 +752,15 @@ struct WristPresentation {
 };
 
 std::optional<WristPresentation> ReadWristPresentation(
-        vr::IVRSystem* system, const vr::HmdMatrix34_t& wristTransform) {
-    const auto leftController = system->GetTrackedDeviceIndexForControllerRole(
-        vr::TrackedControllerRole_LeftHand);
-    if (leftController == vr::k_unTrackedDeviceIndexInvalid) return std::nullopt;
+        vr::IVRSystem* system, const vr::HmdMatrix34_t& wristTransform,
+        vr::ETrackedControllerRole wristRole) {
+    const auto wristController = system->GetTrackedDeviceIndexForControllerRole(wristRole);
+    if (wristController == vr::k_unTrackedDeviceIndexInvalid) return std::nullopt;
     std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
     system->GetDeviceToAbsoluteTrackingPose(
         vr::TrackingUniverseStanding, 0.0F, poses.data(), static_cast<uint32_t>(poses.size()));
     const auto& hmd = poses[vr::k_unTrackedDeviceIndex_Hmd];
-    const auto& hand = poses[leftController];
+    const auto& hand = poses[wristController];
     if (!hmd.bPoseIsValid || !hand.bPoseIsValid
         || hmd.eTrackingResult != vr::TrackingResult_Running_OK
         || hand.eTrackingResult != vr::TrackingResult_Running_OK) {
@@ -1148,18 +1224,19 @@ int main(int argc, char** argv) {
                       << vr::VROverlay()->GetOverlayErrorNameFromEnum(wristTextureError) << '\n';
         }
     }
-    const auto wristTransform = headsetPanel ? HeadsetCalibrationTransform() : InnerLeftWristTransform();
+    auto wristTransform = headsetPanel
+        ? HeadsetCalibrationTransform() : ConfiguredWristTransform(ttsSettings);
     bool wristAttached = false;
     const auto attachWristOverlay = [&]() {
         const auto device = headsetPanel ? vr::k_unTrackedDeviceIndex_Hmd
-            : system->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
+            : system->GetTrackedDeviceIndexForControllerRole(WristControllerRole(ttsSettings));
         if (device == vr::k_unTrackedDeviceIndexInvalid) {
             return false;
         }
         const auto attachError = vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
             wristOverlay, device, &wristTransform);
         if (attachError != vr::VROverlayError_None) {
-            std::cerr << "Could not attach Interfayce wrist panel to the left controller: "
+            std::cerr << "Could not attach Interfayce wrist panel to the configured controller: "
                       << static_cast<int>(attachError) << '\n';
             return false;
         }
@@ -1170,7 +1247,8 @@ int main(int argc, char** argv) {
             return false;
         }
         std::cout << "Interfayce wrist panel attached to "
-                  << (headsetPanel ? "headset calibration view" : "left controller") << ".\n";
+                  << (headsetPanel ? "headset calibration view"
+                      : ttsSettings.wristRight ? "right controller" : "left controller") << ".\n";
         return true;
     };
     wristAttached = attachWristOverlay();
@@ -1308,7 +1386,8 @@ int main(int argc, char** argv) {
             std::chrono::duration<double>(wristFadeNow - lastWristFadeUpdate).count(), 0.05));
         lastWristFadeUpdate = wristFadeNow;
         if (!rawPanel && !headsetPanel) {
-            if (const auto presentation = ReadWristPresentation(system, wristTransform)) {
+            if (const auto presentation = ReadWristPresentation(
+                    system, wristTransform, WristControllerRole(ttsSettings))) {
                 if (wristPresented) {
                     wristPresented = presentation->gaze >= 0.68F
                         && presentation->facing >= 0.28F && presentation->distance <= 1.20F;
@@ -1354,6 +1433,7 @@ int main(int argc, char** argv) {
             sizeof(rightSurfaceGrab), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetAnalogActionData(rightSurfaceScrollAction, &rightSurfaceScroll,
             sizeof(rightSurfaceScroll), vr::k_ulInvalidInputValueHandle);
+        const auto& wristUiClick = ttsSettings.wristRight ? leftUiClick : rightUiClick;
         if (!printedInputDiagnostics) {
             std::array<vr::VRInputValueHandle_t, 16> leftOrigins{};
             std::array<vr::VRInputValueHandle_t, 16> rightOrigins{};
@@ -1411,12 +1491,15 @@ int main(int argc, char** argv) {
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
-        const auto pointerRay = ReadPointerRay(system, DragHand::Right);
-        if (pointerRay) {
+        const auto panelPointerRay = ReadPointerRay(
+            system, ttsSettings.wristRight ? DragHand::Left : DragHand::Right);
+        if (panelPointerRay) {
             vr::VROverlayIntersectionParams_t ray{};
             ray.eOrigin = vr::TrackingUniverseStanding;
-            ray.vSource = {{pointerRay->source.x, pointerRay->source.y, pointerRay->source.z}};
-            ray.vDirection = {{pointerRay->direction.x, pointerRay->direction.y, pointerRay->direction.z}};
+            ray.vSource = {{panelPointerRay->source.x, panelPointerRay->source.y,
+                panelPointerRay->source.z}};
+            ray.vDirection = {{panelPointerRay->direction.x, panelPointerRay->direction.y,
+                panelPointerRay->direction.z}};
             if (wristAlpha >= 0.30F
                 && vr::VROverlay()->ComputeOverlayIntersection(wristOverlay, &ray, &panelHit)) {
                 panelHitFound = true;
@@ -1482,21 +1565,28 @@ int main(int argc, char** argv) {
                     desktopSurfaceListHit = selectedDeck == 1 && x >= 538.0F && x <= 698.0F && y >= 252.0F && y <= 338.0F;
                 }
             }
-            if (!panelHitFound) {
-                desktopSurfaceHit = desktopSurfaces.HitTest(ray);
-                keyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(ray);
-                if (desktopSurfaceHit && keyboardSurfaceHit) {
-                    if (keyboardSurfaceHit->distance < desktopSurfaceHit->distance) {
-                        desktopSurfaceHit.reset();
-                    } else {
-                        keyboardSurfaceHit.reset();
-                    }
+        }
+        const auto rightPointerRay = ReadPointerRay(system, DragHand::Right);
+        if (rightPointerRay && !panelHitFound) {
+            vr::VROverlayIntersectionParams_t rightRay{};
+            rightRay.eOrigin = vr::TrackingUniverseStanding;
+            rightRay.vSource = {{rightPointerRay->source.x, rightPointerRay->source.y,
+                rightPointerRay->source.z}};
+            rightRay.vDirection = {{rightPointerRay->direction.x, rightPointerRay->direction.y,
+                rightPointerRay->direction.z}};
+            desktopSurfaceHit = desktopSurfaces.HitTest(rightRay);
+            keyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(rightRay);
+            if (desktopSurfaceHit && keyboardSurfaceHit) {
+                if (keyboardSurfaceHit->distance < desktopSurfaceHit->distance) {
+                    desktopSurfaceHit.reset();
+                } else {
+                    keyboardSurfaceHit.reset();
                 }
-                desktopFrameHit = desktopSurfaces.FrameHitTest(ray);
             }
+            desktopFrameHit = desktopSurfaces.FrameHitTest(rightRay);
         }
         const auto leftPointerRay = ReadPointerRay(system, DragHand::Left);
-        if (leftPointerRay) {
+        if (leftPointerRay && !panelHitFound) {
             vr::VROverlayIntersectionParams_t leftRay{};
             leftRay.eOrigin = vr::TrackingUniverseStanding;
             leftRay.vSource = {{leftPointerRay->source.x, leftPointerRay->source.y,
@@ -1545,11 +1635,11 @@ int main(int argc, char** argv) {
             localCursor.m[1][3] = (panelHit.vUVs.v[1] - 0.5F) * 0.1025F;
             localCursor.m[2][3] = 0.006F;
             const auto cursorTransform = MultiplyTransforms(wristTransform, localCursor);
-            const auto leftController = system->GetTrackedDeviceIndexForControllerRole(
-                vr::TrackedControllerRole_LeftHand);
-            if (leftController != vr::k_unTrackedDeviceIndexInvalid) {
+            const auto wristController = system->GetTrackedDeviceIndexForControllerRole(
+                WristControllerRole(ttsSettings));
+            if (wristController != vr::k_unTrackedDeviceIndexInvalid) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
-                    cursorOverlay, leftController, &cursorTransform);
+                    cursorOverlay, wristController, &cursorTransform);
                 const bool actionable = restoreButtonHit || rigFullResetHit
                     || (rigMountResetHit && mountReady)
                     || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
@@ -1651,7 +1741,7 @@ int main(int argc, char** argv) {
         if (rightSurfaceGrab.bChanged && !rightSurfaceGrab.bState) {
             desktopSurfaces.EndGrab(interfayce::DesktopGrabHand::Right);
         }
-        if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit) {
+        if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit && !panelHitFound) {
             if (desktopSurfaces.ActivateKeyboardHit(*leftKeyboardSurfaceHit)) {
                 vr::VRInput()->TriggerHapticVibrationAction(
                     leftHapticAction, 0.0F, 0.035F, 115.0F, ttsSettings.hapticStrength,
@@ -1678,7 +1768,7 @@ int main(int argc, char** argv) {
             } else if (desktopSurfaceHit->sourceIndex || desktopSurfaceHit->pageDelta != 0) {
                 std::cerr << "Could not start selected desktop capture\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && panelHitFound && panelY <= 82.0F) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && panelHitFound && panelY <= 82.0F) {
             const int requestedDeck = panelX < 129.0F ? 0 : panelX < 253.0F ? 5
                 : panelX < 359.0F ? 1 : panelX < 485.0F ? 2
                 : panelX < 613.0F ? 3 : 4;
@@ -1728,7 +1818,7 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && musicBroadcastHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && musicBroadcastHit) {
             if (broadcast.Enabled()) {
                 broadcast.Stop();
                 renderer.SetMusicBroadcastState(false, broadcast.StatusText());
@@ -1747,7 +1837,7 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && musicMicHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && musicMicHit) {
             if (!musicVoiceCommand.valid()) {
                 voiceServiceAvailable = IsLocalTcpPortOpen(
                     kVoiceServicePort, std::chrono::milliseconds(75));
@@ -1765,7 +1855,7 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && commsShortcutHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && commsShortcutHit) {
             const auto path = "/comms/shortcut/" + std::to_string(*commsShortcutHit);
             if (const auto changed = RequestCommsState("POST", path)) {
                 commsState = *changed;
@@ -1780,7 +1870,7 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState
+        } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (commsMicHit || commsClearHit)) {
             voiceServiceAvailable = IsLocalTcpPortOpen(
                 kVoiceServicePort, std::chrono::milliseconds(75));
@@ -1801,7 +1891,7 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState
+        } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (broadcastGainDownHit || broadcastGainUpHit)) {
             const auto path = broadcastGainDownHit
                 ? "/settings/broadcast/gain/down" : "/settings/broadcast/gain/up";
@@ -1826,7 +1916,7 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState
+        } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit)) {
             const auto path = ttsVolumeDownHit ? "/settings/tts/volume/down"
                 : ttsVolumeUpHit ? "/settings/tts/volume/up"
@@ -1840,11 +1930,11 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSettingsHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopSettingsHit) {
             if (!LaunchDesktopSettings(directory, projectRoot)) {
                 std::cerr << "Could not launch the desktop settings window.\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && shutdownButtonHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && shutdownButtonHit) {
             shutdownHoldActive = true;
             shutdownHoldStarted = std::chrono::steady_clock::now();
             shutdownHoldSegment = 1;
@@ -1854,7 +1944,7 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && selectedDeck == 0
+        } else if (wristUiClick.bChanged && wristUiClick.bState && selectedDeck == 0
                    && panelY >= 245.0F && panelY <= 333.0F) {
             if (!spotifyAvailable) {
                 // Controls remain inert while no Spotify media session can exist.
@@ -1865,7 +1955,7 @@ int main(int argc, char** argv) {
             } else if (panelX >= 558.0F && panelX <= 698.0F) {
                 LaunchSpotifyControl(projectRoot, L"next");
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopNewSurfaceHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopNewSurfaceHit) {
             const auto sources = desktopSourceManager.EnumerateSources();
             const auto surfaceId = desktopSurfaces.SpawnPicker(sources);
             if (surfaceId != 0) {
@@ -1881,7 +1971,7 @@ int main(int argc, char** argv) {
             } else {
                 std::cerr << "Could not spawn desktop picker surface\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopKeyboardSpawnHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopKeyboardSpawnHit) {
             const auto keyboardId = desktopSurfaces.SpawnKeyboard();
             if (keyboardId != 0) {
                 desktopPanel.surfaces = desktopSurfaces.Summaries();
@@ -1895,7 +1985,7 @@ int main(int argc, char** argv) {
             } else {
                 std::cerr << "Could not spawn keyboard surface\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceListHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopSurfaceListHit) {
             desktopPanel.showSurfaceList = true;
             desktopPanel.surfaces = desktopSurfaces.Summaries();
             if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
@@ -1903,16 +1993,16 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopListBackHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopListBackHit) {
             desktopPanel.showSurfaceList = false;
             if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
                     rigLine, rigSlots, mountReady, desktopPanel)) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopBringAllHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopBringAllHit) {
             desktopSurfaces.BringAllToMe();
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopLockIndex) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopLockIndex) {
             desktopSurfaces.ToggleLocked(desktopPanel.surfaces[*desktopLockIndex].id);
             desktopPanel.surfaces = desktopSurfaces.Summaries();
             if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
@@ -1920,9 +2010,9 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopBringIndex) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopBringIndex) {
             desktopSurfaces.BringToMe(desktopPanel.surfaces[*desktopBringIndex].id);
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopReuseIndex) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopReuseIndex) {
             const auto sources = desktopSourceManager.EnumerateSources();
             desktopSurfaces.ReturnToPicker(
                 desktopPanel.surfaces[*desktopReuseIndex].id, sources);
@@ -1933,7 +2023,7 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopCloseIndex) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopCloseIndex) {
             desktopSurfaces.Close(desktopPanel.surfaces[*desktopCloseIndex].id);
             desktopPanel.surfaces = desktopSurfaces.Summaries();
             desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
@@ -1942,10 +2032,10 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && restoreButtonHit && selectedDeck == 2) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && restoreButtonHit && selectedDeck == 2) {
             restoreHoldActive = true;
             restoreHoldStarted = std::chrono::steady_clock::now();
-        } else if (rightUiClick.bChanged && rightUiClick.bState && (rigFullResetHit || (rigMountResetHit && mountReady))) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && (rigFullResetHit || (rigMountResetHit && mountReady))) {
             rigResetHoldActive = true;
             rigResetHoldCompleted = false;
             rigResetKind = rigFullResetHit ? L"full" : L"mounting";
@@ -2110,8 +2200,13 @@ int main(int argc, char** argv) {
                 const bool wristDisplayChanged = loaded->volumePercent != ttsSettings.volumePercent
                     || loaded->muted != ttsSettings.muted
                     || loaded->broadcastGainDb != ttsSettings.broadcastGainDb;
+                const bool wristPlacementChanged = WristPlacementChanged(*loaded, ttsSettings);
                 ttsSettings = *loaded;
                 broadcast.SetGainDb(ttsSettings.broadcastGainDb);
+                if (wristPlacementChanged && !headsetPanel) {
+                    wristTransform = ConfiguredWristTransform(ttsSettings);
+                    wristAttached = attachWristOverlay();
+                }
                 if (selectedDeck == 4 && wristDisplayChanged) {
                     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
                     renderer.SetBroadcastGainDb(
@@ -2188,7 +2283,7 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         }
-        if (rightUiClick.bChanged && !rightUiClick.bState && restoreHoldActive) {
+        if (wristUiClick.bChanged && !wristUiClick.bState && restoreHoldActive) {
             const auto heldFor = std::chrono::steady_clock::now() - restoreHoldStarted;
             if (restoreButtonHit && heldFor >= std::chrono::milliseconds(750)) {
                 restoreBaseline(sessionBaseline, "wrist restore control");
@@ -2206,7 +2301,7 @@ int main(int argc, char** argv) {
             restoreHoldActive = false;
         }
         if (shutdownHoldActive) {
-            const bool stillHolding = rightUiClick.bState && shutdownButtonHit;
+            const bool stillHolding = wristUiClick.bState && shutdownButtonHit;
             const auto elapsed = std::chrono::steady_clock::now() - shutdownHoldStarted;
             constexpr auto requiredHold = std::chrono::seconds(3);
             if (!stillHolding) {
@@ -2238,7 +2333,7 @@ int main(int argc, char** argv) {
         }
         if (rigResetHoldActive) {
             const bool fullReset = rigResetKind == std::wstring_view(L"full");
-            const bool stillHolding = rightUiClick.bState
+            const bool stillHolding = wristUiClick.bState
                 && (fullReset ? rigFullResetHit : (rigMountResetHit && mountReady));
             const auto elapsed = std::chrono::steady_clock::now() - rigResetHoldStarted;
             if (!stillHolding) {

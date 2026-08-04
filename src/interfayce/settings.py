@@ -34,6 +34,13 @@ class AppSettings:
     llm_reasoning_effort: str = ""
     llm_temperature: float = 0.65
     comms_shortcuts: tuple[tuple[str, str], ...] = DEFAULT_COMMS_SHORTCUTS
+    wrist_hand: str = "left"
+    wrist_offset_x: float = 0.0
+    wrist_offset_y: float = 0.0
+    wrist_offset_z: float = 0.0
+    wrist_pitch: float = 0.0
+    wrist_yaw: float = 0.0
+    wrist_roll: float = 0.0
 
 
 _LOCK = threading.Lock()
@@ -75,6 +82,13 @@ def _clamp(settings: AppSettings) -> AppSettings:
         llm_reasoning_effort=str(settings.llm_reasoning_effort).strip(),
         llm_temperature=max(0.0, min(2.0, float(settings.llm_temperature))),
         comms_shortcuts=tuple(shortcuts),
+        wrist_hand="right" if str(settings.wrist_hand).strip().casefold() == "right" else "left",
+        wrist_offset_x=max(-0.10, min(0.10, float(settings.wrist_offset_x))),
+        wrist_offset_y=max(-0.10, min(0.10, float(settings.wrist_offset_y))),
+        wrist_offset_z=max(-0.10, min(0.10, float(settings.wrist_offset_z))),
+        wrist_pitch=max(-45.0, min(45.0, float(settings.wrist_pitch))),
+        wrist_yaw=max(-45.0, min(45.0, float(settings.wrist_yaw))),
+        wrist_roll=max(-45.0, min(45.0, float(settings.wrist_roll))),
     )
 
 
@@ -102,6 +116,13 @@ def load_settings() -> AppSettings:
                 llm_temperature=data.get("llm_temperature", 0.65),
                 comms_shortcuts=tuple(tuple(item) for item in
                     data.get("comms_shortcuts", DEFAULT_COMMS_SHORTCUTS)),
+                wrist_hand=data.get("wrist_hand", "left"),
+                wrist_offset_x=data.get("wrist_offset_x", 0.0),
+                wrist_offset_y=data.get("wrist_offset_y", 0.0),
+                wrist_offset_z=data.get("wrist_offset_z", 0.0),
+                wrist_pitch=data.get("wrist_pitch", 0.0),
+                wrist_yaw=data.get("wrist_yaw", 0.0),
+                wrist_roll=data.get("wrist_roll", 0.0),
             ))
         except (FileNotFoundError, OSError, TypeError, ValueError, json.JSONDecodeError):
             return AppSettings()
@@ -171,7 +192,14 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               llm_enabled: bool, llm_endpoint: str,
                               llm_model: str, llm_reasoning_effort: str,
                               llm_temperature: float,
-                              comms_shortcuts: tuple[tuple[str, str], ...] | None = None) -> AppSettings:
+                              comms_shortcuts: tuple[tuple[str, str], ...] | None = None,
+                              wrist_hand: str | None = None,
+                              wrist_offset_x: float | None = None,
+                              wrist_offset_y: float | None = None,
+                              wrist_offset_z: float | None = None,
+                              wrist_pitch: float | None = None,
+                              wrist_yaw: float | None = None,
+                              wrist_roll: float | None = None) -> AppSettings:
     current = load_settings()
     return save_settings(replace(
         current,
@@ -192,6 +220,13 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         llm_reasoning_effort=llm_reasoning_effort,
         llm_temperature=llm_temperature,
         comms_shortcuts=current.comms_shortcuts if comms_shortcuts is None else comms_shortcuts,
+        wrist_hand=current.wrist_hand if wrist_hand is None else wrist_hand,
+        wrist_offset_x=current.wrist_offset_x if wrist_offset_x is None else wrist_offset_x,
+        wrist_offset_y=current.wrist_offset_y if wrist_offset_y is None else wrist_offset_y,
+        wrist_offset_z=current.wrist_offset_z if wrist_offset_z is None else wrist_offset_z,
+        wrist_pitch=current.wrist_pitch if wrist_pitch is None else wrist_pitch,
+        wrist_yaw=current.wrist_yaw if wrist_yaw is None else wrist_yaw,
+        wrist_roll=current.wrist_roll if wrist_roll is None else wrist_roll,
     ))
 
 
@@ -204,4 +239,7 @@ def settings_wire_text(settings: AppSettings | None = None) -> str:
     current = settings or load_settings()
     return (f"{round(current.tts_volume * 100)}\t{int(current.tts_muted)}\t"
             f"{current.tts_speed:.2f}\t{current.haptic_strength:.2f}\t"
-            f"{current.broadcast_gain_db:.1f}")
+            f"{current.broadcast_gain_db:.1f}\t{current.wrist_hand}\t"
+            f"{current.wrist_offset_x:.3f}\t{current.wrist_offset_y:.3f}\t"
+            f"{current.wrist_offset_z:.3f}\t{current.wrist_pitch:.1f}\t"
+            f"{current.wrist_yaw:.1f}\t{current.wrist_roll:.1f}")

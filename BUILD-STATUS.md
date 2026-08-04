@@ -57,6 +57,8 @@ The independent keyboard:
 - Four configurable Comms shortcuts send bounded canned OSC chatbox messages directly from the wrist. Blank slots remain inert; labels and messages are edited in the desktop Settings window.
 - Selected desktop and keyboard surfaces use subtle violet backlight rather than thick grab bars. Their functional grab regions are visually quiet.
 - The wrist remains mounted to the left inner wrist using the live-fitted transform in `InnerLeftWristTransform()`. A gaze-and-presentation gate now gives it a fast fade-in, slower fade-out, and hysteresis so it disappears out of view without flickering or stealing hidden clicks.
+- Wrist handedness is persistent and live-switchable. The proven left-wrist fit remains the zero/default; the right-wrist transform is mirrored without mirroring text, and the opposite hand automatically owns wrist pointing and trigger input.
+- The desktop WRIST settings page exposes bounded sideways, vertical, and stand-off offsets plus pitch, yaw, and roll. Apply reattaches the running panel within the normal settings poll, and Reset returns all offsets to the fitted baseline.
 - Desktop source pickers show native Windows application icons. Their application pages are pre-rendered and switched as persistent GPU textures, avoiding shared-texture hover flicker and runtime page blanks.
 - Current Windows rows include a reuse action that stops only Interfayce's capture and returns the existing VR surface to a freshly populated picker while preserving its session position and size.
 - Current Windows rows now include per-surface locks. Locked surfaces remain fully interactive but ignore one-hand movement and two-hand scaling until unlocked.
@@ -113,17 +115,16 @@ The independent keyboard:
 
 ## Larger features intentionally deferred
 
-1. Configurable handedness and wrist-panel positioning.
-2. Clipboard paste and other VR text-entry conveniences.
-3. First-run diagnostics plus installed version and update support.
-4. Personal favorite-application shortcuts for one-action desktop surface spawning.
-5. Active/glanceable/sleeping capture update policies.
-6. Additional diagnostics or visual polish only when live use identifies a concrete need.
-7. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
+1. Clipboard paste and other VR text-entry conveniences.
+2. First-run diagnostics plus installed version and update support.
+3. Personal favorite-application shortcuts for one-action desktop surface spawning.
+4. Active/glanceable/sleeping capture update policies.
+5. Additional diagnostics or visual polish only when live use identifies a concrete need.
+6. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
     selection glow, and interaction feedback across every wrist deck and desktop surface.
 
-The intended next expansion is configurable handedness and wrist-panel positioning, followed by
-clipboard conveniences. Battery/status handling is implemented; its low/critical behavior is
+The intended next expansion is clipboard and keyboard text-entry conveniences, followed by
+first-run diagnostics/version support. Battery/status handling is implemented; its low/critical behavior is
 covered by deterministic tests and awaits a natural depleted-battery playtest.
 
 ## Verification record
@@ -134,13 +135,14 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Windows Graphics Capture previously returned a real display frame through `--desktop-capture-probe`.
 - Picker selection and paging, application icons, surface reuse, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, wrist recovery controls, and wrist visibility fading have passed live VR testing.
 - Per-surface movement locks and grouped Bring All recovery, including independent keyboard placement, have passed live VR testing.
+- Left/right wrist mirroring, automatic opposite-hand wrist input, live six-axis placement offsets, reset-to-fit, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
 - Comms mic toggle, continuous phrase transcription, OSC delivery, clear pulse, transcript display, and capture isolation have passed live VR testing.
 - Desktop microphone selection, TTS wrist mirroring, haptic strength, on-demand single-instance launch, and state-aware Music transport glyphs have passed live testing.
 - Battery location/readability and the redesigned Rig scanner passed a live headset check.
 - Battery low/critical threshold crossings, deduplication, combined speech, and recovery
   re-arming pass deterministic tests; a naturally depleted-device playtest remains outstanding.
-- Python proof-of-concept suite: 64 passing checks.
+- Python proof-of-concept suite: 65 passing checks.
 
 ## North star
 

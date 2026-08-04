@@ -50,7 +50,8 @@ class SettingsTests(unittest.TestCase):
             )
             self.assertEqual(saved.stt_microphone, "Beyond Microphone")
             self.assertAlmostEqual(saved.haptic_strength, 0.37)
-            self.assertEqual(settings_wire_text(saved), "42\t1\t1.00\t0.37\t12.0")
+            self.assertEqual(settings_wire_text(saved),
+                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0")
 
     def test_complete_desktop_configuration_round_trip(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -66,6 +67,8 @@ class SettingsTests(unittest.TestCase):
                 llm_model="chat-model", llm_reasoning_effort="low",
                 llm_temperature=0.5,
                 comms_shortcuts=(("BRB", "Be right back."), ("MUTED", "I am muted.")),
+                wrist_hand="right", wrist_offset_x=0.025, wrist_offset_y=-0.015,
+                wrist_offset_z=0.01, wrist_pitch=5, wrist_yaw=-10, wrist_roll=15,
             )
 
             self.assertTrue(saved.llm_enabled)
@@ -73,7 +76,24 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(saved.llm_endpoint, "https://llm.example.test/v1")
             self.assertEqual(saved.comms_shortcuts[0], ("BRB", "Be right back."))
             self.assertEqual(len(saved.comms_shortcuts), 4)
+            self.assertEqual(saved.wrist_hand, "right")
+            self.assertAlmostEqual(saved.wrist_offset_x, 0.025)
+            self.assertEqual((saved.wrist_pitch, saved.wrist_yaw, saved.wrist_roll), (5, -10, 15))
             self.assertEqual(load_settings(), saved)
+
+    def test_wrist_configuration_is_bounded_and_defaults_to_left(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            saved = save_settings(AppSettings(
+                wrist_hand="unexpected", wrist_offset_x=1, wrist_offset_y=-1,
+                wrist_offset_z=0.04, wrist_pitch=90, wrist_yaw=-90, wrist_roll=12,
+            ))
+            self.assertEqual(saved.wrist_hand, "left")
+            self.assertEqual((saved.wrist_offset_x, saved.wrist_offset_y, saved.wrist_offset_z),
+                             (0.10, -0.10, 0.04))
+            self.assertEqual((saved.wrist_pitch, saved.wrist_yaw, saved.wrist_roll),
+                             (45.0, -45.0, 12.0))
 
     def test_comms_shortcuts_are_bounded_and_sanitized(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
