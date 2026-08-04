@@ -379,6 +379,40 @@ std::optional<std::array<std::wstring, 4>> RequestCommsShortcutLabels() {
     return labels;
 }
 
+struct DesktopFavorite {
+    std::wstring label;
+    std::wstring executable;
+    bool operator==(const DesktopFavorite&) const = default;
+};
+
+struct PendingFavoriteCapture {
+    uint64_t surfaceId{};
+    std::wstring executable;
+    std::chrono::steady_clock::time_point nextPoll;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+std::optional<std::array<DesktopFavorite, 3>> RequestDesktopFavorites() {
+    const auto response = LocalHttpRequest(
+        "GET", "/desktop/favorites", std::chrono::milliseconds(750));
+    if (!response) return std::nullopt;
+    std::array<DesktopFavorite, 3> favorites;
+    size_t start = 0;
+    for (size_t index = 0; index < favorites.size() && start <= response->size(); ++index) {
+        const auto end = response->find('\n', start);
+        const auto line = response->substr(
+            start, end == std::string::npos ? std::string::npos : end - start);
+        const auto separator = line.find('\t');
+        if (separator != std::string::npos) {
+            favorites[index].label = Utf8ToWide(line.substr(0, separator));
+            favorites[index].executable = Utf8ToWide(line.substr(separator + 1));
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return favorites;
+}
+
 void LaunchSpotifyControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
     static_cast<void>(projectRoot);
     std::string operationPath;
@@ -1310,6 +1344,7 @@ int main(int argc, char** argv) {
     bool musicPlaying = false;
     std::wstring desktopLine = DesktopSurfaceLine(0);
     interfayce::DesktopPanelState desktopPanel;
+    std::array<DesktopFavorite, 3> desktopFavorites;
     std::wstring rigLine;
     std::array<std::wstring, 8> rigSlots;
     bool mountReady = false;
@@ -1322,6 +1357,8 @@ int main(int argc, char** argv) {
     auto nextCommsPoll = std::chrono::steady_clock::now();
     auto nextCommsShortcutPoll = std::chrono::steady_clock::now();
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+    auto nextDesktopFavoritePoll = std::chrono::steady_clock::now();
+    std::vector<PendingFavoriteCapture> pendingFavoriteCaptures;
     auto nextRigPoll = std::chrono::steady_clock::now();
     std::future<SlimeRigStatus> slimeBatteryPoll;
     std::future<std::optional<std::string>> batteryStatusPost;
@@ -1470,6 +1507,7 @@ int main(int argc, char** argv) {
         bool desktopNewSurfaceHit = false;
         bool desktopKeyboardSpawnHit = false;
         bool desktopSurfaceListHit = false;
+        std::optional<size_t> desktopFavoriteHit;
         bool desktopListBackHit = false;
         bool desktopBringAllHit = false;
         bool musicMicHit = false;
@@ -1566,6 +1604,17 @@ int main(int argc, char** argv) {
                         }
                     }
                 } else {
+                    if (selectedDeck == 1 && y >= 142.0F && y <= 222.0F) {
+                        constexpr std::array<float, 3> favoriteLeft{70, 304, 538};
+                        for (size_t index = 0; index < favoriteLeft.size(); ++index) {
+                            if (!desktopFavorites[index].label.empty()
+                                && x >= favoriteLeft[index]
+                                && x <= favoriteLeft[index] + 160.0F) {
+                                desktopFavoriteHit = index;
+                                break;
+                            }
+                        }
+                    }
                     desktopNewSurfaceHit = selectedDeck == 1 && x >= 70.0F && x <= 230.0F && y >= 252.0F && y <= 338.0F;
                     desktopKeyboardSpawnHit = selectedDeck == 1 && x >= 304.0F && x <= 464.0F && y >= 252.0F && y <= 338.0F;
                     desktopSurfaceListHit = selectedDeck == 1 && x >= 538.0F && x <= 698.0F && y >= 252.0F && y <= 338.0F;
@@ -1649,6 +1698,7 @@ int main(int argc, char** argv) {
                 const bool actionable = restoreButtonHit || rigFullResetHit
                     || (rigMountResetHit && mountReady)
                     || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
+                    || desktopFavoriteHit
                     || desktopListBackHit || desktopBringAllHit || desktopBringIndex.has_value()
                     || desktopLockIndex.has_value()
                     || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
@@ -1792,6 +1842,12 @@ int main(int argc, char** argv) {
             if (requestedDeck == 1) {
                 desktopPanel.showSurfaceList = false;
                 desktopPanel.surfaces = desktopSurfaces.Summaries();
+                if (const auto favorites = RequestDesktopFavorites()) {
+                    desktopFavorites = *favorites;
+                    for (size_t index = 0; index < favorites->size(); ++index) {
+                        desktopPanel.favorites[index] = (*favorites)[index].label;
+                    }
+                }
                 desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
             }
             if (requestedDeck == 3) {
@@ -1960,6 +2016,28 @@ int main(int argc, char** argv) {
                 LaunchSpotifyControl(projectRoot, L"toggle");
             } else if (panelX >= 558.0F && panelX <= 698.0F) {
                 LaunchSpotifyControl(projectRoot, L"next");
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopFavoriteHit) {
+            const auto& favorite = desktopFavorites[*desktopFavoriteHit];
+            const auto sources = desktopSourceManager.EnumerateSources();
+            const auto surfaceId = desktopSurfaces.SpawnPicker(sources);
+            if (surfaceId != 0) {
+                if (const auto runningWindow = desktopSourceManager.FindWindowForTarget(
+                        favorite.executable)) {
+                    desktopSurfaces.AssignSource(surfaceId, *runningWindow);
+                } else if (desktopSourceManager.LaunchTarget(favorite.executable)) {
+                    const auto now = std::chrono::steady_clock::now();
+                    pendingFavoriteCaptures.push_back({
+                        surfaceId, favorite.executable, now + std::chrono::milliseconds(150),
+                        now + std::chrono::seconds(10)});
+                }
+                desktopPanel.surfaces = desktopSurfaces.Summaries();
+                desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+                if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && desktopNewSurfaceHit) {
             const auto sources = desktopSourceManager.EnumerateSources();
@@ -2194,6 +2272,54 @@ int main(int argc, char** argv) {
                 commsShortcuts = *labels;
                 renderer.SetCommsShortcuts(commsShortcuts);
                 if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
+        }
+        bool favoriteCaptureChanged = false;
+        const auto favoriteNow = std::chrono::steady_clock::now();
+        for (auto pending = pendingFavoriteCaptures.begin();
+             pending != pendingFavoriteCaptures.end();) {
+            if (favoriteNow >= pending->deadline) {
+                pending = pendingFavoriteCaptures.erase(pending);
+                favoriteCaptureChanged = true;
+                continue;
+            }
+            if (favoriteNow < pending->nextPoll) {
+                ++pending;
+                continue;
+            }
+            pending->nextPoll = favoriteNow + std::chrono::milliseconds(150);
+            if (const auto source = desktopSourceManager.FindWindowForTarget(
+                    pending->executable)) {
+                desktopSurfaces.AssignSource(pending->surfaceId, *source);
+                pending = pendingFavoriteCaptures.erase(pending);
+                favoriteCaptureChanged = true;
+            } else {
+                ++pending;
+            }
+        }
+        if (favoriteCaptureChanged) {
+            desktopPanel.surfaces = desktopSurfaces.Summaries();
+            desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+            if (selectedDeck == 1 && renderer.Initialize(system, selectedDeck, desktopLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
+        if (selectedDeck == 1
+            && std::chrono::steady_clock::now() >= nextDesktopFavoritePoll) {
+            nextDesktopFavoritePoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            if (const auto favorites = RequestDesktopFavorites();
+                    favorites && *favorites != desktopFavorites) {
+                desktopFavorites = *favorites;
+                for (size_t index = 0; index < favorites->size(); ++index) {
+                    desktopPanel.favorites[index] = (*favorites)[index].label;
+                }
+                if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
                         rigLine, rigSlots, mountReady, desktopPanel)) {
                     const auto updatedTexture = renderer.Texture();
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);

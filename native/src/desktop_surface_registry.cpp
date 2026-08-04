@@ -1008,15 +1008,30 @@ bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
             == vr::VROverlayError_None;
     }
     if (!hit.sourceIndex || *hit.sourceIndex >= found->sources.size()) return false;
+    return AssignSource(hit.id, found->sources[*hit.sourceIndex]);
+}
+
+bool DesktopSurfaceRegistry::AssignSource(uint64_t id, const DesktopSource& source) {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [id](const auto& surface) { return surface.id == id; });
+    if (found == surfaces_.end() || found->capture || found->keyboard) return false;
+    auto sourceIndex = std::find_if(found->sources.begin(), found->sources.end(),
+        [&source](const auto& candidate) {
+            return candidate.kind == source.kind && candidate.id == source.id;
+        });
+    if (sourceIndex == found->sources.end()) {
+        found->sources.push_back(source);
+        sourceIndex = std::prev(found->sources.end());
+    }
     auto capture = std::make_unique<DesktopCapture>();
-    if (!capture->Start(device_, found->sources[*hit.sourceIndex])) return false;
+    if (!capture->Start(device_, *sourceIndex)) return false;
     const auto texture = capture->Texture();
     if (vr::VROverlay()->SetOverlayTexture(found->overlay, &texture) != vr::VROverlayError_None) {
         capture->Stop();
         return false;
     }
-    found->label = found->sources[*hit.sourceIndex].label;
-    found->assignedSource = *hit.sourceIndex;
+    found->label = sourceIndex->label;
+    found->assignedSource = static_cast<size_t>(std::distance(found->sources.begin(), sourceIndex));
     found->hoveredSource.reset();
     found->aspectRatio = capture->AspectRatio();
     found->capture = std::move(capture);

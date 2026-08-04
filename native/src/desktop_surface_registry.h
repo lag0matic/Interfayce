@@ -93,6 +93,7 @@ public:
         float edgeToleranceMeters = 0.008F) const;
     std::optional<uint64_t> FrameHitTest(const vr::VROverlayIntersectionParams_t& ray) const;
     bool ActivateHit(const DesktopSurfaceHit& hit);
+    bool AssignSource(uint64_t id, const DesktopSource& source);
     bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
     bool SendScrollEvent(const DesktopSurfaceHit& hit, int32_t verticalDelta,
                          int32_t horizontalDelta);

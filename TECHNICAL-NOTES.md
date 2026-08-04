@@ -308,6 +308,8 @@ The Inno Setup package installs per-user under `%LOCALAPPDATA%\Programs\Interfay
 
 `VERSION` is the release identity source consumed by CMake, the PyInstaller payload, and the installer build. The native tray, `--version`, Windows executable properties, Settings diagnostics, and Add/Remove Programs therefore expose the same version. GitHub update checks are user-initiated and do not download or execute an installer automatically.
 
+The Desktop settings tab owns three favorite-application slots. Each target is either an absolute `.exe` path or a validated `aumid:` Start-app identity; arbitrary arguments and shell commands are rejected. A wrist favorite always creates a normal source-picker surface first. Interfayce binds a matching existing top-level window immediately, or launches the target and polls only that executable/package family for up to ten seconds. Failure or timeout leaves the usable picker in place. Store/MSIX applications launch through `shell:AppsFolder` and are matched by package family, avoiding direct access to protected `WindowsApps` paths.
+
 ## Audio routing
 
 Interfayce will own its Windows music-to-VRChat route rather than depend on VAC or Voicemeeter. This is a real driver feature, not a light UI integration, so it must be isolated from the overlay host and built/tested as its own safety-critical component.

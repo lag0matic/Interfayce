@@ -33,7 +33,7 @@ python -m interfayce spotify-oauth-status
 
 The client secret is not used. OAuth tokens are protected with Windows DPAPI under the current Windows account.
 
-The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, TTS behavior, haptics, broadcast gain, Kokoro, Spotify OAuth, and the optional constrained LLM fallback. Its Diagnostics tab refreshes bounded local checks whenever Settings opens, shows the exact build identity, and checks GitHub releases only when requested. Tokens and API keys are protected with Windows DPAPI; a fresh installation contains no personal endpoints and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
+The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, TTS behavior, haptics, broadcast gain, desktop favorites, Kokoro, Spotify OAuth, and the optional constrained LLM fallback. Desktop favorites accept constrained executable paths or registered Store-app identities: a wrist press captures an existing window or launches the app and binds its first eligible window, with the ordinary source picker retained on failure. Its Diagnostics tab refreshes bounded local checks whenever Settings opens, shows the exact build identity, and checks GitHub releases only when requested. Tokens and API keys are protected with Windows DPAPI; a fresh installation contains no personal endpoints and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
 
 ## Windows installer
 

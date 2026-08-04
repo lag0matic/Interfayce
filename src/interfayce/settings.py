@@ -10,9 +10,11 @@ from dataclasses import asdict, dataclass, replace
 import json
 import os
 from pathlib import Path
+import re
 import threading
 
 DEFAULT_COMMS_SHORTCUTS: tuple[tuple[str, str], ...] = (("", ""),) * 4
+DEFAULT_DESKTOP_FAVORITES: tuple[tuple[str, str], ...] = (("", ""),) * 3
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class AppSettings:
     llm_reasoning_effort: str = ""
     llm_temperature: float = 0.65
     comms_shortcuts: tuple[tuple[str, str], ...] = DEFAULT_COMMS_SHORTCUTS
+    desktop_favorites: tuple[tuple[str, str], ...] = DEFAULT_DESKTOP_FAVORITES
     wrist_hand: str = "left"
     wrist_offset_x: float = 0.0
     wrist_offset_y: float = 0.0
@@ -64,6 +67,23 @@ def _clamp(settings: AppSettings) -> AppSettings:
         clean_message = " ".join(str(message).split())[:144]
         shortcuts.append((clean_label, clean_message))
     shortcuts.extend((("", ""),) * (4 - len(shortcuts)))
+    favorites: list[tuple[str, str]] = []
+    for item in tuple(settings.desktop_favorites)[:3]:
+        try:
+            label, executable = item
+        except (TypeError, ValueError):
+            continue
+        clean_label = " ".join(str(label).split())[:14]
+        clean_executable = str(executable).strip()[:1024]
+        path = Path(clean_executable) if clean_executable else None
+        is_executable = (path is not None and path.is_absolute()
+                         and path.suffix.casefold() == ".exe")
+        is_app_id = bool(re.fullmatch(r"aumid:[A-Za-z0-9._-]+![A-Za-z0-9._-]+",
+                                      clean_executable))
+        if not is_executable and not is_app_id:
+            clean_label, clean_executable = "", ""
+        favorites.append((clean_label, clean_executable))
+    favorites.extend((("", ""),) * (3 - len(favorites)))
     return AppSettings(
         tts_volume=max(0.0, min(1.0, float(settings.tts_volume))),
         tts_muted=bool(settings.tts_muted),
@@ -82,6 +102,7 @@ def _clamp(settings: AppSettings) -> AppSettings:
         llm_reasoning_effort=str(settings.llm_reasoning_effort).strip(),
         llm_temperature=max(0.0, min(2.0, float(settings.llm_temperature))),
         comms_shortcuts=tuple(shortcuts),
+        desktop_favorites=tuple(favorites),
         wrist_hand="right" if str(settings.wrist_hand).strip().casefold() == "right" else "left",
         wrist_offset_x=max(-0.10, min(0.10, float(settings.wrist_offset_x))),
         wrist_offset_y=max(-0.10, min(0.10, float(settings.wrist_offset_y))),
@@ -116,6 +137,8 @@ def load_settings() -> AppSettings:
                 llm_temperature=data.get("llm_temperature", 0.65),
                 comms_shortcuts=tuple(tuple(item) for item in
                     data.get("comms_shortcuts", DEFAULT_COMMS_SHORTCUTS)),
+                desktop_favorites=tuple(tuple(item) for item in
+                    data.get("desktop_favorites", DEFAULT_DESKTOP_FAVORITES)),
                 wrist_hand=data.get("wrist_hand", "left"),
                 wrist_offset_x=data.get("wrist_offset_x", 0.0),
                 wrist_offset_y=data.get("wrist_offset_y", 0.0),
@@ -193,6 +216,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               llm_model: str, llm_reasoning_effort: str,
                               llm_temperature: float,
                               comms_shortcuts: tuple[tuple[str, str], ...] | None = None,
+                              desktop_favorites: tuple[tuple[str, str], ...] | None = None,
                               wrist_hand: str | None = None,
                               wrist_offset_x: float | None = None,
                               wrist_offset_y: float | None = None,
@@ -220,6 +244,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         llm_reasoning_effort=llm_reasoning_effort,
         llm_temperature=llm_temperature,
         comms_shortcuts=current.comms_shortcuts if comms_shortcuts is None else comms_shortcuts,
+        desktop_favorites=current.desktop_favorites if desktop_favorites is None else desktop_favorites,
         wrist_hand=current.wrist_hand if wrist_hand is None else wrist_hand,
         wrist_offset_x=current.wrist_offset_x if wrist_offset_x is None else wrist_offset_x,
         wrist_offset_y=current.wrist_offset_y if wrist_offset_y is None else wrist_offset_y,
@@ -233,6 +258,14 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
 def comms_shortcut_labels(settings: AppSettings | None = None) -> str:
     current = settings or load_settings()
     return "\t".join(label if label and message else "" for label, message in current.comms_shortcuts)
+
+
+def desktop_favorites_wire_text(settings: AppSettings | None = None) -> str:
+    current = settings or load_settings()
+    return "\n".join(
+        f"{label}\t{executable}" if label and executable else "\t"
+        for label, executable in current.desktop_favorites
+    )
 
 
 def settings_wire_text(settings: AppSettings | None = None) -> str:

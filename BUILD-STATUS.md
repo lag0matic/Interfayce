@@ -9,7 +9,7 @@ Updated: 2026-08-04
 - Checkpoint scope: feature-complete personal build and first installer
 - Native host: `native/build/bin/InterfayceOverlay.exe`
 - Native audio engine: `native/build/bin/InterfayceAudioEngine.exe`
-- Python suite: 71 passing tests
+- Python suite: 72 passing tests
 
 The desktop interaction slice is now **usably complete**. Spotify OAuth, constrained conversational Music control, local STT, and Kokoro acknowledgments have also passed live in-headset testing.
 
@@ -64,6 +64,9 @@ The independent keyboard:
 - Current Windows rows include a reuse action that stops only Interfayce's capture and returns the existing VR surface to a freshly populated picker while preserving its session position and size.
 - Current Windows rows now include per-surface locks. Locked surfaces remain fully interactive but ignore one-hand movement and two-hand scaling until unlocked.
 - The grouped-target recovery control brings every active desktop surface into an eye-level arrangement and places the independent keyboard below and slightly closer. Recovery deliberately includes locked surfaces.
+- The Desk deck exposes three configurable favorite applications. Existing windows bind immediately; closed desktop or Store/MSIX apps launch through a constrained target and bind when their first eligible window appears. Launch failure or a ten-second timeout leaves the normal source picker usable.
+- Favorite configuration accepts only absolute `.exe` paths or validated registered-app identities. Spotify's protected Microsoft Store installation works through its Start-app identity without opening `WindowsApps` or accepting arbitrary command arguments.
+- The open-surface count now occupies the Desk bottom status strip, leaving the favorite controls visually unobstructed.
 - The Rig deck is now a filled feminine cybernetic scanner rather than a grid of text boxes. Native battery nodes and percentages remain live above the bundled visual asset, with external leader lines for chest and hip readings.
 - The persistent header shows the lowest connected battery percentage. Controller readings refresh natively; SlimeVR readings refresh asynchronously without blocking deck changes.
 - Battery alerts speak through the existing Kokoro queue on low (20%) and critical (10%) threshold crossings. Each crossing is announced once, simultaneous alerts are combined, and a recovered device can arm a future warning again.
@@ -119,13 +122,12 @@ The independent keyboard:
 
 ## Larger features intentionally deferred
 
-1. Personal favorite-application shortcuts for one-action desktop surface spawning.
-2. Active/glanceable/sleeping capture update policies.
-3. Additional diagnostics or visual polish only when live use identifies a concrete need.
-4. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
+1. Active/glanceable/sleeping capture update policies.
+2. Additional diagnostics or visual polish only when live use identifies a concrete need.
+3. Final UI unification pass: consistent corner radii, spacing, control silhouettes,
     selection glow, and interaction feedback across every wrist deck and desktop surface.
 
-The intended next expansion is favorite-application shortcuts, followed by capture update policies.
+The intended next expansion is active/glanceable/sleeping capture update policies.
 Battery/status handling is implemented; its low/critical behavior is
 covered by deterministic tests and awaits a natural depleted-battery playtest.
 
@@ -138,6 +140,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Picker selection and paging, application icons, surface reuse, display/app capture, pointer clicks, vertical scrolling, ambidextrous typing, key feedback, one-hand movement, two-hand resizing, wrist recovery controls, and wrist visibility fading have passed live VR testing.
 - Per-surface movement locks and grouped Bring All recovery, including independent keyboard placement, have passed live VR testing.
 - Keyboard Copy/Paste glyph controls passed live cross-surface clipboard and post-command modifier-release testing.
+- Favorite shortcuts passed live running-app, closed-app, and Microsoft Store Spotify testing; their bottom status-strip layout passed visual review.
 - First-run diagnostics, persisted report round-tripping, explicit release comparison, shared version identity, native `--version`, EXE metadata, and installer packaging pass automated checks.
 - Left/right wrist mirroring, automatic opposite-hand wrist input, live six-axis placement offsets, reset-to-fit, and wrist visibility fading have passed live VR testing.
 - Spotify OAuth, conversational Music requests, generic artist-name correction, fail-closed track selection, Spotify volume control, and spoken success/failure responses have passed live testing.
@@ -146,7 +149,7 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Battery location/readability and the redesigned Rig scanner passed a live headset check.
 - Battery low/critical threshold crossings, deduplication, combined speech, and recovery
   re-arming pass deterministic tests; a naturally depleted-device playtest remains outstanding.
-- Python proof-of-concept suite: 71 passing checks.
+- Python proof-of-concept suite: 72 passing checks.
 
 ## North star
 

@@ -17,6 +17,7 @@ namespace interfayce {
 struct DesktopPanelState {
     bool showSurfaceList{};
     std::vector<DesktopSurfaceSummary> surfaces;
+    std::array<std::wstring, 3> favorites;
 };
 
 class OverlayRenderer {

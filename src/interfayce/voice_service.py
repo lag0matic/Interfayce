@@ -18,7 +18,8 @@ from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interp
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
-                       load_settings, settings_wire_text, toggle_tts_mute)
+                       desktop_favorites_wire_text, load_settings, settings_wire_text,
+                       toggle_tts_mute)
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
 from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
@@ -228,6 +229,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, runtime.comms_status())
             elif self.path == "/comms/shortcuts":
                 self._reply(200, comms_shortcut_labels())
+            elif self.path == "/desktop/favorites":
+                self._reply(200, desktop_favorites_wire_text())
             else:
                 self._reply(404, "not found")
 

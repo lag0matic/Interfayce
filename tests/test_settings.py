@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from interfayce.settings import (
     AppSettings, adjust_broadcast_gain, adjust_tts_volume, load_settings, save_settings,
-    set_desktop_configuration, set_runtime_controls, set_spotify_client_id,
+    desktop_favorites_wire_text, set_desktop_configuration, set_runtime_controls, set_spotify_client_id,
     settings_wire_text, toggle_tts_mute,
 )
 
@@ -106,6 +106,24 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(saved.comms_shortcuts[0], ("TOO LONG LAB", "hello there"))
             self.assertEqual(saved.comms_shortcuts[1], ("", "disabled"))
             self.assertEqual(len(saved.comms_shortcuts), 4)
+
+    def test_desktop_favorites_require_bounded_absolute_executables(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            saved = save_settings(AppSettings(desktop_favorites=(
+                ("  Discord Favorite  ", r"C:\Apps\Discord.exe"),
+                ("Unsafe", r"C:\Apps\document.txt"),
+                ("Spotify", "aumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"),
+            )))
+            self.assertEqual(saved.desktop_favorites[0],
+                             ("Discord Favori", r"C:\Apps\Discord.exe"))
+            self.assertEqual(saved.desktop_favorites[1], ("", ""))
+            self.assertEqual(saved.desktop_favorites[2],
+                             ("Spotify", "aumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"))
+            self.assertEqual(desktop_favorites_wire_text(saved),
+                             "Discord Favori\tC:\\Apps\\Discord.exe\n\t\n"
+                             "Spotify\taumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify")
 
     def test_fresh_install_has_no_personal_service_configuration(self) -> None:
         defaults = AppSettings()

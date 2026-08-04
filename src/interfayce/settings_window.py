@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import socket
+import json
+import subprocess
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
@@ -99,6 +101,10 @@ class SettingsWindow:
             tk.StringVar(value=label) for label, _message in current.comms_shortcuts]
         self.comms_shortcut_messages = [
             tk.StringVar(value=message) for _label, message in current.comms_shortcuts]
+        self.desktop_favorite_labels = [
+            tk.StringVar(value=label) for label, _path in current.desktop_favorites]
+        self.desktop_favorite_paths = [
+            tk.StringVar(value=path) for _label, path in current.desktop_favorites]
         self.wrist_hand = tk.StringVar(value=current.wrist_hand.title())
         self.wrist_offset_x = tk.DoubleVar(value=current.wrist_offset_x * 100.0)
         self.wrist_offset_y = tk.DoubleVar(value=current.wrist_offset_y * 100.0)
@@ -185,16 +191,19 @@ class SettingsWindow:
         general = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         integrations = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         comms = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
+        desktop = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         wrist = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         diagnostics = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         notebook.add(general, text="GENERAL")
         notebook.add(integrations, text="INTEGRATIONS")
         notebook.add(comms, text="COMMS")
+        notebook.add(desktop, text="DESKTOP")
         notebook.add(wrist, text="WRIST")
         notebook.add(diagnostics, text="DIAGNOSTICS")
         self._build_general(general)
         self._build_integrations(integrations)
         self._build_comms(comms)
+        self._build_desktop(desktop)
         self._build_wrist(wrist)
         self._build_diagnostics(diagnostics)
 
@@ -347,6 +356,105 @@ class SettingsWindow:
                       row=row, column=0, columnspan=2, sticky="w", pady=(14, 0))
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=4)
+
+    def _build_desktop(self, panel: ttk.Frame) -> None:
+        row = self._section(panel, 0, "FAVORITE APPLICATIONS")
+        ttk.Label(panel,
+                  text="Favorites capture a running window or launch a selected desktop or Store application.",
+                  style="Muted.Panel.TLabel", wraplength=690).grid(
+                      row=row, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        row += 1
+        ttk.Label(panel, text="WRIST LABEL", style="Muted.Panel.TLabel").grid(
+            row=row, column=0, sticky="w")
+        ttk.Label(panel, text="APPLICATION", style="Muted.Panel.TLabel").grid(
+            row=row, column=1, sticky="w")
+        row += 1
+        for index in range(3):
+            ttk.Entry(panel, textvariable=self.desktop_favorite_labels[index], width=18).grid(
+                row=row, column=0, sticky="ew", padx=(0, 10), pady=6)
+            ttk.Entry(panel, textvariable=self.desktop_favorite_paths[index], state="readonly").grid(
+                row=row, column=1, sticky="ew", pady=6)
+            controls = ttk.Frame(panel, style="Panel.TFrame")
+            controls.grid(row=row, column=2, sticky="e", padx=(10, 0))
+            ttk.Button(controls, text="Browse", command=lambda slot=index: self._browse_favorite(slot)).pack(
+                side="left")
+            ttk.Button(controls, text="Store app", command=lambda slot=index: self._choose_store_favorite(slot)).pack(
+                side="left", padx=(6, 0))
+            ttk.Button(controls, text="Clear", command=lambda slot=index: self._clear_favorite(slot)).pack(
+                side="left", padx=(6, 0))
+            row += 1
+        ttk.Label(panel,
+                  text="If no capturable window appears after launch, the new VR surface remains on Source Select.",
+                  style="Muted.Panel.TLabel", wraplength=690).grid(
+                      row=row, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        panel.columnconfigure(0, weight=1)
+        panel.columnconfigure(1, weight=4)
+
+    def _browse_favorite(self, index: int) -> None:
+        selected = filedialog.askopenfilename(
+            parent=self.root, title="Choose favorite application",
+            filetypes=(("Windows applications", "*.exe"),),
+        )
+        if not selected:
+            return
+        self.desktop_favorite_paths[index].set(selected)
+        if not self.desktop_favorite_labels[index].get().strip():
+            self.desktop_favorite_labels[index].set(Path(selected).stem[:14])
+
+    def _clear_favorite(self, index: int) -> None:
+        self.desktop_favorite_labels[index].set("")
+        self.desktop_favorite_paths[index].set("")
+
+    def _choose_store_favorite(self, index: int) -> None:
+        try:
+            completed = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                 "Get-StartApps | Where-Object {$_.AppID -like '*!*'} | "
+                 "Select-Object Name,AppID | ConvertTo-Json -Compress"],
+                capture_output=True, text=True, timeout=8, check=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            payload = json.loads(completed.stdout or "[]")
+            applications = payload if isinstance(payload, list) else [payload]
+            applications = sorted(
+                ((str(item.get("Name", "")), str(item.get("AppID", "")))
+                 for item in applications if item.get("Name") and item.get("AppID")),
+                key=lambda item: item[0].casefold(),
+            )
+        except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Interfayce", f"Could not enumerate Store applications: {error}",
+                                 parent=self.root)
+            return
+        chooser = tk.Toplevel(self.root)
+        chooser.title("Choose Store application")
+        chooser.geometry("560x430")
+        chooser.configure(bg=self.BG)
+        chooser.transient(self.root)
+        chooser.grab_set()
+        frame = ttk.Frame(chooser, padding=18)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="REGISTERED APPLICATIONS", style="Section.Panel.TLabel").pack(
+            anchor="w", pady=(0, 10))
+        choices = tk.Listbox(frame, bg="#0b1220", fg=self.TEXT, selectbackground=self.VIOLET,
+                             selectforeground="white", borderwidth=0,
+                             highlightthickness=1, highlightbackground="#273657")
+        choices.pack(fill="both", expand=True)
+        for name, _app_id in applications:
+            choices.insert("end", name)
+
+        def select() -> None:
+            selection = choices.curselection()
+            if not selection:
+                return
+            name, app_id = applications[selection[0]]
+            self.desktop_favorite_paths[index].set(f"aumid:{app_id}")
+            if not self.desktop_favorite_labels[index].get().strip():
+                self.desktop_favorite_labels[index].set(name[:14])
+            chooser.destroy()
+
+        choices.bind("<Double-Button-1>", lambda _event: select())
+        ttk.Button(frame, text="Select", style="Accent.TButton", command=select).pack(
+            anchor="e", pady=(12, 0))
 
     def _build_wrist(self, panel: ttk.Frame) -> None:
         row = self._section(panel, 0, "HANDEDNESS")
@@ -520,6 +628,10 @@ class SettingsWindow:
             comms_shortcuts=tuple(zip(
                 (item.get() for item in self.comms_shortcut_labels),
                 (item.get() for item in self.comms_shortcut_messages),
+            )),
+            desktop_favorites=tuple(zip(
+                (item.get() for item in self.desktop_favorite_labels),
+                (item.get() for item in self.desktop_favorite_paths),
             )),
             wrist_hand=self.wrist_hand.get().casefold(),
             wrist_offset_x=self.wrist_offset_x.get() / 100.0,

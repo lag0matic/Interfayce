@@ -286,11 +286,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             labelFormat_.Get(), D2D1::RectF(42.0F, 106.0F, 300.0F, 138.0F),
             accentBrush_.Get());
     }
-    if (deck == 0 || deck == 1) {
-        drawText(deck == 0 ? (musicLine.empty() ? L"No active track" : musicLine)
-                : musicLine,
+    if (deck == 0) {
+        drawText(musicLine.empty() ? L"No active track" : musicLine,
             titleFormat_.Get(), D2D1::RectF(42.0F, 154.0F,
-                deck == 0 ? 540.0F : 690.0F, 202.0F), textBrush_.Get());
+                540.0F, 202.0F), textBrush_.Get());
     }
     if (albumArt) d2dContext_->DrawBitmap(albumArt.Get(), D2D1::RectF(570.0F, 108.0F, 720.0F, 258.0F));
     if (deck == 0) {
@@ -430,6 +429,28 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                     mutedTextBrush_.Get());
             }
         } else {
+            constexpr std::array<float, 3> favoriteLeft{70.0F, 304.0F, 538.0F};
+            for (size_t index = 0; index < desktop.favorites.size(); ++index) {
+                if (desktop.favorites[index].empty()) continue;
+                const auto bounds = D2D1::RectF(
+                    favoriteLeft[index], 142.0F, favoriteLeft[index] + 160.0F, 222.0F);
+                d2dContext_->FillRoundedRectangle(
+                    D2D1::RoundedRect(bounds, 10, 10), buttonBrush_.Get());
+                d2dContext_->DrawRoundedRectangle(
+                    D2D1::RoundedRect(bounds, 10, 10), structureBrush_.Get(), 1.5F);
+                // Compact launch aperture; the label carries application identity.
+                const auto center = D2D1::Point2F(favoriteLeft[index] + 28.0F, 182.0F);
+                d2dContext_->DrawEllipse(D2D1::Ellipse(center, 12, 12), accentBrush_.Get(), 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(center.x - 5, center.y + 5),
+                    D2D1::Point2F(center.x + 7, center.y - 7), accentBrush_.Get(), 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(center.x + 1, center.y - 7),
+                    D2D1::Point2F(center.x + 7, center.y - 7), accentBrush_.Get(), 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(center.x + 7, center.y - 7),
+                    D2D1::Point2F(center.x + 7, center.y - 1), accentBrush_.Get(), 2.0F);
+                drawText(desktop.favorites[index], labelFormat_.Get(),
+                    D2D1::RectF(favoriteLeft[index] + 50.0F, 166.0F,
+                        favoriteLeft[index] + 150.0F, 202.0F), textBrush_.Get());
+            }
             const std::array<D2D1_RECT_F, 3> buttons{
                 D2D1::RectF(70, 252, 230, 338),
                 D2D1::RectF(304, 252, 464, 338),
@@ -453,6 +474,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             d2dContext_->DrawRectangle(D2D1::RectF(588, 282, 648, 314), textBrush_.Get(), 2.0F);
             d2dContext_->DrawRectangle(D2D1::RectF(596, 274, 656, 306), mutedTextBrush_.Get(), 2.0F);
         }
+        d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
+            structureDimBrush_.Get(), 1.0F);
+        drawText(musicLine, labelFormat_.Get(), D2D1::RectF(48, 350, 720, 374),
+            mutedTextBrush_.Get());
     } else if (deck == 3) {
         if (!slimeAvailable_) {
             d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(92, 242), 9, 9),
