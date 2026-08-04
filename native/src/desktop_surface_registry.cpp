@@ -1218,6 +1218,11 @@ void DesktopSurfaceRegistry::Update() {
 }
 
 bool DesktopSurfaceRegistry::PlaceAtEyeLine(Surface& surface) const {
+    return PlaceRelativeToHmd(surface, 0.0F, surface.keyboard ? -0.28F : -0.04F, -1.05F);
+}
+
+bool DesktopSurfaceRegistry::PlaceRelativeToHmd(
+        Surface& surface, float x, float y, float z) const {
     std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
     system_->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0F, poses.data(),
         static_cast<uint32_t>(poses.size()));
@@ -1227,8 +1232,9 @@ bool DesktopSurfaceRegistry::PlaceAtEyeLine(Surface& surface) const {
     offset.m[0][0] = 1.0F;
     offset.m[1][1] = 1.0F;
     offset.m[2][2] = 1.0F;
-    offset.m[1][3] = surface.keyboard ? -0.28F : -0.04F;
-    offset.m[2][3] = -1.05F;
+    offset.m[0][3] = x;
+    offset.m[1][3] = y;
+    offset.m[2][3] = z;
     const auto transform = Multiply(hmd.mDeviceToAbsoluteTracking, offset);
     if (vr::VROverlay()->SetOverlayTransformAbsolute(surface.overlay,
             vr::TrackingUniverseStanding, &transform) != vr::VROverlayError_None) return false;
@@ -1246,6 +1252,63 @@ bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
         for (const auto glow : found->glowOverlays) vr::VROverlay()->ShowOverlay(glow);
     }
     return found->visible;
+}
+
+bool DesktopSurfaceRegistry::BringAllToMe() {
+    if (surfaces_.empty()) return false;
+    for (auto& grab : activeGrabs_) grab.reset();
+    activeScale_.reset();
+
+    std::vector<Surface*> desktops;
+    Surface* keyboard = nullptr;
+    for (auto& surface : surfaces_) {
+        if (surface.keyboard) keyboard = &surface;
+        else desktops.push_back(&surface);
+    }
+
+    bool allPlaced = true;
+    constexpr size_t kColumns = 3;
+    for (size_t index = 0; index < desktops.size(); ++index) {
+        const auto row = index / kColumns;
+        const auto rowStart = row * kColumns;
+        const auto rowCount = (std::min)(kColumns, desktops.size() - rowStart);
+        const auto column = index - rowStart;
+        const float x = (static_cast<float>(column)
+            - static_cast<float>(rowCount - 1) * 0.5F) * 0.72F;
+        const float y = (keyboard ? 0.12F : -0.04F) - static_cast<float>(row) * 0.48F;
+        const float z = -1.10F - std::abs(x) * 0.08F;
+        allPlaced = PlaceRelativeToHmd(*desktops[index], x, y, z) && allPlaced;
+    }
+    if (keyboard) {
+        const float keyboardY = desktops.empty() ? -0.28F : -0.43F;
+        allPlaced = PlaceRelativeToHmd(*keyboard, 0.0F, keyboardY, -0.92F) && allPlaced;
+    }
+
+    for (auto& surface : surfaces_) {
+        surface.visible = vr::VROverlay()->ShowOverlay(surface.overlay)
+            == vr::VROverlayError_None;
+        if (!surface.visible) {
+            allPlaced = false;
+            continue;
+        }
+        for (const auto frame : surface.frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+        for (const auto glow : surface.glowOverlays) vr::VROverlay()->ShowOverlay(glow);
+    }
+    return allPlaced;
+}
+
+bool DesktopSurfaceRegistry::ToggleLocked(uint64_t id) {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [id](const auto& surface) { return surface.id == id; });
+    if (found == surfaces_.end()) return false;
+    found->locked = !found->locked;
+    if (found->locked) {
+        for (auto& grab : activeGrabs_) {
+            if (grab && grab->id == id) grab.reset();
+        }
+        if (activeScale_ && activeScale_->id == id) activeScale_.reset();
+    }
+    return true;
 }
 
 bool DesktopSurfaceRegistry::ReturnToPicker(
@@ -1303,7 +1366,7 @@ bool DesktopSurfaceRegistry::BeginGrab(uint64_t id, DesktopGrabHand hand,
                                        const vr::HmdMatrix34_t& handTransform) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
-    if (found == surfaces_.end()) return false;
+    if (found == surfaces_.end() || found->locked) return false;
     const auto index = GrabIndex(hand);
     activeGrabs_[index] = GrabState{
         id, Multiply(InverseRigid(handTransform), found->transform), handTransform};
@@ -1387,7 +1450,7 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
     summaries.reserve(surfaces_.size());
     for (const auto& surface : surfaces_) {
         summaries.push_back({surface.id, surface.label, surface.visible,
-            !surface.keyboard && surface.capture != nullptr});
+            !surface.keyboard && surface.capture != nullptr, surface.locked});
     }
     return summaries;
 }

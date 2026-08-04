@@ -369,27 +369,56 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         if (desktop.showSurfaceList) {
             d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 110), accentBrush_.Get(), 3.0F);
             d2dContext_->DrawLine(D2D1::Point2F(48, 128), D2D1::Point2F(76, 146), accentBrush_.Get(), 3.0F);
+            // Grouped targets recover every surface without adding another text label.
+            d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(684, 128), 25, 25),
+                structureBrush_.Get(), 1.5F);
+            for (float centerX : {674.0F, 684.0F, 694.0F}) {
+                d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, 128), 5, 5),
+                    accentBrush_.Get(), 1.4F);
+                d2dContext_->DrawLine(D2D1::Point2F(centerX - 8, 128),
+                    D2D1::Point2F(centerX + 8, 128), accentBrush_.Get(), 1.1F);
+                d2dContext_->DrawLine(D2D1::Point2F(centerX, 120),
+                    D2D1::Point2F(centerX, 136), accentBrush_.Get(), 1.1F);
+            }
             const auto count = std::min<size_t>(desktop.surfaces.size(), 3);
             for (size_t index = 0; index < count; ++index) {
                 const float top = 166.0F + static_cast<float>(index) * 62.0F;
                 d2dContext_->FillRectangle(D2D1::RectF(42, top, 722, top + 50), buttonBrush_.Get());
                 drawText(desktop.surfaces[index].label, bodyFormat_.Get(),
-                    D2D1::RectF(58, top + 12, 480, top + 42), textBrush_.Get());
+                    D2D1::RectF(58, top + 12, 410, top + 42), textBrush_.Get());
                 // Circular arrow returns captured content to the source picker.
                 const auto reuseBrush = desktop.surfaces[index].reusable
                     ? accentBrush_.Get() : structureDimBrush_.Get();
                 d2dContext_->DrawEllipse(
-                    D2D1::Ellipse(D2D1::Point2F(529, top + 25), 14, 14), reuseBrush, 2.0F);
-                d2dContext_->DrawLine(D2D1::Point2F(519, top + 11),
-                    D2D1::Point2F(510, top + 10), reuseBrush, 2.0F);
-                d2dContext_->DrawLine(D2D1::Point2F(519, top + 11),
-                    D2D1::Point2F(517, top + 20), reuseBrush, 2.0F);
+                    D2D1::Ellipse(D2D1::Point2F(450, top + 25), 13, 13), reuseBrush, 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(441, top + 12),
+                    D2D1::Point2F(433, top + 11), reuseBrush, 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(441, top + 12),
+                    D2D1::Point2F(439, top + 20), reuseBrush, 2.0F);
+                // A closed/open padlock gates only movement and two-hand scaling.
+                const float lockX = 520.0F;
+                const float lockY = top + 25.0F;
+                auto* lockBrush = desktop.surfaces[index].locked
+                    ? accentBrush_.Get() : structureBrush_.Get();
+                d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(lockX - 11, lockY - 1, lockX + 11, lockY + 13), 3, 3),
+                    lockBrush, 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(lockX - 7, lockY - 1),
+                    D2D1::Point2F(lockX - 7, lockY - 9), lockBrush, 2.0F);
+                d2dContext_->DrawLine(D2D1::Point2F(lockX - 7, lockY - 9),
+                    D2D1::Point2F(lockX + (desktop.surfaces[index].locked ? 7.0F : 4.0F),
+                        lockY - 9), lockBrush, 2.0F);
+                d2dContext_->DrawLine(
+                    D2D1::Point2F(lockX + (desktop.surfaces[index].locked ? 7.0F : 4.0F),
+                        lockY - 9),
+                    D2D1::Point2F(lockX + (desktop.surfaces[index].locked ? 7.0F : 10.0F),
+                        lockY - (desktop.surfaces[index].locked ? 1.0F : 5.0F)), lockBrush, 2.0F);
                 // Crosshair brings a surface to eye line; X destroys only the VR surface.
-                d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(599, top + 25), 13, 13),
+                d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(590, top + 25), 13, 13),
                     accentBrush_.Get(), 2.0F);
-                d2dContext_->DrawLine(D2D1::Point2F(579, top + 25), D2D1::Point2F(619, top + 25),
+                d2dContext_->DrawLine(D2D1::Point2F(570, top + 25), D2D1::Point2F(610, top + 25),
                     accentBrush_.Get(), 2.0F);
-                d2dContext_->DrawLine(D2D1::Point2F(599, top + 5), D2D1::Point2F(599, top + 45),
+                d2dContext_->DrawLine(D2D1::Point2F(590, top + 5), D2D1::Point2F(590, top + 45),
                     accentBrush_.Get(), 2.0F);
                 d2dContext_->DrawLine(D2D1::Point2F(663, top + 14), D2D1::Point2F(685, top + 36),
                     mutedTextBrush_.Get(), 2.5F);

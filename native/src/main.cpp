@@ -1385,6 +1385,7 @@ int main(int argc, char** argv) {
         bool desktopKeyboardSpawnHit = false;
         bool desktopSurfaceListHit = false;
         bool desktopListBackHit = false;
+        bool desktopBringAllHit = false;
         bool musicMicHit = false;
         bool musicBroadcastHit = false;
         bool commsMicHit = false;
@@ -1398,6 +1399,7 @@ int main(int argc, char** argv) {
         bool desktopSettingsHit = false;
         bool shutdownButtonHit = false;
         std::optional<size_t> desktopBringIndex;
+        std::optional<size_t> desktopLockIndex;
         std::optional<size_t> desktopReuseIndex;
         std::optional<size_t> desktopCloseIndex;
         std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
@@ -1462,13 +1464,16 @@ int main(int argc, char** argv) {
                     && x >= 612.0F && x <= 688.0F && y >= 236.0F && y <= 312.0F;
                 if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
                     desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
+                    desktopBringAllHit = !desktopPanel.surfaces.empty()
+                        && x >= 650.0F && x <= 722.0F && y >= 100.0F && y <= 156.0F;
                     if (y >= 166.0F && y < 352.0F) {
                         const auto row = static_cast<size_t>((y - 166.0F) / 62.0F);
                         if (row < desktopPanel.surfaces.size() && row < 3) {
-                            if (x >= 492.0F && x <= 558.0F
+                            if (x >= 420.0F && x <= 480.0F
                                 && desktopPanel.surfaces[row].reusable) desktopReuseIndex = row;
-                            if (x >= 566.0F && x <= 632.0F) desktopBringIndex = row;
-                            if (x >= 640.0F && x <= 712.0F) desktopCloseIndex = row;
+                            if (x >= 490.0F && x <= 550.0F) desktopLockIndex = row;
+                            if (x >= 560.0F && x <= 620.0F) desktopBringIndex = row;
+                            if (x >= 636.0F && x <= 712.0F) desktopCloseIndex = row;
                         }
                     }
                 } else {
@@ -1548,7 +1553,8 @@ int main(int argc, char** argv) {
                 const bool actionable = restoreButtonHit || rigFullResetHit
                     || (rigMountResetHit && mountReady)
                     || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
-                    || desktopListBackHit || desktopBringIndex.has_value()
+                    || desktopListBackHit || desktopBringAllHit || desktopBringIndex.has_value()
+                    || desktopLockIndex.has_value()
                     || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
                     || musicMicHit || musicBroadcastHit || commsMicHit || commsClearHit
                     || commsShortcutHit.has_value()
@@ -1899,6 +1905,16 @@ int main(int argc, char** argv) {
             }
         } else if (rightUiClick.bChanged && rightUiClick.bState && desktopListBackHit) {
             desktopPanel.showSurfaceList = false;
+            if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopBringAllHit) {
+            desktopSurfaces.BringAllToMe();
+        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopLockIndex) {
+            desktopSurfaces.ToggleLocked(desktopPanel.surfaces[*desktopLockIndex].id);
+            desktopPanel.surfaces = desktopSurfaces.Summaries();
             if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
                     rigLine, rigSlots, mountReady, desktopPanel)) {
                 const auto updatedTexture = renderer.Texture();

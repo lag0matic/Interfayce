@@ -24,6 +24,7 @@ struct DesktopSurfaceSummary {
     std::wstring label;
     bool visible{};
     bool reusable{};
+    bool locked{};
 };
 
 struct DesktopSurfaceHit {
@@ -104,6 +105,8 @@ public:
     void SetHoveredFrame(std::optional<uint64_t> id);
     void Update();
     bool BringToMe(uint64_t id);
+    bool BringAllToMe();
+    bool ToggleLocked(uint64_t id);
     bool ReturnToPicker(uint64_t id, const std::vector<DesktopSource>& sources);
     bool Close(uint64_t id);
     bool BeginGrab(uint64_t id, DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
@@ -142,6 +145,7 @@ private:
         float widthMeters{0.69F};
         vr::HmdMatrix34_t transform{};
         bool visible{true};
+        bool locked{};
     };
 
     struct GrabState {
@@ -159,6 +163,7 @@ private:
     };
 
     bool PlaceAtEyeLine(Surface& surface) const;
+    bool PlaceRelativeToHmd(Surface& surface, float x, float y, float z) const;
     bool CreateFrameOverlays(Surface& surface) const;
     bool UpdateFrameOverlays(const Surface& surface) const;
     void DestroySurfaceOverlays(Surface& surface) const;
