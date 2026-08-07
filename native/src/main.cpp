@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cwctype>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -390,6 +391,17 @@ std::wstring Utf8ToWide(const std::string& text) {
     return result;
 }
 
+std::string WideToUtf8(const std::wstring& text) {
+    if (text.empty()) return {};
+    const auto length = WideCharToMultiByte(CP_UTF8, 0, text.data(),
+        static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (length <= 0) return {};
+    std::string result(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+        result.data(), length, nullptr, nullptr);
+    return result;
+}
+
 std::wstring RequestMusicVoiceCommand() {
     const auto response = LocalHttpRequest("POST", "/listen/music", std::chrono::seconds(30));
     return response ? Utf8ToWide(*response) : L"ERROR\t\tVoice service did not respond.";
@@ -418,6 +430,39 @@ struct CommsState {
     std::wstring transcript;
     bool active{};
 };
+
+struct AssistantPanelState {
+    std::wstring status{L"READY"};
+    std::wstring transcript;
+    std::wstring response;
+    bool active{};
+};
+
+std::optional<AssistantPanelState> ParseAssistantState(const std::string& response) {
+    if (response.empty()) return std::nullopt;
+    AssistantPanelState state;
+    const auto first = response.find('\t');
+    const auto second = first == std::string::npos
+        ? std::string::npos : response.find('\t', first + 1);
+    state.status = Utf8ToWide(response.substr(0, first));
+    if (first != std::string::npos) {
+        state.transcript = Utf8ToWide(response.substr(
+            first + 1, second == std::string::npos ? std::string::npos : second - first - 1));
+    }
+    if (second != std::string::npos) state.response = Utf8ToWide(response.substr(second + 1));
+    state.active = state.status == L"LISTENING" || state.status == L"THINKING"
+        || state.status == L"SEARCHING" || state.status == L"READING"
+        || state.status == L"CHECKING" || state.status == L"RESPONDING"
+        || state.status == L"STOPPING";
+    return state;
+}
+
+std::optional<AssistantPanelState> RequestAssistantState(
+        std::string_view method, std::string_view path,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(750)) {
+    const auto response = LocalHttpRequest(method, path, timeout);
+    return response ? ParseAssistantState(*response) : std::nullopt;
+}
 
 std::optional<CommsState> ParseCommsState(const std::string& response) {
     if (response.empty()) return std::nullopt;
@@ -487,6 +532,20 @@ std::optional<std::array<DesktopFavorite, 3>> RequestDesktopFavorites() {
     return favorites;
 }
 
+void RecordDesktopRecent(const interfayce::DesktopSource& source) {
+    if (source.kind != interfayce::DesktopSource::Kind::Window
+        || source.executablePath.empty()) return;
+    auto label = std::filesystem::path(source.executablePath).stem().wstring();
+    if (label.empty()) label = source.detail;
+    if (label.empty()) label = source.label;
+    if (!label.empty()) label.front() = static_cast<wchar_t>(std::towupper(label.front()));
+    const auto body = WideToUtf8(label) + "\t" + WideToUtf8(source.executablePath);
+    std::thread([body] {
+        static_cast<void>(LocalHttpRequest(
+            "POST", "/desktop/recent", std::chrono::milliseconds(250), body));
+    }).detach();
+}
+
 void LaunchSpotifyControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
     static_cast<void>(projectRoot);
     std::string operationPath;
@@ -538,6 +597,7 @@ struct TtsSettingsState {
     float wristPitch{};
     float wristYaw{};
     float wristRoll{};
+    float playspaceTravelLimitMeters{10.0F};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
@@ -564,6 +624,8 @@ std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
         if (fields.size() > 9) state.wristPitch = std::clamp(std::stof(fields[9]), -45.0F, 45.0F);
         if (fields.size() > 10) state.wristYaw = std::clamp(std::stof(fields[10]), -45.0F, 45.0F);
         if (fields.size() > 11) state.wristRoll = std::clamp(std::stof(fields[11]), -45.0F, 45.0F);
+        if (fields.size() > 12) state.playspaceTravelLimitMeters =
+            std::clamp(std::stof(fields[12]), 1.0F, 50.0F);
         return state;
     } catch (...) {
         return std::nullopt;
@@ -1214,6 +1276,8 @@ int main(int argc, char** argv) {
         voiceServiceAvailable ? L"VOICE READY" : L"VOICE WARMING", false);
     renderer.SetMusicBroadcastState(false, broadcast.StatusText());
     renderer.SetCommsStatus(voiceServiceAvailable ? L"IDLE" : L"VOICE WARMING", L"", false);
+    renderer.SetAssistantStatus(
+        voiceServiceAvailable ? L"READY" : L"VOICE WARMING", L"", L"", false);
     TtsSettingsState ttsSettings;
     if (voiceServiceAvailable) {
         if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
@@ -1395,6 +1459,7 @@ int main(int argc, char** argv) {
     if (!rawPanel && !desktopSurfaces.Initialize(system, renderer.Device())) {
         std::cerr << "Could not initialize desktop surface registry.\n";
     }
+    desktopSurfaces.SetDeckVisible(false);
 
     std::cout << "Interfayce overlay host is running.\n";
     const HANDLE shutdownEvent = CreateEventW(nullptr, TRUE, FALSE, kShutdownEventName);
@@ -1431,6 +1496,9 @@ int main(int argc, char** argv) {
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
     std::array<std::wstring, 4> commsShortcuts;
+    AssistantPanelState assistantState;
+    std::future<std::optional<AssistantPanelState>> assistantCommand;
+    auto nextAssistantPoll = std::chrono::steady_clock::now();
     auto nextCommsPoll = std::chrono::steady_clock::now();
     auto nextCommsShortcutPoll = std::chrono::steady_clock::now();
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
@@ -1606,6 +1674,9 @@ int main(int argc, char** argv) {
         bool musicNextHit = false;
         bool commsMicHit = false;
         bool commsClearHit = false;
+        bool assistantMicHit = false;
+        bool assistantCancelHit = false;
+        bool assistantClearHit = false;
         std::optional<size_t> commsShortcutHit;
         bool ttsVolumeDownHit = false;
         bool ttsMuteHit = false;
@@ -1669,6 +1740,9 @@ int main(int argc, char** argv) {
                     }
                 }
                 commsMicHit = selectedDeck == 5 && circleHit(270, 285, 46);
+                assistantMicHit = selectedDeck == 6 && circleHit(220, 286, 49);
+                assistantCancelHit = selectedDeck == 6 && circleHit(384, 286, 40);
+                assistantClearHit = selectedDeck == 6 && circleHit(548, 286, 40);
                 ttsVolumeDownHit = selectedDeck == 4 && circleHit(176, 300, 49);
                 ttsMuteHit = selectedDeck == 4 && circleHit(384, 300, 49);
                 ttsVolumeUpHit = selectedDeck == 4 && circleHit(592, 300, 49);
@@ -1784,6 +1858,7 @@ int main(int argc, char** argv) {
             || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
             || musicMicHit || musicBroadcastHit || musicPreviousHit || musicToggleHit || musicNextHit
             || commsMicHit || commsClearHit || commsShortcutHit.has_value()
+            || assistantMicHit || assistantCancelHit || assistantClearHit
             || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
             || broadcastGainDownHit || broadcastGainUpHit || shutdownButtonHit;
         if (panelHitFound) {
@@ -1925,18 +2000,23 @@ int main(int argc, char** argv) {
                         interfayce::DesktopPointerEvent::PrimaryDown)) {
                     activeDesktopPointer = desktopSurfaceHit;
                 }
-            } else if (desktopSurfaces.ActivateHit(*desktopSurfaceHit)) {
-                if (desktopSurfaceHit->sourceIndex) {
-                    desktopPanel.surfaces = desktopSurfaces.Summaries();
-                    std::cout << "Desktop source assigned to surface " << desktopSurfaceHit->id << '\n';
+            } else {
+                const auto selectedSource = desktopSurfaces.SourceForHit(*desktopSurfaceHit);
+                if (desktopSurfaces.ActivateHit(*desktopSurfaceHit)) {
+                    if (selectedSource) RecordDesktopRecent(*selectedSource);
+                    if (desktopSurfaceHit->sourceIndex) {
+                        desktopPanel.surfaces = desktopSurfaces.Summaries();
+                        std::cout << "Desktop source assigned to surface "
+                                  << desktopSurfaceHit->id << '\n';
+                    }
+                } else if (desktopSurfaceHit->sourceIndex || desktopSurfaceHit->pageDelta != 0) {
+                    std::cerr << "Could not start selected desktop capture\n";
                 }
-            } else if (desktopSurfaceHit->sourceIndex || desktopSurfaceHit->pageDelta != 0) {
-                std::cerr << "Could not start selected desktop capture\n";
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && panelHitFound && panelY <= 82.0F) {
-            const int requestedDeck = panelX < 129.0F ? 0 : panelX < 253.0F ? 5
-                : panelX < 359.0F ? 1 : panelX < 485.0F ? 2
-                : panelX < 613.0F ? 3 : 4;
+            const int requestedDeck = panelX < 115.0F ? 0 : panelX < 209.0F ? 5
+                : panelX < 303.0F ? 6 : panelX < 397.0F ? 1
+                : panelX < 491.0F ? 2 : panelX < 585.0F ? 3 : 4;
             if (requestedDeck == 0) {
                 spotifyAvailable = IsProcessRunning(L"Spotify.exe");
                 if (spotifyAvailable) {
@@ -1981,11 +2061,24 @@ int main(int argc, char** argv) {
                 nextCommsPoll = std::chrono::steady_clock::now();
                 nextCommsShortcutPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             }
+            if (requestedDeck == 6) {
+                if (const auto current = RequestAssistantState("GET", "/assistant/status")) {
+                    assistantState = *current;
+                    renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                        assistantState.response, assistantState.active);
+                }
+                nextAssistantPoll = std::chrono::steady_clock::now();
+            }
             if (requestedDeck != selectedDeck && renderer.Initialize(
                     system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
                     requestedDeck == 0 && !spotifyAvailable ? L"" : musicArtPath.wstring(),
                     rigLine, rigSlots, mountReady, desktopPanel)) {
                 selectedDeck = requestedDeck;
+                desktopSurfaces.SetDeckVisible(selectedDeck == 1);
+                if (selectedDeck != 1) {
+                    vr::VROverlay()->HideOverlay(cursorOverlay);
+                    vr::VROverlay()->HideOverlay(leftCursorOverlay);
+                }
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
@@ -2061,6 +2154,35 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState
+                   && (assistantMicHit || assistantCancelHit || assistantClearHit)) {
+            voiceServiceAvailable = VoiceServiceAvailable();
+            if (!voiceServiceAvailable) {
+                LaunchVoiceService(directory, projectRoot);
+                assistantState = {L"VOICE WARMING", L"", L"", false};
+            } else if (assistantMicHit && !assistantCommand.valid()) {
+                assistantState = {L"LISTENING", L"", L"", true};
+                assistantCommand = std::async(std::launch::async, [] {
+                    return RequestAssistantState("POST", "/listen/assistant",
+                        std::chrono::seconds(60));
+                });
+            } else if (assistantCancelHit && assistantCommand.valid()) {
+                if (const auto changed = RequestAssistantState("POST", "/assistant/cancel")) {
+                    assistantState = *changed;
+                }
+            } else if (assistantClearHit && !assistantCommand.valid()) {
+                if (const auto changed = RequestAssistantState("POST", "/assistant/clear")) {
+                    assistantState = *changed;
+                }
+            }
+            renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                assistantState.response, assistantState.active);
+            nextAssistantPoll = std::chrono::steady_clock::now();
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (broadcastGainDownHit || broadcastGainUpHit)) {
             const auto path = broadcastGainDownHit
                 ? "/settings/broadcast/gain/down" : "/settings/broadcast/gain/up";
@@ -2129,7 +2251,9 @@ int main(int argc, char** argv) {
             if (surfaceId != 0) {
                 if (const auto runningWindow = desktopSourceManager.FindWindowForTarget(
                         favorite.executable)) {
-                    desktopSurfaces.AssignSource(surfaceId, *runningWindow);
+                    if (desktopSurfaces.AssignSource(surfaceId, *runningWindow)) {
+                        RecordDesktopRecent(*runningWindow);
+                    }
                 } else if (desktopSourceManager.LaunchTarget(favorite.executable)) {
                     const auto now = std::chrono::steady_clock::now();
                     pendingFavoriteCaptures.push_back({
@@ -2389,6 +2513,39 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (assistantCommand.valid()
+            && assistantCommand.wait_for(std::chrono::milliseconds(0))
+                == std::future_status::ready) {
+            if (const auto completed = assistantCommand.get()) assistantState = *completed;
+            else assistantState = {L"ERROR", assistantState.transcript,
+                L"Voice service did not respond", false};
+            renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                assistantState.response, assistantState.active);
+            if (selectedDeck == 6 && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
+        if (selectedDeck == 6
+            && std::chrono::steady_clock::now() >= nextAssistantPoll) {
+            nextAssistantPoll = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+            if (const auto current = RequestAssistantState("GET", "/assistant/status")) {
+                if (current->status != assistantState.status
+                    || current->transcript != assistantState.transcript
+                    || current->response != assistantState.response) {
+                    assistantState = *current;
+                    renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                        assistantState.response, assistantState.active);
+                    if (renderer.Initialize(system, selectedDeck, musicLine,
+                            musicArtPath.wstring(), rigLine, rigSlots,
+                            mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                }
+            }
+        }
         bool favoriteCaptureChanged = false;
         const auto favoriteNow = std::chrono::steady_clock::now();
         for (auto pending = pendingFavoriteCaptures.begin();
@@ -2405,7 +2562,9 @@ int main(int argc, char** argv) {
             pending->nextPoll = favoriteNow + std::chrono::milliseconds(150);
             if (const auto source = desktopSourceManager.FindWindowForTarget(
                     pending->executable)) {
-                desktopSurfaces.AssignSource(pending->surfaceId, *source);
+                if (desktopSurfaces.AssignSource(pending->surfaceId, *source)) {
+                    RecordDesktopRecent(*source);
+                }
                 pending = pendingFavoriteCaptures.erase(pending);
                 favoriteCaptureChanged = true;
             } else {
@@ -2706,10 +2865,13 @@ int main(int argc, char** argv) {
                 }
             }
             if ((temporaryDrag || sessionDrag) && (temporaryBaseline || sessionBaseline)) {
-                constexpr float kMaximumTemporaryDragMeters = 2.0F;
-                if (std::abs(previewOffset.x) > kMaximumTemporaryDragMeters
-                    || std::abs(previewOffset.y) > kMaximumTemporaryDragMeters
-                    || std::abs(previewOffset.z) > kMaximumTemporaryDragMeters) {
+                // This is a configurable tracking-fault guard, not a fixed
+                // assumption about the user's useful playspace travel.
+                const float maximumSessionOffsetMeters =
+                    ttsSettings.playspaceTravelLimitMeters;
+                if (std::abs(previewOffset.x) > maximumSessionOffsetMeters
+                    || std::abs(previewOffset.y) > maximumSessionOffsetMeters
+                    || std::abs(previewOffset.z) > maximumSessionOffsetMeters) {
                     std::cerr << "session drag cancelled: implausible offset\n";
                     restoreBaseline(temporaryBaseline, "temporary drag");
                     restoreBaseline(sessionBaseline, "session drag");

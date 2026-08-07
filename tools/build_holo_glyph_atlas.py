@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +46,45 @@ GLYPHS = [
     Glyph("shutdown", "holo-glass.png", (1435, 663), (106, 88)),
     Glyph("copy", "holo-glass-distinct-pairs.png", (1040, 282), (330, 310)),
     Glyph("paste", "holo-glass-distinct-pairs.png", (1437, 282), (330, 310)),
+    Glyph("assistant", "", (0, 0), (72, 72)),
 ]
+
+
+def assistant_glyph_image() -> Image.Image:
+    """Approved Dialogue Core: clipped glass, speech cell, orb, and waveform."""
+    scale = 4
+    size = CELL * scale
+    tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    glow = Image.new("RGBA", tile.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    frame = [(34, 19), (254, 19), (273, 38), (273, 224),
+             (254, 243), (34, 243), (15, 224), (15, 38)]
+    gd.line(frame + [frame[0]], fill=(115, 67, 255, 220), width=9, joint="curve")
+    gd.line([(40, 238), (78, 238)], fill=(0, 226, 255, 240), width=7)
+    gd.line([(210, 238), (248, 238)], fill=(0, 226, 255, 240), width=7)
+    bubble = [(63, 68), (225, 68), (225, 177), (166, 177),
+              (139, 204), (139, 177), (63, 177)]
+    gd.line(bubble + [bubble[0]], fill=(155, 93, 255, 255), width=11, joint="curve")
+    gd.ellipse((119, 100, 169, 150), fill=(184, 122, 255, 255))
+    for offset, height in ((-48, 28), (-31, 44), (31, 44), (48, 28)):
+        gd.rounded_rectangle((144 + offset - 5, 125 - height // 2,
+                              144 + offset + 5, 125 + height // 2), 5,
+                             fill=(174, 105, 255, 245))
+    tile.alpha_composite(glow.filter(ImageFilter.GaussianBlur(15)))
+    draw = ImageDraw.Draw(tile)
+    draw.polygon(frame, fill=(16, 14, 38, 166))
+    draw.line(frame + [frame[0]], fill=(151, 112, 255, 235), width=4, joint="curve")
+    draw.line([(40, 238), (78, 238)], fill=(21, 215, 255, 255), width=4)
+    draw.line([(210, 238), (248, 238)], fill=(21, 215, 255, 255), width=4)
+    draw.line(bubble + [bubble[0]], fill=(171, 112, 255, 255), width=7, joint="curve")
+    draw.ellipse((121, 102, 167, 148), fill=(207, 174, 255, 255),
+                 outline=(255, 255, 255, 245), width=3)
+    for offset, height in ((-48, 28), (-31, 44), (31, 44), (48, 28)):
+        draw.rounded_rectangle((144 + offset - 4, 125 - height // 2,
+                                144 + offset + 4, 125 + height // 2), 4,
+                               fill=(184, 123, 255, 255))
+    draw.ellipse((136, 232, 152, 248), fill=(198, 251, 255, 255))
+    return tile.resize((CELL, CELL), Image.Resampling.LANCZOS)
 
 
 def glyph_image(source: Image.Image, spec: Glyph) -> Image.Image:
@@ -78,8 +116,13 @@ def main() -> None:
     rows = (len(GLYPHS) + COLUMNS - 1) // COLUMNS
     atlas = Image.new("RGBA", (COLUMNS * CELL, rows * CELL), (0, 0, 0, 0))
     for index, spec in enumerate(GLYPHS):
-        source = sources.setdefault(spec.source, Image.open(CONCEPTS / spec.source).convert("RGBA"))
-        atlas.alpha_composite(glyph_image(source, spec),
+        if spec.name == "assistant":
+            glyph = assistant_glyph_image()
+        else:
+            source = sources.setdefault(
+                spec.source, Image.open(CONCEPTS / spec.source).convert("RGBA"))
+            glyph = glyph_image(source, spec)
+        atlas.alpha_composite(glyph,
                               ((index % COLUMNS) * CELL, (index // COLUMNS) * CELL))
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     atlas.save(OUTPUT, optimize=True)

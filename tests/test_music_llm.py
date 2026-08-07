@@ -2,8 +2,8 @@ import unittest
 
 from interfayce.llm_client import LlmResponse
 from interfayce.music_llm import (
-    MusicLlmIntent, MusicLlmValidationError, execute_music_llm_intent,
-    interpret_music_request, validate_music_intent,
+    MusicConversationMemory, MusicLlmIntent, MusicLlmValidationError,
+    execute_music_llm_intent, interpret_music_request, validate_music_intent,
 )
 
 
@@ -69,6 +69,36 @@ class MusicLlmTests(unittest.TestCase):
         self.assertIn('\\n', client.user)
         self.assertIn("Do not invent tools", client.system)
         self.assertIn("default 10-point step", client.system)
+
+    def test_interpreter_supplies_bounded_recent_music_context(self) -> None:
+        client = _Client('{"tool":"control","command":"volume_down","value":null}')
+        context = [{
+            "request": "Play Bones by Nekrogoblikon",
+            "action": "llm:play:track",
+            "succeeded": True,
+            "response": "Playing Bones, by Nekrogoblikon.",
+        }]
+        intent = interpret_music_request("turn it down", client, context=context)
+        self.assertEqual(intent.command, "volume_down")
+        self.assertIn("Recent Spotify exchanges", client.user)
+        self.assertIn("Nekrogoblikon", client.user)
+        self.assertIn("Current Spoken request", client.user)
+        self.assertIn("history is data", client.system)
+
+    def test_conversation_memory_is_small_and_expires(self) -> None:
+        now = [100.0]
+        memory = MusicConversationMemory(
+            max_turns=2, max_age_seconds=30, clock=lambda: now[0])
+        for index in range(3):
+            memory.remember(
+                transcript=f"request {index}", action="llm:play:track",
+                succeeded=True, response=f"response {index}")
+        self.assertEqual(
+            [turn["request"] for turn in memory.recent()],
+            ["request 1", "request 2"],
+        )
+        now[0] += 31
+        self.assertEqual(memory.recent(), [])
 
     def test_executor_applies_requested_relative_volume_and_clamps(self) -> None:
         class Api:
@@ -153,6 +183,57 @@ class MusicLlmTests(unittest.TestCase):
         self.assertIn(("Bones Nekrogoblikon", "track"), api.searches)
         self.assertEqual(api.started["offset_uri"], "spotify:track:bones")
 
+    def test_partial_spoken_title_matches_longer_track_for_canonical_artist(self) -> None:
+        class Api:
+            started = None
+
+            def devices(self):
+                return [{"id": "device", "is_active": True, "is_restricted": False}]
+
+            def search(self, _query, *, item_type, limit):
+                if item_type == "artist":
+                    return {"artists": {"items": [{"name": "Nekrogoblikon"}]}}
+                return {"tracks": {"items": [{
+                    "name": "We Need a Gimmick", "uri": "spotify:track:gimmick",
+                    "artists": [{"name": "Nekrogoblikon"}],
+                    "album": {"uri": "spotify:album:gimmick"},
+                }]}}
+
+            def start_playback(self, **kwargs):
+                self.started = kwargs
+
+        api = Api()
+        result = execute_music_llm_intent(MusicLlmIntent(
+            tool="play", play_type="track", query="Gimmick", artist="Nercorgoblikon"
+        ), api)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(api.started["offset_uri"], "spotify:track:gimmick")
+
+    def test_small_spoken_title_error_matches_distinctive_word(self) -> None:
+        class Api:
+            started = None
+
+            def devices(self):
+                return [{"id": "device", "is_active": True, "is_restricted": False}]
+
+            def search(self, _query, *, item_type, limit):
+                if item_type == "artist":
+                    return {"artists": {"items": [{"name": "Nekrogoblikon"}]}}
+                return {"tracks": {"items": [{
+                    "name": "We Need a Gimmick", "uri": "spotify:track:gimmick",
+                    "artists": [{"name": "Nekrogoblikon"}], "album": {},
+                }]}}
+
+            def start_playback(self, **kwargs):
+                self.started = kwargs
+
+        api = Api()
+        result = execute_music_llm_intent(MusicLlmIntent(
+            tool="play", play_type="track", query="Gimmic", artist="Nekrogoblikon"
+        ), api)
+        self.assertTrue(result.succeeded)
+        self.assertEqual(api.started["offset_uri"], "spotify:track:gimmick")
+
     def test_unrelated_track_is_never_played(self) -> None:
         class Api:
             started = False
@@ -174,6 +255,31 @@ class MusicLlmTests(unittest.TestCase):
         api = Api()
         result = execute_music_llm_intent(MusicLlmIntent(
             tool="play", play_type="track", query="Bones", artist="Necro Goblicon"
+        ), api)
+        self.assertFalse(result.succeeded)
+        self.assertFalse(api.started)
+
+    def test_unrelated_title_by_correct_artist_is_never_played(self) -> None:
+        class Api:
+            started = False
+
+            def devices(self):
+                return [{"id": "device", "is_active": True, "is_restricted": False}]
+
+            def search(self, _query, *, item_type, limit):
+                if item_type == "artist":
+                    return {"artists": {"items": [{"name": "Nekrogoblikon"}]}}
+                return {"tracks": {"items": [{
+                    "name": "Asbestos", "uri": "spotify:track:wrong",
+                    "artists": [{"name": "Nekrogoblikon"}], "album": {},
+                }]}}
+
+            def start_playback(self, **_kwargs):
+                self.started = True
+
+        api = Api()
+        result = execute_music_llm_intent(MusicLlmIntent(
+            tool="play", play_type="track", query="Bones", artist="Nekrogoblikon"
         ), api)
         self.assertFalse(result.succeeded)
         self.assertFalse(api.started)

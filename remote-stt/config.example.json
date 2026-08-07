@@ -1,0 +1,23 @@
+{
+  "host": "0.0.0.0",
+  "port": 5010,
+  "api_key": "CHANGE_ME",
+  "default_model": "whisper-turbo",
+  "max_upload_mb": 25,
+  "models": {
+    "whisper-turbo": {
+      "backend": "faster-whisper",
+      "model": "turbo",
+      "device": "cuda",
+      "compute_type": "int8_float16",
+      "language": "en",
+      "beam_size": 5,
+      "vad_filter": true
+    },
+    "moonshine": {
+      "backend": "moonshine",
+      "language": "en",
+      "model_arch": 5
+    }
+  }
+}

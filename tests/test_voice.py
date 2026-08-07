@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -9,7 +10,8 @@ from interfayce.voice import (
     execute_music_intent,
     parse_music_intent,
 )
-from interfayce.voice_service import voice_log_path
+from interfayce.assistant import AssistantSnapshot, AssistantState
+from interfayce.voice_service import VoiceRuntime, voice_log_path
 
 
 class FakeMedia:
@@ -62,3 +64,27 @@ class VoiceIntentTests(unittest.TestCase):
             expected = Path(directory) / "voice.log"
             with patch.dict("os.environ", {"INTERFAYCE_VOICE_LOG": str(expected)}):
                 self.assertEqual(voice_log_path(), expected)
+
+    def test_assistant_panel_state_is_bounded_to_one_wire_line(self) -> None:
+        runtime = object.__new__(VoiceRuntime)
+        runtime._assistant_lock = threading.Lock()
+        runtime._assistant_status = "READY"
+        runtime._assistant_transcript = "what\tis new"
+        runtime._assistant_response = "Line one\nLine two"
+
+        self.assertEqual(runtime.assistant_status(),
+                         "READY\twhat is new\tLine one Line two")
+
+    def test_assistant_tool_states_are_glanceable(self) -> None:
+        runtime = object.__new__(VoiceRuntime)
+        runtime._assistant_lock = threading.Lock()
+        runtime._assistant_status = "READY"
+        runtime._assistant_transcript = ""
+        runtime._assistant_response = ""
+
+        runtime._on_assistant_state(
+            AssistantSnapshot(AssistantState.USING_TOOL, "search_web"))
+        self.assertTrue(runtime.assistant_status().startswith("SEARCHING\t"))
+        runtime._on_assistant_state(
+            AssistantSnapshot(AssistantState.USING_TOOL, "open_search_result"))
+        self.assertTrue(runtime.assistant_status().startswith("READING\t"))

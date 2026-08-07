@@ -106,6 +106,22 @@ def main() -> None:
         "llm-status", help="Report the configured LLM profile without exposing its token."
     )
     subcommands.add_parser(
+        "assistant-search-key", help="Open protected input for the Brave Search API token."
+    )
+    subcommands.add_parser(
+        "assistant-search-status", help="Report whether Brave Search is configured."
+    )
+    assistant = subcommands.add_parser(
+        "assistant", help="Ask the conversational assistant outside VR."
+    )
+    assistant.add_argument("question")
+    assistant.add_argument("--speak", action="store_true")
+    assistant_audio = subcommands.add_parser(
+        "assistant-audio", help="Transcribe an audio file and ask the assistant outside VR."
+    )
+    assistant_audio.add_argument("path")
+    assistant_audio.add_argument("--speak", action="store_true")
+    subcommands.add_parser(
         "settings", help="Open the Interfayce desktop configuration window."
     )
 
@@ -210,6 +226,27 @@ def main() -> None:
         client = OpenAiCompatibleClient()
         print(f"{'CONFIGURED' if client.configured else 'MISSING_KEY'}\t"
               f"{client.settings.llm_endpoint}\t{client.settings.llm_model}")
+    elif arguments.command == "assistant-search-key":
+        from .web_research import show_brave_search_key_dialog
+
+        show_brave_search_key_dialog()
+    elif arguments.command == "assistant-search-status":
+        from .web_research import BraveSearchProvider
+
+        print("CONFIGURED" if BraveSearchProvider().configured else "MISSING_KEY")
+    elif arguments.command in {"assistant", "assistant-audio"}:
+        from .assistant import AssistantSnapshot
+        from .assistant_harness import AssistantHarness, print_harness_result
+
+        def report_state(snapshot: AssistantSnapshot) -> None:
+            detail = f"\t{snapshot.tool_name}" if snapshot.tool_name else ""
+            print(f"STATE\t{snapshot.state.value}{detail}", flush=True)
+
+        harness = AssistantHarness(on_state=report_state)
+        result = (harness.ask(arguments.question, speak=arguments.speak)
+                  if arguments.command == "assistant" else
+                  harness.ask_audio_file(arguments.path, speak=arguments.speak))
+        print_harness_result(result)
     elif arguments.command == "settings":
         from .settings_window import show_settings_window
 

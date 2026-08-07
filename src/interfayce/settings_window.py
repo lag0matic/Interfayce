@@ -16,6 +16,8 @@ from .app_info import APP_VERSION, RELEASES_URL, check_for_update
 from .diagnostics import DiagnosticReport, load_report, run_diagnostics, save_report
 from .llm_client import delete_api_key, load_api_key, set_api_key, valid_llm_endpoint
 from .local_service import TOKEN_HEADER, get_or_create_token
+from .remote_stt import (delete_remote_stt_api_key, load_remote_stt_api_key,
+                         set_remote_stt_api_key, valid_remote_stt_endpoint)
 from .settings import load_settings, set_desktop_configuration
 from .spotify_oauth import (SpotifyOAuthError, SpotifyWebApi, connect as connect_spotify,
                             disconnect as disconnect_spotify, load_token)
@@ -87,11 +89,16 @@ class SettingsWindow:
         self.muted = tk.BooleanVar(value=current.tts_muted)
         self.speed = tk.DoubleVar(value=current.tts_speed)
         self.microphone = tk.StringVar(value=current.stt_microphone)
+        self.stt_endpoint = tk.StringVar(value=current.stt_endpoint)
+        self.stt_model = tk.StringVar(value=current.stt_model)
+        self.stt_key = tk.StringVar()
         self.comms_silence_timeout = tk.DoubleVar(
             value=current.comms_silence_timeout_seconds)
         self.tts_output = tk.StringVar(value=current.tts_output)
         self.haptic = tk.DoubleVar(value=round(current.haptic_strength * 100))
         self.broadcast_gain = tk.DoubleVar(value=current.broadcast_gain_db)
+        self.playspace_travel_limit = tk.DoubleVar(
+            value=current.playspace_travel_limit_meters)
         self.tts_endpoint = tk.StringVar(value=current.tts_endpoint)
         self.tts_model = tk.StringVar(value=current.tts_model)
         self.tts_voice = tk.StringVar(value=current.tts_voice)
@@ -127,6 +134,7 @@ class SettingsWindow:
         self.device_status = tk.StringVar()
         self.spotify_status = tk.StringVar()
         self.llm_status = tk.StringVar()
+        self.stt_status = tk.StringVar()
         self.diagnostic_summary = tk.StringVar(value="Diagnostics have not run yet.")
         self.update_status = tk.StringVar(value="Update checks run only when requested.")
         self.save_status = tk.StringVar(value="Settings are shared with the wrist controls.")
@@ -194,18 +202,21 @@ class SettingsWindow:
         notebook = ttk.Notebook(outer)
         notebook.pack(fill="both", expand=True)
         general = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
+        voice = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         integrations = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         comms = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         desktop = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         wrist = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         diagnostics = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         notebook.add(general, text="GENERAL")
+        notebook.add(voice, text="VOICE")
         notebook.add(integrations, text="INTEGRATIONS")
         notebook.add(comms, text="COMMS")
         notebook.add(desktop, text="DESKTOP")
         notebook.add(wrist, text="WRIST")
         notebook.add(diagnostics, text="DIAGNOSTICS")
         self._build_general(general)
+        self._build_voice(voice)
         self._build_integrations(integrations)
         self._build_comms(comms)
         self._build_desktop(desktop)
@@ -268,6 +279,16 @@ class SettingsWindow:
         ttk.Scale(panel, from_=0, to=24, variable=self.broadcast_gain,
                   command=lambda _value: self._update_labels()).grid(
                       row=row, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        row += 1
+        ttk.Label(panel, text="Playspace travel limit", style="Panel.TLabel").grid(
+            row=row, column=0, sticky="w", pady=(10, 0))
+        ttk.Spinbox(panel, from_=1, to=50, increment=1,
+                    textvariable=self.playspace_travel_limit, width=8).grid(
+                        row=row, column=1, sticky="e", pady=(10, 0))
+        row += 1
+        ttk.Label(panel, text="Metres per axis; guards against runaway tracking offsets.",
+                  style="Muted.Panel.TLabel").grid(
+                      row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=1)
 
@@ -299,13 +320,33 @@ class SettingsWindow:
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=1)
 
-    def _build_integrations(self, panel: ttk.Frame) -> None:
+    def _build_voice(self, panel: ttk.Frame) -> None:
         row = self._section(panel, 0, "KOKORO TTS")
         row = self._entry_row(panel, row, "Speech endpoint", self.tts_endpoint)
         row = self._entry_row(panel, row, "Model", self.tts_model)
         row = self._entry_row(panel, row, "Voice or blend", self.tts_voice)
 
-        row = self._section(panel, row, "SPOTIFY OAUTH")
+        row = self._section(panel, row, "REMOTE STT")
+        row = self._entry_row(panel, row, "Server URL", self.stt_endpoint)
+        row = self._entry_row(panel, row, "Model", self.stt_model)
+        ttk.Label(panel, text="API key", style="Panel.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        stt_key_row = ttk.Frame(panel, style="Panel.TFrame")
+        stt_key_row.grid(row=row, column=1, sticky="ew", pady=4)
+        ttk.Entry(stt_key_row, textvariable=self.stt_key, show="●").pack(
+            side="left", fill="x", expand=True)
+        ttk.Button(stt_key_row, text="Save", command=self.save_stt_key).pack(
+            side="left", padx=(8, 0))
+        ttk.Button(stt_key_row, text="Remove", command=self.remove_stt_key).pack(
+            side="left", padx=(8, 0))
+        row += 1
+        ttk.Label(panel, textvariable=self.stt_status, style="Muted.Panel.TLabel").grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        panel.columnconfigure(0, weight=1)
+        panel.columnconfigure(1, weight=2)
+
+    def _build_integrations(self, panel: ttk.Frame) -> None:
+        row = self._section(panel, 0, "SPOTIFY OAUTH")
         row = self._entry_row(panel, row, "Client ID", self.spotify_client_id)
         ttk.Label(panel, textvariable=self.spotify_status, style="Muted.Panel.TLabel").grid(
             row=row, column=0, sticky="w")
@@ -613,9 +654,14 @@ class SettingsWindow:
 
     def _persist(self) -> bool:
         tts_endpoint = self.tts_endpoint.get().strip()
+        stt_endpoint = self.stt_endpoint.get().strip()
         llm_endpoint = self.llm_endpoint.get().strip()
         if tts_endpoint and not _valid_http_url(tts_endpoint):
             messagebox.showerror("Interfayce", "Kokoro needs a valid HTTP or HTTPS endpoint.", parent=self.root)
+            return False
+        if stt_endpoint and not valid_remote_stt_endpoint(stt_endpoint):
+            messagebox.showerror("Interfayce",
+                "Remote STT needs a valid HTTP or HTTPS server URL.", parent=self.root)
             return False
         if llm_endpoint and not valid_llm_endpoint(llm_endpoint):
             messagebox.showerror("Interfayce",
@@ -632,9 +678,12 @@ class SettingsWindow:
             tts_voice=self.tts_voice.get(),
             tts_output="" if selected_output == "System default" else selected_output,
             stt_microphone="" if selected_input == "System default" else selected_input,
+            stt_endpoint=stt_endpoint,
+            stt_model=self.stt_model.get(),
             comms_silence_timeout_seconds=self.comms_silence_timeout.get(),
             haptic_strength=self.haptic.get() / 100.0,
             broadcast_gain_db=round(self.broadcast_gain.get()),
+            playspace_travel_limit_meters=self.playspace_travel_limit.get(),
             spotify_client_id=self.spotify_client_id.get(),
             llm_enabled=self.llm_enabled.get(),
             llm_endpoint=llm_endpoint,
@@ -677,6 +726,22 @@ class SettingsWindow:
         self._refresh_integration_status()
         self.save_status.set("LLM key protected and saved")
 
+    def save_stt_key(self) -> None:
+        try:
+            set_remote_stt_api_key(self.stt_key.get())
+        except ValueError as error:
+            messagebox.showerror("Interfayce", str(error), parent=self.root)
+            return
+        self.stt_key.set("")
+        self._refresh_integration_status()
+        self.save_status.set("Remote STT key protected and saved")
+
+    def remove_stt_key(self) -> None:
+        delete_remote_stt_api_key()
+        self.stt_key.set("")
+        self._refresh_integration_status()
+        self.save_status.set("Remote STT key removed")
+
     def remove_llm_key(self) -> None:
         delete_api_key()
         self.llm_key.set("")
@@ -713,6 +778,15 @@ class SettingsWindow:
         except SpotifyOAuthError:
             spotify_stored = False
         self.spotify_status.set("Protected session stored" if spotify_stored else "Not connected")
+        stt_key_stored = load_remote_stt_api_key() is not None
+        if not self.stt_endpoint.get().strip():
+            stt_state = "Local Parakeet active"
+        elif stt_key_stored:
+            stt_state = "Remote configured; local Parakeet fallback enabled"
+        else:
+            stt_state = "Remote URL set, but API key is missing"
+        self.stt_status.set(
+            f"{stt_state} • API key {'stored securely' if stt_key_stored else 'not stored'}")
         key_stored = load_api_key() is not None
         if not self.llm_enabled.get():
             state = "Disabled"

@@ -830,6 +830,7 @@ uint64_t DesktopSurfaceRegistry::SpawnKeyboard() {
 
 std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
         const vr::VROverlayIntersectionParams_t& ray) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<DesktopSurfaceHit> nearest;
     for (const auto& surface : surfaces_) {
         if (!surface.visible || surface.keyboard) continue;
@@ -862,6 +863,7 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
 std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::SurfaceAimHitTest(
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<DesktopSurfaceHit> nearest;
     const auto dot = [](const vr::HmdVector3_t& left, const vr::HmdVector3_t& right) {
         return left.v[0] * right.v[0] + left.v[1] * right.v[1] + left.v[2] * right.v[2];
@@ -910,6 +912,7 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::SurfaceAimHitTest(
 std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<KeyboardSurfaceHit> nearest;
     for (const auto& surface : surfaces_) {
         if (!surface.visible || !surface.keyboard) continue;
@@ -960,6 +963,7 @@ std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
 
 std::optional<uint64_t> DesktopSurfaceRegistry::FrameHitTest(
         const vr::VROverlayIntersectionParams_t& ray) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<uint64_t> nearestId;
     float nearestDistance = (std::numeric_limits<float>::max)();
     for (const auto& surface : surfaces_) {
@@ -975,6 +979,15 @@ std::optional<uint64_t> DesktopSurfaceRegistry::FrameHitTest(
         }
     }
     return nearestId;
+}
+
+std::optional<DesktopSource> DesktopSurfaceRegistry::SourceForHit(
+        const DesktopSurfaceHit& hit) const {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [&hit](const auto& surface) { return surface.id == hit.id; });
+    if (found == surfaces_.end() || found->capture || !hit.sourceIndex
+        || *hit.sourceIndex >= found->sources.size()) return std::nullopt;
+    return found->sources[*hit.sourceIndex];
 }
 
 bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
@@ -1229,7 +1242,31 @@ void DesktopSurfaceRegistry::SetHoveredFrame(std::optional<uint64_t> id) {
     }
 }
 
+void DesktopSurfaceRegistry::SetDeckVisible(bool visible) {
+    if (deckVisible_ == visible) return;
+    deckVisible_ = visible;
+    for (auto& grab : activeGrabs_) grab.reset();
+    activeScale_.reset();
+
+    for (auto& surface : surfaces_) {
+        if (!visible) {
+            vr::VROverlay()->HideOverlay(surface.overlay);
+            for (const auto frame : surface.frameOverlays) vr::VROverlay()->HideOverlay(frame);
+            for (const auto glow : surface.glowOverlays) vr::VROverlay()->HideOverlay(glow);
+            continue;
+        }
+        surface.visible = vr::VROverlay()->ShowOverlay(surface.overlay)
+            == vr::VROverlayError_None;
+        if (!surface.visible) continue;
+        for (const auto frame : surface.frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+        for (const auto glow : surface.glowOverlays) vr::VROverlay()->ShowOverlay(glow);
+    }
+}
+
 void DesktopSurfaceRegistry::Update() {
+    // Keep Windows capture sessions alive for instant restoration, but do not
+    // copy frames or update OpenVR textures while the Desk deck is parked.
+    if (!deckVisible_) return;
     for (auto& surface : surfaces_) {
         if (surface.keyboard && surface.pressedKey
             && std::chrono::steady_clock::now() >= surface.keyFlashUntil) {

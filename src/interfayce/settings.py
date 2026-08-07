@@ -15,6 +15,7 @@ import threading
 
 DEFAULT_COMMS_SHORTCUTS: tuple[tuple[str, str], ...] = (("", ""),) * 4
 DEFAULT_DESKTOP_FAVORITES: tuple[tuple[str, str], ...] = (("", ""),) * 3
+MAX_DESKTOP_HISTORY = 8
 
 
 @dataclass(frozen=True)
@@ -27,9 +28,12 @@ class AppSettings:
     tts_voice: str = ""
     tts_output: str = ""
     stt_microphone: str = ""
+    stt_endpoint: str = ""
+    stt_model: str = "whisper-turbo"
     comms_silence_timeout_seconds: float = 3.0
     haptic_strength: float = 0.22
     broadcast_gain_db: float = 12.0
+    playspace_travel_limit_meters: float = 10.0
     spotify_client_id: str = ""
     llm_enabled: bool = False
     llm_endpoint: str = ""
@@ -47,7 +51,7 @@ class AppSettings:
     wrist_roll: float = 0.0
 
 
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
 
 
 def settings_path() -> Path:
@@ -55,6 +59,57 @@ def settings_path() -> Path:
         return Path(configured).expanduser()
     local = Path(os.environ.get("LOCALAPPDATA", Path.home()))
     return local / "Interfayce" / "settings.json"
+
+
+def desktop_history_path() -> Path:
+    if configured := os.environ.get("INTERFAYCE_DESKTOP_HISTORY_PATH"):
+        return Path(configured).expanduser()
+    return settings_path().with_name("desktop-history.json")
+
+
+def _clean_desktop_target(label: object, executable: object) -> tuple[str, str]:
+    clean_label = " ".join(str(label).split())[:14]
+    clean_executable = str(executable).strip()[:1024]
+    path = Path(clean_executable) if clean_executable else None
+    is_executable = (path is not None and path.is_absolute()
+                     and path.suffix.casefold() == ".exe")
+    is_app_id = bool(re.fullmatch(r"aumid:[A-Za-z0-9._-]+![A-Za-z0-9._-]+",
+                                  clean_executable))
+    if not clean_label or (not is_executable and not is_app_id):
+        return "", ""
+    return clean_label, clean_executable
+
+
+def _desktop_target_identity(executable: str) -> str:
+    """Match launch targets and captured paths that represent the same app."""
+
+    cleaned = executable.strip()
+    if not cleaned:
+        return ""
+    folded = cleaned.casefold()
+    if folded.startswith("aumid:"):
+        package_family, separator, _application_id = folded[6:].partition("!")
+        return f"package:{package_family}" if separator and package_family else ""
+
+    # Captured Store applications expose the executable inside a versioned
+    # WindowsApps package directory, while configured favorites use an AUMID.
+    # Package full names are name_version_architecture_resource_publisher;
+    # package family names are name_publisher.
+    parts = Path(cleaned).parts
+    for index, part in enumerate(parts[:-1]):
+        if part.casefold() != "windowsapps" or index + 1 >= len(parts):
+            continue
+        package_parts = parts[index + 1].split("_")
+        if len(package_parts) >= 5 and package_parts[0] and package_parts[-1]:
+            return f"package:{package_parts[0].casefold()}_{package_parts[-1].casefold()}"
+
+    normalized = os.path.normcase(os.path.normpath(cleaned))
+    path = Path(normalized)
+    # Electron/Squirrel installs such as Discord move between app-version
+    # directories. Treat those versions as one application history entry.
+    if re.fullmatch(r"app-[0-9.]+", path.parent.name, flags=re.IGNORECASE):
+        normalized = os.path.normcase(os.path.normpath(str(path.parent.parent / path.name)))
+    return f"path:{normalized.casefold()}"
 
 
 def _clamp(settings: AppSettings) -> AppSettings:
@@ -74,15 +129,7 @@ def _clamp(settings: AppSettings) -> AppSettings:
             label, executable = item
         except (TypeError, ValueError):
             continue
-        clean_label = " ".join(str(label).split())[:14]
-        clean_executable = str(executable).strip()[:1024]
-        path = Path(clean_executable) if clean_executable else None
-        is_executable = (path is not None and path.is_absolute()
-                         and path.suffix.casefold() == ".exe")
-        is_app_id = bool(re.fullmatch(r"aumid:[A-Za-z0-9._-]+![A-Za-z0-9._-]+",
-                                      clean_executable))
-        if not is_executable and not is_app_id:
-            clean_label, clean_executable = "", ""
+        clean_label, clean_executable = _clean_desktop_target(label, executable)
         favorites.append((clean_label, clean_executable))
     favorites.extend((("", ""),) * (3 - len(favorites)))
     return AppSettings(
@@ -94,10 +141,14 @@ def _clamp(settings: AppSettings) -> AppSettings:
         tts_voice=str(settings.tts_voice).strip(),
         tts_output=str(settings.tts_output).strip(),
         stt_microphone=str(settings.stt_microphone).strip(),
+        stt_endpoint=str(settings.stt_endpoint).strip().rstrip("/"),
+        stt_model=str(settings.stt_model).strip() or "whisper-turbo",
         comms_silence_timeout_seconds=max(
             1.0, min(30.0, float(settings.comms_silence_timeout_seconds))),
         haptic_strength=max(0.0, min(1.0, float(settings.haptic_strength))),
         broadcast_gain_db=max(0.0, min(24.0, float(settings.broadcast_gain_db))),
+        playspace_travel_limit_meters=max(
+            1.0, min(50.0, float(settings.playspace_travel_limit_meters))),
         spotify_client_id=str(settings.spotify_client_id).strip(),
         llm_enabled=bool(settings.llm_enabled),
         llm_endpoint=str(settings.llm_endpoint).strip().rstrip("/"),
@@ -130,9 +181,13 @@ def load_settings() -> AppSettings:
                 tts_voice=data.get("tts_voice", ""),
                 tts_output=data.get("tts_output", ""),
                 stt_microphone=data.get("stt_microphone", ""),
+                stt_endpoint=data.get("stt_endpoint", ""),
+                stt_model=data.get("stt_model", "whisper-turbo"),
                 comms_silence_timeout_seconds=data.get("comms_silence_timeout_seconds", 3.0),
                 haptic_strength=data.get("haptic_strength", 0.22),
                 broadcast_gain_db=data.get("broadcast_gain_db", 12.0),
+                playspace_travel_limit_meters=data.get(
+                    "playspace_travel_limit_meters", 10.0),
                 spotify_client_id=data.get("spotify_client_id", ""),
                 llm_enabled=data.get("llm_enabled", False),
                 llm_endpoint=data.get("llm_endpoint", ""),
@@ -164,6 +219,48 @@ def save_settings(settings: AppSettings) -> AppSettings:
         temporary.write_text(json.dumps(asdict(cleaned), indent=2) + "\n", encoding="utf-8")
         temporary.replace(path)
     return cleaned
+
+
+def load_desktop_history() -> tuple[tuple[str, str], ...]:
+    with _LOCK:
+        try:
+            raw = json.loads(desktop_history_path().read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            return ()
+    history: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in raw if isinstance(raw, list) else ():
+        try:
+            label, executable = item
+        except (TypeError, ValueError):
+            continue
+        cleaned = _clean_desktop_target(label, executable)
+        identity = cleaned[1].casefold()
+        if not identity or identity in seen:
+            continue
+        history.append(cleaned)
+        seen.add(identity)
+        if len(history) >= MAX_DESKTOP_HISTORY:
+            break
+    return tuple(history)
+
+
+def record_desktop_recent(label: str, executable: str) -> tuple[tuple[str, str], ...]:
+    cleaned = _clean_desktop_target(label, executable)
+    if not cleaned[0] or not cleaned[1]:
+        raise ValueError("Desktop recent target is invalid.")
+    identity = _desktop_target_identity(cleaned[1])
+    with _LOCK:
+        history = [item for item in load_desktop_history()
+                   if _desktop_target_identity(item[1]) != identity]
+        history.insert(0, cleaned)
+        history = history[:MAX_DESKTOP_HISTORY]
+        path = desktop_history_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    return tuple(history)
 
 
 def adjust_tts_volume(delta: float) -> AppSettings:
@@ -228,7 +325,10 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               wrist_offset_z: float | None = None,
                               wrist_pitch: float | None = None,
                               wrist_yaw: float | None = None,
-                              wrist_roll: float | None = None) -> AppSettings:
+                              wrist_roll: float | None = None,
+                              stt_endpoint: str | None = None,
+                              stt_model: str | None = None,
+                              playspace_travel_limit_meters: float | None = None) -> AppSettings:
     current = load_settings()
     return save_settings(replace(
         current,
@@ -240,9 +340,13 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         tts_voice=tts_voice,
         tts_output=tts_output,
         stt_microphone=stt_microphone,
+        stt_endpoint=current.stt_endpoint if stt_endpoint is None else stt_endpoint,
+        stt_model=current.stt_model if stt_model is None else stt_model,
         comms_silence_timeout_seconds=comms_silence_timeout_seconds,
         haptic_strength=haptic_strength,
         broadcast_gain_db=broadcast_gain_db,
+        playspace_travel_limit_meters=(current.playspace_travel_limit_meters
+            if playspace_travel_limit_meters is None else playspace_travel_limit_meters),
         spotify_client_id=spotify_client_id,
         llm_enabled=llm_enabled,
         llm_endpoint=llm_endpoint,
@@ -266,11 +370,30 @@ def comms_shortcut_labels(settings: AppSettings | None = None) -> str:
     return "\t".join(label if label and message else "" for label, message in current.comms_shortcuts)
 
 
-def desktop_favorites_wire_text(settings: AppSettings | None = None) -> str:
+def desktop_favorites_wire_text(
+        settings: AppSettings | None = None,
+        history: tuple[tuple[str, str], ...] | None = None) -> str:
     current = settings or load_settings()
+    effective = list(current.desktop_favorites)
+    configured = {_desktop_target_identity(executable) for label, executable in effective
+                  if label and executable}
+    configured.discard("")
+    recent = load_desktop_history() if history is None else history
+    recent_index = 0
+    for slot, (label, executable) in enumerate(effective):
+        if label and executable:
+            continue
+        while recent_index < len(recent):
+            recent_label, recent_executable = _clean_desktop_target(*recent[recent_index])
+            recent_index += 1
+            identity = _desktop_target_identity(recent_executable)
+            if identity and identity not in configured:
+                effective[slot] = (recent_label, recent_executable)
+                configured.add(identity)
+                break
     return "\n".join(
         f"{label}\t{executable}" if label and executable else "\t"
-        for label, executable in current.desktop_favorites
+        for label, executable in effective
     )
 
 
@@ -281,4 +404,5 @@ def settings_wire_text(settings: AppSettings | None = None) -> str:
             f"{current.broadcast_gain_db:.1f}\t{current.wrist_hand}\t"
             f"{current.wrist_offset_x:.3f}\t{current.wrist_offset_y:.3f}\t"
             f"{current.wrist_offset_z:.3f}\t{current.wrist_pitch:.1f}\t"
-            f"{current.wrist_yaw:.1f}\t{current.wrist_roll:.1f}")
+            f"{current.wrist_yaw:.1f}\t{current.wrist_roll:.1f}\t"
+            f"{current.playspace_travel_limit_meters:.1f}")

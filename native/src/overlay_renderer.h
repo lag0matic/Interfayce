@@ -33,6 +33,8 @@ public:
     void SetMusicPlaying(bool playing);
     void SetMusicBroadcastState(bool active, const std::wstring& status);
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
+    void SetAssistantStatus(const std::wstring& status, const std::wstring& transcript,
+                            const std::wstring& response, bool active);
     void SetCommsShortcuts(const std::array<std::wstring, 4>& labels);
     void SetTtsSettings(int volumePercent, bool muted);
     void SetBroadcastGainDb(int gainDb);
@@ -95,6 +97,10 @@ private:
     std::wstring commsStatus_{L"IDLE"};
     std::wstring commsTranscript_;
     bool commsActive_{};
+    std::wstring assistantStatus_{L"READY"};
+    std::wstring assistantTranscript_;
+    std::wstring assistantResponse_;
+    bool assistantActive_{};
     std::array<std::wstring, 4> commsShortcutLabels_{};
     int ttsVolumePercent_{85};
     bool ttsMuted_{};

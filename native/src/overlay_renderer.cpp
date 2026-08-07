@@ -22,6 +22,7 @@ enum class HoloGlyph : UINT32 {
     CommsMic, ClearChat, PlayspaceRestore, RigReset, RigMount, DesktopSettings,
     VolumeDown, VolumeUp, Speaker, Mute, BroadcastGainDown, BroadcastGainUp,
     Shutdown, Copy, Paste,
+    Assistant,
 };
 
 constexpr UINT32 kHoloAtlasColumns = 8;
@@ -443,15 +444,16 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     d2dContext_->FillRoundedRectangle(
         D2D1::RoundedRect(D2D1::RectF(16.0F, 16.0F, 752.0F, 82.0F), 10.0F, 10.0F), stripBrush_.Get());
 
-    const std::array<D2D1_RECT_F, 5> tabs{
-        D2D1::RectF(24, 22, 126, 76), D2D1::RectF(132, 22, 250, 76),
-        D2D1::RectF(256, 22, 356, 76), D2D1::RectF(362, 22, 482, 76),
-        D2D1::RectF(488, 22, 610, 76)};
-    const std::array<const wchar_t*, 5> tabLabels{L"MUSIC", L"COMMS", L"DESK", L"SPACE", L"RIG"};
-    const std::array<HoloGlyph, 5> tabGlyphs{
-        HoloGlyph::Music, HoloGlyph::Comms, HoloGlyph::Desktop,
-        HoloGlyph::Playspace, HoloGlyph::Rig};
-    const std::array<int, 5> tabDecks{0, 5, 1, 2, 3};
+    const std::array<D2D1_RECT_F, 6> tabs{
+        D2D1::RectF(24, 22, 112, 76), D2D1::RectF(118, 22, 206, 76),
+        D2D1::RectF(212, 22, 300, 76), D2D1::RectF(306, 22, 394, 76),
+        D2D1::RectF(400, 22, 488, 76), D2D1::RectF(494, 22, 582, 76)};
+    const std::array<const wchar_t*, 6> tabLabels{
+        L"MUSIC", L"COMMS", L"ASK", L"DESK", L"SPACE", L"RIG"};
+    const std::array<HoloGlyph, 6> tabGlyphs{
+        HoloGlyph::Music, HoloGlyph::Comms, HoloGlyph::Assistant,
+        HoloGlyph::Desktop, HoloGlyph::Playspace, HoloGlyph::Rig};
+    const std::array<int, 6> tabDecks{0, 5, 6, 1, 2, 3};
     for (size_t index = 0; index < tabs.size(); ++index) {
         const bool selected = deck == tabDecks[index];
         if (selected) {
@@ -463,10 +465,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         }
         if (holoGlyphAtlas_) {
             drawHoloAsset(tabGlyphs[index],
-                D2D1::Point2F(tabs[index].left + 20, (tabs[index].top + tabs[index].bottom) * 0.5F),
-                18, 18, selected);
+                D2D1::Point2F(tabs[index].left + 15, (tabs[index].top + tabs[index].bottom) * 0.5F),
+                15, 15, selected);
             drawText(tabLabels[index], labelFormat_.Get(),
-                D2D1::RectF(tabs[index].left + 40, tabs[index].top + 15,
+                D2D1::RectF(tabs[index].left + 31, tabs[index].top + 15,
                     tabs[index].right - 5, tabs[index].bottom - 6),
                 selected ? textBrush_.Get() : mutedTextBrush_.Get());
         } else {
@@ -482,13 +484,9 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     if (lowestBatteryPercent_ >= 0) {
         auto* batteryBrush = lowestBatteryPercent_ <= 10 ? criticalBrush_.Get()
             : lowestBatteryPercent_ <= 20 ? warningBrush_.Get() : structureBrush_.Get();
-        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(622, 49), 4, 4), batteryBrush);
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(600, 49), 4, 4), batteryBrush);
         drawText(std::to_wstring(lowestBatteryPercent_) + L"%", labelFormat_.Get(),
-            D2D1::RectF(631, 36, 674, 66), batteryBrush);
-    }
-    if (!clockText_.empty()) {
-        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(676, 36, 712, 66),
-            textBrush_.Get());
+            D2D1::RectF(609, 36, 664, 66), batteryBrush);
     }
     const auto gearCenter = D2D1::Point2F(730, 49);
     if (holoGlyphAtlas_) {
@@ -585,7 +583,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             structureDimBrush_.Get(), 1.0F);
         drawText(musicVoiceStatus_, labelFormat_.Get(), D2D1::RectF(48, 350, 430, 374),
             musicVoiceActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
-        drawText(musicBroadcastStatus_, labelFormat_.Get(), D2D1::RectF(450, 350, 720, 374),
+        drawText(musicBroadcastStatus_, labelFormat_.Get(), D2D1::RectF(450, 350, 606, 374),
             musicBroadcastActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
     } else if (deck == 1) {
         if (desktop.showSurfaceList) {
@@ -759,7 +757,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         }
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
-        drawText(musicLine, labelFormat_.Get(), D2D1::RectF(48, 350, 720, 374),
+        drawText(musicLine, labelFormat_.Get(), D2D1::RectF(48, 350, 606, 374),
             mutedTextBrush_.Get());
     } else if (deck == 3) {
         if (!slimeAvailable_) {
@@ -1045,8 +1043,33 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
         d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(49, 355), 5, 5), stateBrush);
-        drawText(commsStatus_, labelFormat_.Get(), D2D1::RectF(64, 344, 724, 374),
+        drawText(commsStatus_, labelFormat_.Get(), D2D1::RectF(64, 344, 606, 374),
             commsActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
+    } else if (deck == 6) {
+        drawText(assistantTranscript_.empty() ? L"Tap the core and ask anything"
+                : (L"YOU  /  " + assistantTranscript_), labelFormat_.Get(),
+            D2D1::RectF(42, 108, 726, 142),
+            assistantTranscript_.empty() ? mutedTextBrush_.Get() : structureBrush_.Get());
+        drawText(assistantResponse_.empty()
+                ? L"Weather, calculations, current information, or a second opinion."
+                : assistantResponse_, bodyWrapFormat_.Get(), D2D1::RectF(42, 148, 726, 238),
+            assistantResponse_.empty() ? mutedTextBrush_.Get() : textBrush_.Get());
+
+        const auto micCenter = D2D1::Point2F(220, 286);
+        const auto cancelCenter = D2D1::Point2F(384, 286);
+        const auto clearCenter = D2D1::Point2F(548, 286);
+        if (holoGlyphAtlas_) {
+            drawHoloAsset(HoloGlyph::Assistant, micCenter, 49, 49, assistantActive_);
+            drawHoloAsset(HoloGlyph::Close, cancelCenter, 38, 38, assistantActive_);
+            drawHoloAsset(HoloGlyph::ClearChat, clearCenter, 38, 38);
+        }
+        d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
+            structureDimBrush_.Get(), 1.0F);
+        auto* assistantStateBrush = assistantActive_ ? accentBrush_.Get() : structureBrush_.Get();
+        d2dContext_->FillEllipse(
+            D2D1::Ellipse(D2D1::Point2F(49, 355), 5, 5), assistantStateBrush);
+        drawText(assistantStatus_, labelFormat_.Get(), D2D1::RectF(64, 344, 606, 374),
+            assistantActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
     } else {
         drawText(L"VOICE OUTPUT", labelFormat_.Get(), D2D1::RectF(42, 108, 300, 140),
             accentBrush_.Get());
@@ -1181,6 +1204,20 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 criticalBrush_.Get(), 3.5F);
         }
     }
+    // The clock owns one predictable footer cell on every deck. Keeping it
+    // outside the header prevents battery and Settings from squeezing it.
+    if (!clockText_.empty()) {
+        d2dContext_->DrawLine(D2D1::Point2F(618, 348), D2D1::Point2F(618, 371),
+            structureDimBrush_.Get(), 1.0F);
+        d2dContext_->DrawLine(D2D1::Point2F(628, 343), D2D1::Point2F(726, 343),
+            structureDimBrush_.Get(), 1.0F);
+        labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(626, 344, 724, 374),
+            textBrush_.Get());
+        labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    }
     if (pressFeedbackActive_) {
         d2dContext_->FillEllipse(D2D1::Ellipse(pressFeedbackCenter_, 15, 15), scanFillBrush_.Get());
         d2dContext_->DrawEllipse(D2D1::Ellipse(pressFeedbackCenter_, 21, 21), accentBrush_.Get(), 1.5F);
@@ -1235,6 +1272,15 @@ void OverlayRenderer::SetCommsStatus(const std::wstring& status,
     commsStatus_ = status;
     commsTranscript_ = transcript;
     commsActive_ = active;
+}
+
+void OverlayRenderer::SetAssistantStatus(const std::wstring& status,
+                                         const std::wstring& transcript,
+                                         const std::wstring& response, bool active) {
+    assistantStatus_ = status;
+    assistantTranscript_ = transcript;
+    assistantResponse_ = response;
+    assistantActive_ = active;
 }
 
 void OverlayRenderer::SetCommsShortcuts(const std::array<std::wstring, 4>& labels) {

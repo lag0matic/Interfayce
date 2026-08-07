@@ -13,7 +13,7 @@ It is intentionally personal-use-first. We are building the useful little shipbo
 
 ## Current build
 
-Interfayce 1.0 is the first complete personal release. The native C++20 host provides the fading inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable/reusable interactive desktop surfaces with native application icons and an ambidextrous VR keyboard. Its Holo Glass interface uses compact, asset-backed controls designed to remain readable at a glance in a headset, with restrained active glow and segmented hold confirmation for destructive or reset actions.
+Interfayce 1.2 adds the bounded ASK assistant and live Brave research to the remote-speech and desktop-recent foundation of the first complete personal release. The native C++20 host provides the fading inner-wrist utility panel, safe session-only playspace movement, Spotify transport/status and conversational control, continuous local-or-remote-STT Comms dictation to VRChat OSC, SlimeVR rig status and recovery, and independently movable/reusable interactive desktop surfaces with native application icons and an ambidextrous VR keyboard. Its Holo Glass interface uses compact, asset-backed controls designed to remain readable at a glance in a headset, with restrained active glow and segmented hold confirmation for destructive or reset actions.
 
 The Python support code can build and send VRChat chatbox OSC packets with no third-party dependency. `interfayce.song_announcer` formats and deduplicates the intended Spotify message:
 
@@ -33,7 +33,19 @@ python -m interfayce spotify-oauth-status
 
 The client secret is not used. OAuth tokens are protected with Windows DPAPI under the current Windows account.
 
-The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, TTS behavior, haptics, broadcast gain, desktop favorites, Kokoro, Spotify OAuth, and the optional constrained LLM fallback. Desktop favorites accept constrained executable paths or registered Store-app identities: a wrist press captures an existing window or launches the app and binds its first eligible window, with the ordinary source picker retained on failure. Its Diagnostics tab refreshes bounded local checks whenever Settings opens, shows the exact build identity, and checks GitHub releases only when requested. Tokens and API keys are protected with Windows DPAPI; a fresh installation contains no personal endpoints and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
+The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, local/remote STT, TTS behavior, haptics, broadcast gain, desktop favorites, Kokoro, Spotify OAuth, and the optional constrained LLM fallback. Desktop favorites accept constrained executable paths or registered Store-app identities: a wrist press captures an existing window or launches the app and binds its first eligible window, with the ordinary source picker retained on failure. Its Diagnostics tab refreshes bounded local checks whenever Settings opens, shows the exact build identity, and checks GitHub releases only when requested. Tokens and API keys are protected with Windows DPAPI; a fresh installation contains no personal endpoints and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
+
+Empty Desk favorite slots are automatically filled by the most recently captured unpinned applications. The small local history is bounded, deduplicated, and updated only after a window capture succeeds; explicit favorites always retain their configured slots and take priority over history.
+
+## Remote speech recognition
+
+[`remote-stt`](remote-stt/README.md) is a copyable Windows server kit for moving
+speech recognition off the VR PC. Its authenticated OpenAI-style endpoint can
+run Faster-Whisper Turbo on an NVIDIA GPU or Moonshine Voice on CPU and includes
+same-audio benchmark tooling. Interfayce stores the LAN API key with Windows
+DPAPI and automatically falls back to its bundled local Parakeet model if the
+server is unavailable. Leaving the remote URL blank preserves the existing
+fully local behavior.
 
 ## Windows installer
 
@@ -43,7 +55,7 @@ The reproducible per-user installer bundles the native overlay/audio engine, the
 powershell -ExecutionPolicy Bypass -File packaging\build-installer.ps1
 ```
 
-The result is `packaging\out\installer\Interfayce-Setup-1.0.0.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
+The result is `packaging\out\installer\Interfayce-Setup-1.2.0.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
 
 ## Offline native checks
 
@@ -109,6 +121,7 @@ python -m interfayce steamvr-baseline
 
 ## Documents
 
+- [System reset and recovery guide](RECOVERY.md)
 - [Project north star](PROJECT-NORTH-STAR.md)
 - [Technical notes](TECHNICAL-NOTES.md)
 - [Build status and handoff](BUILD-STATUS.md)

@@ -92,6 +92,7 @@ public:
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters = 0.008F) const;
     std::optional<uint64_t> FrameHitTest(const vr::VROverlayIntersectionParams_t& ray) const;
+    std::optional<DesktopSource> SourceForHit(const DesktopSurfaceHit& hit) const;
     bool ActivateHit(const DesktopSurfaceHit& hit);
     bool AssignSource(uint64_t id, const DesktopSource& source);
     bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
@@ -104,6 +105,7 @@ public:
     void SetHoveredHit(const std::optional<DesktopSurfaceHit>& hit);
     void SetHoveredKeyboard(const std::optional<KeyboardSurfaceHit>& hit);
     void SetHoveredFrame(std::optional<uint64_t> id);
+    void SetDeckVisible(bool visible);
     void Update();
     bool BringToMe(uint64_t id);
     bool BringAllToMe();
@@ -179,6 +181,7 @@ private:
     std::optional<ScaleState> activeScale_;
     std::optional<uint64_t> focusedSurfaceId_;
     std::vector<uint64_t> focusHistory_;
+    bool deckVisible_{true};
 };
 
 }  // namespace interfayce

@@ -11,16 +11,20 @@ from pathlib import Path
 import threading
 
 from .comms import CommsDictation
+from .assistant import AssistantSnapshot, AssistantState
+from .assistant_harness import AssistantHarness, tts_text
 from .battery_alerts import BatteryAlertMonitor
 from .kokoro import speak_in_background
 from .local_service import get_or_create_token, request_is_authorized
 from .llm_client import LlmError, OpenAiCompatibleClient
-from .music_llm import MusicLlmValidationError, execute_music_llm_intent, interpret_music_request
+from .music_llm import (MusicConversationMemory, MusicLlmValidationError,
+                        execute_music_llm_intent, interpret_music_request)
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
+from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
-                       desktop_favorites_wire_text, load_settings, settings_wire_text,
-                       toggle_tts_mute)
+                       desktop_favorites_wire_text, load_settings, record_desktop_recent,
+                       settings_wire_text, toggle_tts_mute)
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
 from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
@@ -57,8 +61,18 @@ def _safe_field(value: str) -> str:
 
 class VoiceRuntime:
     def __init__(self) -> None:
-        self.transcriber = ParakeetTranscriber()
+        local_transcriber = ParakeetTranscriber()
+        settings = load_settings()
+        self.transcriber = (RemoteSttTranscriber(
+            settings.stt_endpoint, settings.stt_model, fallback=local_transcriber
+        ) if settings.stt_endpoint else local_transcriber)
         self.command_lock = threading.Lock()
+        self._assistant_lock = threading.Lock()
+        self._assistant_status = "READY"
+        self._assistant_transcript = ""
+        self._assistant_response = ""
+        self.assistant = AssistantHarness(on_state=self._on_assistant_state)
+        self.music_conversation = MusicConversationMemory()
         self.comms = CommsDictation(self.transcriber, self.command_lock)
         self.battery_alerts = BatteryAlertMonitor()
         self._song_media = WindowsSpotifyMedia()
@@ -69,9 +83,86 @@ class VoiceRuntime:
             self._announce_song,
             osc.clear_chatbox,
         )
-        LOGGER.info("Parakeet model directory: %s; feature_dim=%s; threads=%s",
-            self.transcriber.files.directory, self.transcriber.feature_dim,
-            self.transcriber.threads)
+        if isinstance(self.transcriber, RemoteSttTranscriber):
+            LOGGER.info("STT configured: %s; local Parakeet fallback=%s",
+                        self.transcriber.description, local_transcriber.files.directory)
+        else:
+            LOGGER.info("Parakeet model directory: %s; feature_dim=%s; threads=%s",
+                local_transcriber.files.directory, local_transcriber.feature_dim,
+                local_transcriber.threads)
+
+    def _set_assistant_status(self, status: str, *, transcript: str | None = None,
+                              response: str | None = None) -> None:
+        with self._assistant_lock:
+            self._assistant_status = status
+            if transcript is not None:
+                self._assistant_transcript = transcript
+            if response is not None:
+                self._assistant_response = response
+
+    def _on_assistant_state(self, snapshot: AssistantSnapshot) -> None:
+        if snapshot.state is AssistantState.USING_TOOL:
+            status = ("SEARCHING" if snapshot.tool_name == "search_web"
+                      else "READING" if snapshot.tool_name == "open_search_result"
+                      else "CHECKING")
+        else:
+            status = {
+                AssistantState.THINKING: "THINKING",
+                AssistantState.RESPONDING: "RESPONDING",
+                AssistantState.CANCELLED: "CANCELLED",
+                AssistantState.ERROR: "ERROR",
+            }.get(snapshot.state, "READY")
+        self._set_assistant_status(status,
+                                   response=snapshot.response or None)
+
+    def assistant_status(self) -> str:
+        with self._assistant_lock:
+            return "\t".join((
+                _safe_field(self._assistant_status),
+                _safe_field(self._assistant_transcript),
+                _safe_field(self._assistant_response),
+            ))
+
+    def assistant_command(self) -> str:
+        if not self.command_lock.acquire(blocking=False):
+            self._set_assistant_status("BUSY", response="Voice capture is already active.")
+            return self.assistant_status()
+        try:
+            self._set_assistant_status("LISTENING", transcript="", response="")
+            try:
+                LOGGER.info("Assistant microphone capture started")
+                audio = capture_microphone_once()
+                transcript = self.transcriber.transcribe(audio)
+            except Exception as error:
+                LOGGER.exception("Assistant capture or transcription failed")
+                self._set_assistant_status("ERROR", response=_safe_field(str(error)))
+                return self.assistant_status()
+            transcript = _safe_field(transcript)
+            self._set_assistant_status("THINKING", transcript=transcript, response="")
+            result = self.assistant.ask(transcript)
+            spoken = tts_text(result.answer)
+            if spoken:
+                speak_in_background(spoken)
+            self._set_assistant_status(
+                "ANSWER" if result.succeeded else "ERROR",
+                response=result.answer,
+            )
+            LOGGER.info("Assistant command completed: succeeded=%s transcript_chars=%s "
+                        "response_chars=%s tools=%s", result.succeeded, len(transcript),
+                        len(result.answer), ",".join(result.tools_used) or "none")
+            return self.assistant_status()
+        finally:
+            self.command_lock.release()
+
+    def clear_assistant(self) -> str:
+        self.assistant.assistant.clear()
+        self._set_assistant_status("READY", transcript="", response="")
+        return self.assistant_status()
+
+    def cancel_assistant(self) -> str:
+        self._set_assistant_status("STOPPING")
+        self.assistant.assistant.cancel()
+        return self.assistant_status()
 
     @staticmethod
     def _announce_song(message: str) -> None:
@@ -91,9 +182,9 @@ class VoiceRuntime:
 
     def warm(self) -> None:
         try:
-            LOGGER.info("Warming Parakeet model")
+            LOGGER.info("Warming configured STT")
             self.transcriber.warm()
-            LOGGER.info("Parakeet model ready")
+            LOGGER.info("Configured STT ready")
         except Exception:
             LOGGER.exception("Parakeet warm-up failed")
 
@@ -118,9 +209,13 @@ class VoiceRuntime:
             intent = parse_music_intent(transcript)
             LOGGER.info("Music transcript classified: chars=%s intent=%s",
                         len(transcript), intent.kind.value)
+            action = f"deterministic:{intent.kind.value}"
             if intent.kind is MusicIntentKind.UNKNOWN and OpenAiCompatibleClient().configured:
                 try:
-                    llm_intent = interpret_music_request(transcript)
+                    llm_intent = interpret_music_request(
+                        transcript, context=self.music_conversation.recent())
+                    detail = llm_intent.play_type or llm_intent.command or ""
+                    action = f"llm:{llm_intent.tool}:{detail}"
                     LOGGER.info("Validated LLM music tool=%s play_type=%s query_chars=%s "
                                 "artist_chars=%s command=%s", llm_intent.tool,
                                 llm_intent.play_type, len(llm_intent.query or ""),
@@ -136,6 +231,9 @@ class VoiceRuntime:
                 result = asyncio.run(execute_music_intent(intent))
             LOGGER.info("Music command completed: succeeded=%s response_chars=%s",
                         result.succeeded, len(result.message))
+            self.music_conversation.remember(
+                transcript=transcript, action=action,
+                succeeded=result.succeeded, response=result.message)
             # In-headset failures are as important as successes; the user should
             # not need to stop and read the wrist to learn that nothing happened.
             speak_in_background(result.message)
@@ -242,6 +340,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, settings_wire_text())
             elif self.path == "/comms/status":
                 self._reply(200, runtime.comms_status())
+            elif self.path == "/assistant/status":
+                self._reply(200, runtime.assistant_status())
             elif self.path == "/comms/shortcuts":
                 self._reply(200, comms_shortcut_labels())
             elif self.path == "/desktop/favorites":
@@ -254,6 +354,12 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 return
             if self.path == "/listen/music":
                 self._reply(200, runtime.music_command())
+            elif self.path == "/listen/assistant":
+                self._reply(200, runtime.assistant_command())
+            elif self.path == "/assistant/clear":
+                self._reply(200, runtime.clear_assistant())
+            elif self.path == "/assistant/cancel":
+                self._reply(200, runtime.cancel_assistant())
             elif self.path.startswith("/music/control/"):
                 operation = self.path.rsplit("/", 1)[-1]
                 self._reply(200, "ok" if runtime.music_control(operation) else "unavailable")
@@ -268,6 +374,21 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                     self._reply(400, "ERROR\tInvalid shortcut index.")
                 else:
                     self._reply(200, runtime.send_comms_shortcut(index))
+            elif self.path == "/desktop/recent":
+                try:
+                    length = max(0, min(int(self.headers.get("Content-Length", "0")), 2048))
+                except ValueError:
+                    length = 0
+                label, separator, executable = self.rfile.read(length).decode(
+                    "utf-8", errors="replace").partition("\t")
+                try:
+                    if not separator:
+                        raise ValueError("Desktop recent payload is malformed.")
+                    record_desktop_recent(label, executable)
+                except ValueError:
+                    self._reply(400, "invalid desktop recent")
+                else:
+                    self._reply(200, desktop_favorites_wire_text())
             elif self.path == "/tts/announce":
                 try:
                     length = max(0, min(int(self.headers.get("Content-Length", "0")), 512))
