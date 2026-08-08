@@ -772,6 +772,21 @@ void LaunchSlimeReset(const std::filesystem::path& projectRoot, const wchar_t* k
     }
 }
 
+interfayce::RigLegProfile RunSlimeLegProfile(
+        const std::filesystem::path& projectRoot, const wchar_t* action) {
+    std::wstring command = L"\"" + NodeExecutable(projectRoot).wstring() + L"\" \""
+        + (projectRoot / "tools" / "slimevr_leg_profile.cjs").wstring() + L"\" " + action;
+    const auto captured = RunHiddenAndCapture(
+        std::move(command), projectRoot, std::chrono::milliseconds(7000));
+    if (!captured) return interfayce::RigLegProfile::Error;
+    const auto newline = captured->find_first_of("\r\n");
+    const auto line = captured->substr(0, newline);
+    if (line.starts_with("CONFIG\t")) return interfayce::RigLegProfile::Config;
+    if (line.starts_with("PLAY\t")) return interfayce::RigLegProfile::Play;
+    if (line.starts_with("CUSTOM\t")) return interfayce::RigLegProfile::Custom;
+    return interfayce::RigLegProfile::Error;
+}
+
 std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand hand) {
     const auto role = hand == DragHand::Left ? vr::TrackedControllerRole_LeftHand
                                              : vr::TrackedControllerRole_RightHand;
@@ -1490,6 +1505,14 @@ int main(int argc, char** argv) {
     std::wstring rigLine;
     std::array<std::wstring, 8> rigSlots;
     bool mountReady = false;
+    auto rigLegProfile = interfayce::RigLegProfile::Unknown;
+    std::future<interfayce::RigLegProfile> rigLegProfileTask;
+    if (slimeAvailable) {
+        renderer.SetRigLegProfile(
+            interfayce::RigLegProfile::Unknown, interfayce::RigLegProfile::Config);
+        rigLegProfileTask = std::async(std::launch::async,
+            [projectRoot] { return RunSlimeLegProfile(projectRoot, L"config"); });
+    }
     auto nextMusicPoll = std::chrono::steady_clock::now();
     std::future<MusicPlaybackState> musicPoll;
     std::future<std::wstring> musicVoiceCommand;
@@ -1661,6 +1684,8 @@ int main(int argc, char** argv) {
         bool restoreButtonHit = false;
         bool rigFullResetHit = false;
         bool rigMountResetHit = false;
+        bool rigConfigProfileHit = false;
+        bool rigPlayProfileHit = false;
         bool desktopNewSurfaceHit = false;
         bool desktopKeyboardSpawnHit = false;
         bool desktopSurfaceListHit = false;
@@ -1752,6 +1777,8 @@ int main(int argc, char** argv) {
                 shutdownButtonHit = selectedDeck == 4 && circleHit(704, 300, 41);
                 rigFullResetHit = slimeAvailable && selectedDeck == 3 && circleHit(118, 274, 36);
                 rigMountResetHit = slimeAvailable && selectedDeck == 3 && circleHit(650, 274, 36);
+                rigConfigProfileHit = slimeAvailable && selectedDeck == 3 && circleHit(118, 145, 36);
+                rigPlayProfileHit = slimeAvailable && selectedDeck == 3 && circleHit(650, 145, 36);
                 if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
                     desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
                     desktopBringAllHit = !desktopPanel.surfaces.empty() && circleHit(684, 128, 31);
@@ -1852,6 +1879,7 @@ int main(int argc, char** argv) {
         const bool panelActionable = (panelHitFound && panelY <= 82.0F)
             || restoreButtonHit || rigFullResetHit
             || (rigMountResetHit && mountReady)
+            || rigConfigProfileHit || rigPlayProfileHit
             || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
             || desktopFavoriteHit || desktopListBackHit || desktopBringAllHit
             || desktopBringIndex.has_value() || desktopLockIndex.has_value()
@@ -2355,6 +2383,20 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
+        } else if (wristUiClick.bChanged && wristUiClick.bState
+                && (rigConfigProfileHit || rigPlayProfileHit) && !rigLegProfileTask.valid()) {
+            const auto requested = rigConfigProfileHit
+                ? interfayce::RigLegProfile::Config : interfayce::RigLegProfile::Play;
+            const wchar_t* action = rigConfigProfileHit ? L"config" : L"play";
+            renderer.SetRigLegProfile(rigLegProfile, requested);
+            rigLegProfileTask = std::async(std::launch::async,
+                [projectRoot, action] { return RunSlimeLegProfile(projectRoot, action); });
+            std::cout << "SlimeVR leg profile change requested\n";
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
         } else if (wristUiClick.bChanged && wristUiClick.bState && (rigFullResetHit || (rigMountResetHit && mountReady))) {
             rigResetHoldActive = true;
             rigResetHoldCompleted = false;
@@ -2416,6 +2458,22 @@ int main(int argc, char** argv) {
             if (selectedDeck == 0 && renderer.Initialize(system, selectedDeck,
                     musicLine, musicArtPath.wstring(), rigLine, rigSlots,
                     mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
+        if (rigLegProfileTask.valid()
+            && rigLegProfileTask.wait_for(std::chrono::milliseconds(0))
+                == std::future_status::ready) {
+            rigLegProfile = rigLegProfileTask.get();
+            renderer.SetRigLegProfile(rigLegProfile);
+            std::cout << "SlimeVR leg profile result: "
+                      << (rigLegProfile == interfayce::RigLegProfile::Config ? "CONFIG"
+                          : rigLegProfile == interfayce::RigLegProfile::Play ? "PLAY"
+                          : rigLegProfile == interfayce::RigLegProfile::Custom ? "CUSTOM"
+                          : "ERROR") << '\n';
+            if (selectedDeck == 3 && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
@@ -2906,6 +2964,16 @@ int main(int argc, char** argv) {
 
     restoreBaseline(temporaryBaseline, "temporary drag shutdown");
     restoreBaseline(sessionBaseline, "Interfayce shutdown");
+    if (rigLegProfileTask.valid()) {
+        rigLegProfile = rigLegProfileTask.get();
+    }
+    if (slimeAvailable && rigLegProfile == interfayce::RigLegProfile::Play) {
+        std::cout << "Restoring SlimeVR CONFIG leg profile before shutdown\n";
+        const auto restored = RunSlimeLegProfile(projectRoot, L"config");
+        if (restored != interfayce::RigLegProfile::Config) {
+            std::cerr << "Could not verify CONFIG leg profile during shutdown\n";
+        }
+    }
     broadcast.Stop();
     desktopSurfaces.Shutdown();
     LocalHttpRequest("POST", "/shutdown", std::chrono::seconds(2));

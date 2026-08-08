@@ -1,6 +1,6 @@
 # Interfayce — Build Status
 
-Updated: 2026-08-07
+Updated: 2026-08-08
 
 ## Current checkpoint
 
@@ -76,6 +76,7 @@ The independent keyboard:
 - Favorite configuration accepts only absolute `.exe` paths or validated registered-app identities. Spotify's protected Microsoft Store installation works through its Start-app identity without opening `WindowsApps` or accepting arbitrary command arguments.
 - The open-surface count now occupies the Desk bottom status strip, leaving the favorite controls visually unobstructed.
 - The Rig deck is now a filled feminine cybernetic scanner rather than a grid of text boxes. Native battery nodes and percentages remain live above the bundled visual asset, with external leader lines for chest and hip readings.
+- The Rig deck now exposes verified SlimeVR leg profiles: CONFIG uses a 90.1 cm combined upper/lower-leg length for mounting and VRChat calibration, while PLAY scales the same thigh/shin ratio to 100 cm for compensated play. Startup normalizes to CONFIG, clean shutdown restores CONFIG after PLAY, and every change is read back before its active state is shown.
 - The persistent header shows the lowest connected battery percentage. Controller readings refresh natively; SlimeVR readings refresh asynchronously without blocking deck changes.
 - Battery alerts speak through the existing Kokoro queue on low (20%) and critical (10%) threshold crossings. Each crossing is announced once, simultaneous alerts are combined, and a recovered device can arm a future warning again.
 

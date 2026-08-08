@@ -14,6 +14,14 @@
 
 namespace interfayce {
 
+enum class RigLegProfile {
+    Unknown,
+    Config,
+    Play,
+    Custom,
+    Error,
+};
+
 struct DesktopPanelState {
     bool showSurfaceList{};
     std::vector<DesktopSurfaceSummary> surfaces;
@@ -40,6 +48,7 @@ public:
     void SetBroadcastGainDb(int gainDb);
     void SetShutdownHoldProgress(float progress);
     void SetRigHoldProgress(float resetProgress, float mountProgress);
+    void SetRigLegProfile(RigLegProfile active, RigLegProfile pending = RigLegProfile::Unknown);
     void SetClockText(const std::wstring& text);
     void SetLowestBattery(int percent);
     void SetPressFeedback(float x, float y, bool active);
@@ -108,6 +117,8 @@ private:
     float shutdownHoldProgress_{};
     float rigResetHoldProgress_{};
     float rigMountHoldProgress_{};
+    RigLegProfile rigLegProfile_{RigLegProfile::Unknown};
+    RigLegProfile rigLegPending_{RigLegProfile::Unknown};
     std::wstring clockText_;
     int lowestBatteryPercent_{-1};
     D2D1_POINT_2F pressFeedbackCenter_{};
