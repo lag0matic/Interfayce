@@ -950,53 +950,6 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             rigResetHoldProgress_, true);
         drawRigHoldControl(D2D1::Point2F(650, 274), L'M', HoloGlyph::RigMount,
             rigMountHoldProgress_, mountReady);
-
-        const auto drawLegProfile = [&](D2D1_POINT_2F center, wchar_t glyph,
-                                        const wchar_t* length,
-                                        RigLegProfile profile) {
-            const bool active = rigLegProfile_ == profile;
-            const bool pending = rigLegPending_ == profile;
-            drawHoloButton(center, 27, 27, active || pending, true);
-            if (active) {
-                d2dContext_->DrawEllipse(D2D1::Ellipse(center, 31, 31), accentBrush_.Get(), 2.0F);
-            }
-            if (pending) {
-                constexpr int segments = 8;
-                for (int index = 0; index < segments; ++index) {
-                    const float angle = -1.5707963F
-                        + static_cast<float>(index) * 6.2831853F / segments;
-                    const auto point = D2D1::Point2F(center.x + std::cos(angle) * 34.0F,
-                        center.y + std::sin(angle) * 34.0F);
-                    d2dContext_->FillEllipse(D2D1::Ellipse(point, 2.2F, 2.2F),
-                        accentBrush_.Get());
-                }
-            }
-            const wchar_t text[]{glyph, L'\0'};
-            titleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            titleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            drawText(text, titleFormat_.Get(),
-                D2D1::RectF(center.x - 24, center.y - 24, center.x + 24, center.y + 24),
-                active || pending ? accentBrush_.Get() : textBrush_.Get());
-            labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            drawText(length, labelFormat_.Get(),
-                D2D1::RectF(center.x - 48, center.y + 34, center.x + 48, center.y + 58),
-                active ? accentBrush_.Get() : mutedTextBrush_.Get());
-            titleFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            titleFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-        };
-        drawLegProfile(D2D1::Point2F(118, 145), L'C', L"90.1 CM", RigLegProfile::Config);
-        drawLegProfile(D2D1::Point2F(650, 145), L'P', L"100 CM", RigLegProfile::Play);
-
-        if (rigLegProfile_ == RigLegProfile::Custom || rigLegProfile_ == RigLegProfile::Error) {
-            labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            drawText(rigLegProfile_ == RigLegProfile::Custom ? L"CUSTOM LEG PROFILE" : L"PROFILE ERROR",
-                labelFormat_.Get(), D2D1::RectF(274, 344, 494, 372),
-                rigLegProfile_ == RigLegProfile::Error ? warningBrush_.Get() : mutedTextBrush_.Get());
-            labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        }
         }
     } else if (deck == 2) {
         const auto stateBrush = playspaceAdjusted_ ? accentBrush_.Get() : structureBrush_.Get();
@@ -1350,11 +1303,6 @@ void OverlayRenderer::SetShutdownHoldProgress(float progress) {
 void OverlayRenderer::SetRigHoldProgress(float resetProgress, float mountProgress) {
     rigResetHoldProgress_ = (std::max)(0.0F, (std::min)(1.0F, resetProgress));
     rigMountHoldProgress_ = (std::max)(0.0F, (std::min)(1.0F, mountProgress));
-}
-
-void OverlayRenderer::SetRigLegProfile(RigLegProfile active, RigLegProfile pending) {
-    rigLegProfile_ = active;
-    rigLegPending_ = pending;
 }
 
 void OverlayRenderer::SetClockText(const std::wstring& text) {

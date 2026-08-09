@@ -82,8 +82,7 @@ try {
     Copy-Item native\build\bin\assets $stage -Recurse
     Copy-Item (Join-Path $work "dist\InterfayceService") (Join-Path $stage "service") -Recurse
     New-Item -ItemType Directory -Path (Join-Path $stage "tools\vendor\solarxr-protocol") -Force | Out-Null
-    Copy-Item tools\slimevr_probe.cjs,tools\slimevr_reset.cjs,tools\slimevr_leg_profile.cjs `
-        (Join-Path $stage "tools")
+    Copy-Item tools\slimevr_probe.cjs,tools\slimevr_reset.cjs (Join-Path $stage "tools")
     Copy-Item (Join-Path $protocolRoot "protocol\typescript\dist") `
         (Join-Path $stage "tools\vendor\solarxr-protocol\protocol\typescript\dist") -Recurse
     Copy-Item (Join-Path $protocolRoot "node_modules\flatbuffers") `
