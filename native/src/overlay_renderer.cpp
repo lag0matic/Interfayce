@@ -485,7 +485,9 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         auto* batteryBrush = lowestBatteryPercent_ <= 10 ? criticalBrush_.Get()
             : lowestBatteryPercent_ <= 20 ? warningBrush_.Get() : structureBrush_.Get();
         d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(600, 49), 4, 4), batteryBrush);
-        drawText(std::to_wstring(lowestBatteryPercent_) + L"%", labelFormat_.Get(),
+        drawText(batteryEstimateText_.empty()
+                ? std::to_wstring(lowestBatteryPercent_) + L"%" : batteryEstimateText_,
+            labelFormat_.Get(),
             D2D1::RectF(609, 36, 664, 66), batteryBrush);
     }
     const auto gearCenter = D2D1::Point2F(730, 49);
@@ -1309,8 +1311,9 @@ void OverlayRenderer::SetClockText(const std::wstring& text) {
     clockText_ = text;
 }
 
-void OverlayRenderer::SetLowestBattery(int percent) {
-    lowestBatteryPercent_ = percent < 0 ? -1 : (std::min)(100, percent);
+void OverlayRenderer::SetBatteryEstimate(const std::wstring& text, int lowestPercent) {
+    batteryEstimateText_ = text;
+    lowestBatteryPercent_ = lowestPercent < 0 ? -1 : (std::min)(100, lowestPercent);
 }
 
 void OverlayRenderer::SetPressFeedback(float x, float y, bool active) {

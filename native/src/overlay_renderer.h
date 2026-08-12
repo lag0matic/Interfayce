@@ -41,7 +41,7 @@ public:
     void SetShutdownHoldProgress(float progress);
     void SetRigHoldProgress(float resetProgress, float mountProgress);
     void SetClockText(const std::wstring& text);
-    void SetLowestBattery(int percent);
+    void SetBatteryEstimate(const std::wstring& text, int lowestPercent);
     void SetPressFeedback(float x, float y, bool active);
     void SetRigBodyArtPath(const std::wstring& path);
     void SetPlayspaceResetArtPath(const std::wstring& path);
@@ -109,6 +109,7 @@ private:
     float rigResetHoldProgress_{};
     float rigMountHoldProgress_{};
     std::wstring clockText_;
+    std::wstring batteryEstimateText_;
     int lowestBatteryPercent_{-1};
     D2D1_POINT_2F pressFeedbackCenter_{};
     bool pressFeedbackActive_{};

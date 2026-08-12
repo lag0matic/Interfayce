@@ -415,6 +415,7 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                             continue
                 announcement = runtime.battery_alerts.observe(readings)
                 if announcement:
+                    LOGGER.info("Battery announcement queued: %s", announcement)
                     speak_in_background(announcement)
                 self._reply(200, announcement or "quiet")
             elif self.path == "/settings/tts/volume/up":

@@ -55,7 +55,7 @@ The reproducible per-user installer bundles the native overlay/audio engine, the
 powershell -ExecutionPolicy Bypass -File packaging\build-installer.ps1
 ```
 
-The result is `packaging\out\installer\Interfayce-Setup-1.2.0.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
+The result is `packaging\out\installer\Interfayce-Setup-1.2.1.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
 
 ## Offline native checks
 

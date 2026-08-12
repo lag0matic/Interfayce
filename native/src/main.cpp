@@ -7,6 +7,7 @@
 #include <openvr.h>
 
 #include "overlay_renderer.h"
+#include "battery_estimator.h"
 #include "broadcast_controller.h"
 #include "desktop_surface_manager.h"
 #include "desktop_surface_registry.h"
@@ -747,7 +748,7 @@ SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoo
             const auto end = line.find('\t', start);
             const auto value = line.substr(
                 start, end == std::string::npos ? std::string::npos : end - start);
-            status.slots[index] = Utf8ToWide(value);
+            status.slots[index] = value == "--" ? L"" : Utf8ToWide(value);
             if (end == std::string::npos) {
                 start = line.size() + 1;
                 break;
@@ -1509,6 +1510,13 @@ int main(int argc, char** argv) {
     std::future<std::optional<std::string>> batteryStatusPost;
     auto nextControllerBatteryPoll = std::chrono::steady_clock::now();
     std::array<int, 2> controllerBatteries{-1, -1};
+    static constexpr std::array<const char*, 10> batteryNames{
+        "Left hand", "Right hand", "Left elbow", "Right elbow", "Chest",
+        "Hip", "Left thigh", "Right thigh", "Left foot", "Right foot"};
+    interfayce::BatteryRuntimeEstimator batteryEstimator(
+        UserCacheFile(L"battery-discharge-rates.tsv"));
+    std::wstring batteryEstimateText;
+    int displayedLowestBattery = -1;
     auto nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     bool restoreHoldActive = false;
     int restoreHoldSegment = 0;
@@ -2623,6 +2631,8 @@ int main(int argc, char** argv) {
         }
         const auto batteryNow = std::chrono::steady_clock::now();
         bool batteryStateChanged = false;
+        bool batterySampleReady = false;
+        bool batteryHeaderChanged = false;
         if (batteryStatusPost.valid()
             && batteryStatusPost.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             batteryStatusPost.get();
@@ -2633,6 +2643,7 @@ int main(int argc, char** argv) {
                 ReadControllerBatteryPercent(system, vr::TrackedControllerRole_LeftHand),
                 ReadControllerBatteryPercent(system, vr::TrackedControllerRole_RightHand)};
             batteryStateChanged = updated != controllerBatteries;
+            batterySampleReady = true;
             controllerBatteries = updated;
             rigLine = ReadControllerBatteryLine(system);
         }
@@ -2647,19 +2658,40 @@ int main(int argc, char** argv) {
             if (updated.received) {
                 batteryStateChanged = batteryStateChanged || updated.slots != rigSlots
                     || updated.mountReady != mountReady;
+                batterySampleReady = true;
                 rigSlots = updated.slots;
                 mountReady = updated.mountReady;
             }
         }
+        if (batterySampleReady) {
+            bool learnedRateChanged = false;
+            for (size_t index = 0; index < controllerBatteries.size(); ++index) {
+                learnedRateChanged = batteryEstimator.Observe(
+                    batteryNames[index], controllerBatteries[index], batteryNow)
+                    || learnedRateChanged;
+            }
+            for (size_t index = 0; index < rigSlots.size(); ++index) {
+                const int percent = rigSlots[index].empty() ? -1 : _wtoi(rigSlots[index].c_str());
+                learnedRateChanged = batteryEstimator.Observe(
+                    batteryNames[index + 2], percent, batteryNow) || learnedRateChanged;
+            }
+            if (learnedRateChanged && !batteryEstimator.Save()) {
+                std::cerr << "Could not save learned battery discharge rates\n";
+            }
+            const auto estimate = batteryEstimator.Estimate();
+            const auto estimateText = interfayce::FormatBatteryEstimate(estimate);
+            batteryHeaderChanged = estimateText != batteryEstimateText
+                || estimate.lowestPercent != displayedLowestBattery;
+            if (batteryHeaderChanged) {
+                batteryEstimateText = estimateText;
+                displayedLowestBattery = estimate.lowestPercent;
+                renderer.SetBatteryEstimate(batteryEstimateText, displayedLowestBattery);
+            }
+        }
         if (batteryStateChanged) {
-            static constexpr const char* batteryNames[]{
-                "Left hand", "Right hand", "Left elbow", "Right elbow", "Chest",
-                "Hip", "Left thigh", "Right thigh", "Left foot", "Right foot"};
             std::string payload;
-            int lowestBattery = 101;
             for (size_t index = 0; index < controllerBatteries.size(); ++index) {
                 if (controllerBatteries[index] >= 0) {
-                    lowestBattery = (std::min)(lowestBattery, controllerBatteries[index]);
                     payload += std::string(batteryNames[index]) + "="
                         + std::to_string(controllerBatteries[index]) + "\n";
                 }
@@ -2667,23 +2699,22 @@ int main(int argc, char** argv) {
             for (size_t index = 0; index < rigSlots.size(); ++index) {
                 const int percent = rigSlots[index].empty() ? -1 : _wtoi(rigSlots[index].c_str());
                 if (percent >= 0) {
-                    lowestBattery = (std::min)(lowestBattery, percent);
                     payload += std::string(batteryNames[index + 2]) + "="
                         + std::to_string(percent) + "\n";
                 }
             }
-            renderer.SetLowestBattery(lowestBattery <= 100 ? lowestBattery : -1);
             if (!payload.empty() && !batteryStatusPost.valid()) {
                 batteryStatusPost = std::async(std::launch::async, [payload] {
                     return LocalHttpRequest(
                         "POST", "/battery/status", std::chrono::seconds(2), payload);
                 });
             }
-            if (selectedDeck == 3 && renderer.Initialize(system, selectedDeck, musicLine,
-                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
-                const auto updatedTexture = renderer.Texture();
-                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-            }
+        }
+        if ((batteryHeaderChanged || (batteryStateChanged && selectedDeck == 3))
+            && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                rigLine, rigSlots, mountReady, desktopPanel)) {
+            const auto updatedTexture = renderer.Texture();
+            vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
         }
         if (wristUiClick.bChanged && !wristUiClick.bState && restoreHoldActive) {
             const auto heldFor = std::chrono::steady_clock::now() - restoreHoldStarted;
