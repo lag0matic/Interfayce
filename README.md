@@ -1,6 +1,6 @@
 # Interfayce
 
-A personal, resource-conscious VRChat cockpit for David's SteamVR setup.
+A personal, resource-conscious VRChat cockpit for  SteamVR.
 
 The project begins with the things that matter in an actual session:
 
