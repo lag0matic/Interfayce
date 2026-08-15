@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ struct DesktopSource {
     std::wstring id;
     std::wstring label;
     std::wstring detail;
+    std::wstring executablePath;
     std::vector<uint8_t> iconBgra;
     HWND window{};
     HMONITOR monitor{};
@@ -26,6 +28,8 @@ public:
     std::vector<DesktopSource> EnumerateDisplays() const;
     std::vector<DesktopSource> EnumerateWindows() const;
     std::vector<DesktopSource> EnumerateSources() const;
+    std::optional<DesktopSource> FindWindowForTarget(const std::wstring& target) const;
+    bool LaunchTarget(const std::wstring& target) const;
 };
 
 }  // namespace interfayce

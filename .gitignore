@@ -16,6 +16,11 @@ htmlcov/
 !.env.example
 config.local.*
 
+# Large, locally vendored Parakeet model payload. The tracked manifest records
+# provenance and hashes; packaging requires these files to exist locally.
+models/parakeet/*.onnx
+models/parakeet/tokens.txt
+
 # Private collaboration context; never publish these with the project.
 user.md
 arden-handoff.md

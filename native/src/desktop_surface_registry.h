@@ -24,6 +24,7 @@ struct DesktopSurfaceSummary {
     std::wstring label;
     bool visible{};
     bool reusable{};
+    bool locked{};
 };
 
 struct DesktopSurfaceHit {
@@ -91,7 +92,9 @@ public:
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters = 0.008F) const;
     std::optional<uint64_t> FrameHitTest(const vr::VROverlayIntersectionParams_t& ray) const;
+    std::optional<DesktopSource> SourceForHit(const DesktopSurfaceHit& hit) const;
     bool ActivateHit(const DesktopSurfaceHit& hit);
+    bool AssignSource(uint64_t id, const DesktopSource& source);
     bool SendPointerEvent(const DesktopSurfaceHit& hit, DesktopPointerEvent event);
     bool SendScrollEvent(const DesktopSurfaceHit& hit, int32_t verticalDelta,
                          int32_t horizontalDelta);
@@ -102,8 +105,11 @@ public:
     void SetHoveredHit(const std::optional<DesktopSurfaceHit>& hit);
     void SetHoveredKeyboard(const std::optional<KeyboardSurfaceHit>& hit);
     void SetHoveredFrame(std::optional<uint64_t> id);
+    void SetDeckVisible(bool visible);
     void Update();
     bool BringToMe(uint64_t id);
+    bool BringAllToMe();
+    bool ToggleLocked(uint64_t id);
     bool ReturnToPicker(uint64_t id, const std::vector<DesktopSource>& sources);
     bool Close(uint64_t id);
     bool BeginGrab(uint64_t id, DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
@@ -139,9 +145,10 @@ private:
         std::optional<size_t> pressedKey;
         std::chrono::steady_clock::time_point keyFlashUntil{};
         float aspectRatio{1.6F};
-        float widthMeters{0.92F};
+        float widthMeters{0.69F};
         vr::HmdMatrix34_t transform{};
         bool visible{true};
+        bool locked{};
     };
 
     struct GrabState {
@@ -159,9 +166,12 @@ private:
     };
 
     bool PlaceAtEyeLine(Surface& surface) const;
+    bool PlaceRelativeToHmd(Surface& surface, float x, float y, float z) const;
     bool CreateFrameOverlays(Surface& surface) const;
     bool UpdateFrameOverlays(const Surface& surface) const;
     void DestroySurfaceOverlays(Surface& surface) const;
+    void RememberFocusedSurface(uint64_t id);
+    void ForgetFocusedSurface(uint64_t id);
 
     vr::IVRSystem* system_{};
     ID3D11Device* device_{};
@@ -170,6 +180,8 @@ private:
     std::array<std::optional<GrabState>, 2> activeGrabs_;
     std::optional<ScaleState> activeScale_;
     std::optional<uint64_t> focusedSurfaceId_;
+    std::vector<uint64_t> focusHistory_;
+    bool deckVisible_{true};
 };
 
 }  // namespace interfayce

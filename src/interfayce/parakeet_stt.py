@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 import threading
 from typing import Any
 
@@ -29,6 +30,14 @@ def discover_parakeet_model(explicit_directory: str | Path | None = None) -> Par
         candidates.append(Path(explicit_directory).expanduser())
     if configured := os.environ.get("INTERFAYCE_PARAKEET_MODEL"):
         candidates.append(Path(configured).expanduser())
+    executable_directory = Path(sys.executable).resolve().parent
+    # Installed/frozen service lives in <app>/service; development Python lives
+    # elsewhere. Prefer Interfayce's own vendored model before legacy COVAS paths.
+    candidates.extend((
+        executable_directory / "models" / "parakeet",
+        executable_directory.parent / "models" / "parakeet",
+        Path(__file__).resolve().parents[2] / "models" / "parakeet",
+    ))
     if appdata := os.environ.get("APPDATA"):
         plugins = Path(appdata) / "com.covas-next.ui" / "plugins"
         candidates.extend(sorted(plugins.glob("cn-plugin-parakett-stt*/model")))

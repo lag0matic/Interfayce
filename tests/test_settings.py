@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from interfayce.settings import (
     AppSettings, adjust_broadcast_gain, adjust_tts_volume, load_settings, save_settings,
+    desktop_favorites_wire_text, load_desktop_history, record_desktop_recent,
     set_desktop_configuration, set_runtime_controls, set_spotify_client_id,
     settings_wire_text, toggle_tts_mute,
 )
@@ -50,7 +51,8 @@ class SettingsTests(unittest.TestCase):
             )
             self.assertEqual(saved.stt_microphone, "Beyond Microphone")
             self.assertAlmostEqual(saved.haptic_strength, 0.37)
-            self.assertEqual(settings_wire_text(saved), "42\t1\t1.00\t0.37\t12.0")
+            self.assertEqual(settings_wire_text(saved),
+                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0\t10.0")
 
     def test_complete_desktop_configuration_round_trip(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -60,17 +62,159 @@ class SettingsTests(unittest.TestCase):
                 tts_volume=0.4, tts_muted=False, tts_speed=1.1,
                 tts_endpoint="http://tts.example.test/v1/audio/speech/",
                 tts_model="voice-model", tts_voice="voice-a", tts_output="Headset",
-                stt_microphone="Microphone", haptic_strength=0.3,
+                stt_microphone="Microphone", comms_silence_timeout_seconds=7,
+                haptic_strength=0.3,
                 broadcast_gain_db=9, spotify_client_id="client-id",
                 llm_enabled=True, llm_endpoint="https://llm.example.test/v1/",
                 llm_model="chat-model", llm_reasoning_effort="low",
                 llm_temperature=0.5,
+                comms_shortcuts=(("BRB", "Be right back."), ("MUTED", "I am muted.")),
+                wrist_hand="right", wrist_offset_x=0.025, wrist_offset_y=-0.015,
+                wrist_offset_z=0.01, wrist_pitch=5, wrist_yaw=-10, wrist_roll=15,
+                playspace_travel_limit_meters=24,
+                stt_endpoint="http://stt.example.test:5010/",
+                stt_model="moonshine",
             )
 
             self.assertTrue(saved.llm_enabled)
             self.assertEqual(saved.tts_endpoint, "http://tts.example.test/v1/audio/speech")
             self.assertEqual(saved.llm_endpoint, "https://llm.example.test/v1")
+            self.assertEqual(saved.stt_endpoint, "http://stt.example.test:5010")
+            self.assertEqual(saved.stt_model, "moonshine")
+            self.assertEqual(saved.comms_shortcuts[0], ("BRB", "Be right back."))
+            self.assertEqual(saved.comms_silence_timeout_seconds, 7.0)
+            self.assertEqual(len(saved.comms_shortcuts), 4)
+            self.assertEqual(saved.wrist_hand, "right")
+            self.assertAlmostEqual(saved.wrist_offset_x, 0.025)
+            self.assertEqual((saved.wrist_pitch, saved.wrist_yaw, saved.wrist_roll), (5, -10, 15))
+            self.assertEqual(saved.playspace_travel_limit_meters, 24.0)
             self.assertEqual(load_settings(), saved)
+
+    def test_wrist_configuration_is_bounded_and_defaults_to_left(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            saved = save_settings(AppSettings(
+                wrist_hand="unexpected", wrist_offset_x=1, wrist_offset_y=-1,
+                wrist_offset_z=0.04, wrist_pitch=90, wrist_yaw=-90, wrist_roll=12,
+            ))
+            self.assertEqual(saved.wrist_hand, "left")
+            self.assertEqual((saved.wrist_offset_x, saved.wrist_offset_y, saved.wrist_offset_z),
+                             (0.10, -0.10, 0.04))
+            self.assertEqual((saved.wrist_pitch, saved.wrist_yaw, saved.wrist_roll),
+                             (45.0, -45.0, 12.0))
+
+    def test_playspace_travel_limit_is_bounded(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            self.assertEqual(
+                save_settings(AppSettings(playspace_travel_limit_meters=0.25))
+                .playspace_travel_limit_meters, 1.0)
+            self.assertEqual(
+                save_settings(AppSettings(playspace_travel_limit_meters=500))
+                .playspace_travel_limit_meters, 50.0)
+
+    def test_comms_shortcuts_are_bounded_and_sanitized(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            saved = save_settings(AppSettings(comms_shortcuts=(
+                ("  TOO   LONG LABEL  ", " hello\nthere "),
+                ("", "disabled"),
+            )))
+            self.assertEqual(saved.comms_shortcuts[0], ("TOO LONG LAB", "hello there"))
+            self.assertEqual(saved.comms_shortcuts[1], ("", "disabled"))
+            self.assertEqual(len(saved.comms_shortcuts), 4)
+
+    def test_desktop_favorites_require_bounded_absolute_executables(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            saved = save_settings(AppSettings(desktop_favorites=(
+                ("  Discord Favorite  ", r"C:\Apps\Discord.exe"),
+                ("Unsafe", r"C:\Apps\document.txt"),
+                ("Spotify", "aumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"),
+            )))
+            self.assertEqual(saved.desktop_favorites[0],
+                             ("Discord Favori", r"C:\Apps\Discord.exe"))
+            self.assertEqual(saved.desktop_favorites[1], ("", ""))
+            self.assertEqual(saved.desktop_favorites[2],
+                             ("Spotify", "aumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"))
+            self.assertEqual(desktop_favorites_wire_text(saved),
+                             "Discord Favori\tC:\\Apps\\Discord.exe\n\t\n"
+                             "Spotify\taumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify")
+
+    def test_desktop_recents_fill_only_empty_favorite_slots(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            settings = save_settings(AppSettings(desktop_favorites=(
+                ("Discord", r"C:\Apps\Discord.exe"), ("", ""), ("", ""))))
+            record_desktop_recent("Chrome", r"C:\Apps\Chrome.exe")
+            record_desktop_recent("Discord recent", r"C:\Apps\Discord.exe")
+            record_desktop_recent("Outlook", r"C:\Apps\Outlook.exe")
+            self.assertEqual(
+                desktop_favorites_wire_text(settings),
+                "Discord\tC:\\Apps\\Discord.exe\n"
+                "Outlook\tC:\\Apps\\Outlook.exe\n"
+                "Chrome\tC:\\Apps\\Chrome.exe")
+
+    def test_store_favorite_excludes_versioned_package_history(self) -> None:
+        settings = AppSettings(desktop_favorites=((
+            "Spotify", "aumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"
+        ), ("", ""), ("", "")))
+        history = (
+            ("Spotify", r"C:\Program Files\WindowsApps\SpotifyAB.SpotifyMusic_1.295.453.0_x64__zpdnekdrzrea0\Spotify.exe"),
+            ("Discord", r"C:\Users\Test\AppData\Local\Discord\app-1.0.9251\Discord.exe"),
+            ("SlimeVR", r"C:\Program Files (x86)\SlimeVR Server\SlimeVR.exe"),
+        )
+        self.assertEqual(
+            desktop_favorites_wire_text(settings, history),
+            "Spotify\taumid:SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify\n"
+            "Discord\tC:\\Users\\Test\\AppData\\Local\\Discord\\app-1.0.9251\\Discord.exe\n"
+            "SlimeVR\tC:\\Program Files (x86)\\SlimeVR Server\\SlimeVR.exe",
+        )
+
+    def test_versioned_electron_history_is_one_application(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            record_desktop_recent(
+                "Discord", r"C:\Users\Test\AppData\Local\Discord\app-1.0.9250\Discord.exe")
+            record_desktop_recent(
+                "Discord", r"C:\Users\Test\AppData\Local\Discord\app-1.0.9251\Discord.exe")
+            self.assertEqual(len(load_desktop_history()), 1)
+
+    def test_desktop_recent_history_is_deduplicated_and_persistent(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            record_desktop_recent("Chrome", r"C:\Apps\Chrome.exe")
+            record_desktop_recent("Chrome Again", r"C:\Apps\Chrome.exe")
+            record_desktop_recent("Outlook", r"C:\Apps\Outlook.exe")
+            history = load_desktop_history()
+            self.assertEqual(history[0], ("Outlook", r"C:\Apps\Outlook.exe"))
+            self.assertEqual(history[1], ("Chrome Again", r"C:\Apps\Chrome.exe"))
+            self.assertEqual(len(history), 2)
+
+    def test_desktop_recent_history_is_bounded(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            for index in range(10):
+                record_desktop_recent(f"App {index}", f"C:\\Apps\\App{index}.exe")
+            history = load_desktop_history()
+            self.assertEqual(len(history), 8)
+            self.assertEqual(history[0], ("App 9", r"C:\Apps\App9.exe"))
+            self.assertEqual(history[-1], ("App 2", r"C:\Apps\App2.exe"))
+
+    def test_desktop_recent_rejects_non_application_targets(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            with self.assertRaises(ValueError):
+                record_desktop_recent("Document", r"C:\Apps\notes.txt")
 
     def test_fresh_install_has_no_personal_service_configuration(self) -> None:
         defaults = AppSettings()
@@ -79,6 +223,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(defaults.llm_model, "")
         self.assertEqual(defaults.tts_endpoint, "")
         self.assertEqual(defaults.tts_output, "")
+        self.assertEqual(defaults.stt_endpoint, "")
 
 
 if __name__ == "__main__":

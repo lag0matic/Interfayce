@@ -41,7 +41,7 @@ def synthesize(text: str, *, timeout_seconds: float = 30.0) -> bytes:
         headers={"Content-Type": "application/json"},
     )
     started = time.monotonic()
-    LOGGER.info("Kokoro synthesis started: %r", text)
+    LOGGER.info("Kokoro synthesis started: chars=%s", len(text))
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         result = response.read()
     LOGGER.info("Kokoro synthesis completed in %.2fs", time.monotonic() - started)

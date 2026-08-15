@@ -22,6 +22,8 @@ public:
     UpdateResult Update();
     vr::Texture_t Texture() const;
     float AspectRatio() const;
+    int Width() const;
+    int Height() const;
     void Stop();
 
 private:

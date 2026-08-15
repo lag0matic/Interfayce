@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Any
+from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .secure_store import delete_secret, read_secret, write_secret
@@ -19,12 +20,31 @@ class LlmError(RuntimeError):
     pass
 
 
+def valid_llm_endpoint(endpoint: str) -> bool:
+    parsed = urlparse(endpoint.strip())
+    if not parsed.hostname or parsed.username or parsed.password:
+        return False
+    if parsed.scheme == "https":
+        return True
+    return parsed.scheme == "http" and parsed.hostname.casefold() in {
+        "localhost", "127.0.0.1", "::1"
+    }
+
+
 @dataclass(frozen=True)
 class LlmResponse:
     content: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
     estimated_cost: float | None = None
+    tool_calls: tuple["LlmToolCall", ...] = ()
+
+
+@dataclass(frozen=True)
+class LlmToolCall:
+    call_id: str
+    name: str
+    arguments: dict[str, Any]
 
 
 def set_api_key(api_key: str) -> None:
@@ -101,30 +121,128 @@ class OpenAiCompatibleClient:
     @property
     def configured(self) -> bool:
         return bool(self.settings.llm_enabled and self.settings.llm_endpoint
+                    and valid_llm_endpoint(self.settings.llm_endpoint)
                     and self.settings.llm_model and load_api_key())
 
-    def chat_json(self, *, system: str, user: str, timeout: float = 20.0) -> LlmResponse:
+    def _configuration(self) -> tuple[str, str, str]:
         if not self.settings.llm_enabled:
             raise LlmError("LLM commands are disabled in Interfayce settings.")
         if not self.settings.llm_endpoint or not self.settings.llm_model:
             raise LlmError("The LLM endpoint and model have not been configured.")
+        if not valid_llm_endpoint(self.settings.llm_endpoint):
+            raise LlmError("The LLM endpoint must use HTTPS unless it is on this computer.")
         api_key = load_api_key()
         if not api_key:
             raise LlmError("The LLM API key has not been configured.")
+        return self.settings.llm_endpoint, self.settings.llm_model, api_key
+
+    @staticmethod
+    def _messages(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        if not messages or len(messages) > 32:
+            raise ValueError("LLM conversations require between 1 and 32 messages.")
+        cleaned: list[dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role")
+            if role not in {"system", "user", "assistant", "tool"}:
+                raise ValueError("An LLM message used an unsupported role.")
+            content = message.get("content", "")
+            if content is None:
+                content = ""
+            if not isinstance(content, str) or len(content) > 24_000:
+                raise ValueError("LLM message content must be bounded text.")
+            item: dict[str, Any] = {"role": role, "content": content}
+            if role == "tool":
+                call_id = message.get("tool_call_id")
+                if not isinstance(call_id, str) or not 1 <= len(call_id) <= 160:
+                    raise ValueError("A tool result requires a valid tool-call ID.")
+                item["tool_call_id"] = call_id
+            elif role == "assistant" and message.get("tool_calls") is not None:
+                tool_calls = message["tool_calls"]
+                if not isinstance(tool_calls, list) or len(tool_calls) > 4:
+                    raise ValueError("An assistant message contained invalid tool calls.")
+                item["tool_calls"] = tool_calls
+            cleaned.append(item)
+        return cleaned
+
+    @staticmethod
+    def _tools(tools: Sequence[Mapping[str, Any]] | None) -> list[dict[str, Any]] | None:
+        if tools is None:
+            return None
+        if len(tools) > 8:
+            raise ValueError("No more than eight LLM tools may be exposed at once.")
+        cleaned: list[dict[str, Any]] = []
+        for tool in tools:
+            function = tool.get("function") if tool.get("type") == "function" else None
+            if not isinstance(function, Mapping):
+                raise ValueError("Only function tools are supported.")
+            name = function.get("name")
+            description = function.get("description")
+            parameters = function.get("parameters")
+            if (not isinstance(name, str) or not name.isidentifier()
+                    or len(name) > 64):
+                raise ValueError("An LLM tool has an invalid name.")
+            if not isinstance(description, str) or len(description) > 800:
+                raise ValueError("An LLM tool requires a bounded description.")
+            if not isinstance(parameters, Mapping):
+                raise ValueError("An LLM tool requires a JSON parameter schema.")
+            cleaned.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": dict(parameters),
+                },
+            })
+        return cleaned
+
+    @staticmethod
+    def _tool_calls(message: Mapping[str, Any]) -> tuple[LlmToolCall, ...]:
+        raw_calls = message.get("tool_calls") or []
+        if not isinstance(raw_calls, list) or len(raw_calls) > 4:
+            raise LlmError("The LLM response contained invalid tool calls.")
+        calls: list[LlmToolCall] = []
+        for raw in raw_calls:
+            function = raw.get("function") if isinstance(raw, Mapping) else None
+            call_id = raw.get("id") if isinstance(raw, Mapping) else None
+            name = function.get("name") if isinstance(function, Mapping) else None
+            arguments = function.get("arguments") if isinstance(function, Mapping) else None
+            if (not isinstance(call_id, str) or not 1 <= len(call_id) <= 160
+                    or not isinstance(name, str) or not name.isidentifier()
+                    or len(name) > 64 or not isinstance(arguments, str)
+                    or len(arguments) > 8_000):
+                raise LlmError("The LLM response contained a malformed tool call.")
+            try:
+                parsed = json.loads(arguments)
+            except json.JSONDecodeError as error:
+                raise LlmError("The LLM returned invalid tool arguments.") from error
+            if not isinstance(parsed, dict):
+                raise LlmError("LLM tool arguments must be a JSON object.")
+            calls.append(LlmToolCall(call_id, name, parsed))
+        return tuple(calls)
+
+    def chat(self, *, messages: Sequence[Mapping[str, Any]],
+             tools: Sequence[Mapping[str, Any]] | None = None,
+             max_tokens: int = 500, timeout: float = 20.0,
+             json_response: bool = False) -> LlmResponse:
+        endpoint, model, api_key = self._configuration()
+        if not 1 <= int(max_tokens) <= 2_000:
+            raise ValueError("LLM output must be limited to 1 through 2000 tokens.")
         payload: dict[str, Any] = {
-            "model": self.settings.llm_model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "model": model,
+            "messages": self._messages(messages),
             "temperature": self.settings.llm_temperature,
-            "max_tokens": 220,
-            "response_format": {"type": "json_object"},
+            "max_tokens": int(max_tokens),
         }
+        clean_tools = self._tools(tools)
+        if clean_tools:
+            payload["tools"] = clean_tools
+            payload["tool_choice"] = "auto"
+        if json_response:
+            payload["response_format"] = {"type": "json_object"}
         if self.settings.llm_reasoning_effort:
             payload["reasoning_effort"] = self.settings.llm_reasoning_effort
         request = Request(
-            self.settings.llm_endpoint + "/chat/completions",
+            endpoint + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             method="POST",
             headers={
@@ -143,7 +261,8 @@ class OpenAiCompatibleClient:
         except (ValueError, json.JSONDecodeError) as error:
             raise LlmError("The LLM endpoint returned invalid JSON.") from error
         try:
-            content = result["choices"][0]["message"]["content"]
+            message = result["choices"][0]["message"]
+            content = message.get("content") or ""
             usage = result.get("usage", {})
             return LlmResponse(
                 content=str(content),
@@ -151,6 +270,18 @@ class OpenAiCompatibleClient:
                 completion_tokens=int(usage.get("completion_tokens", 0)),
                 estimated_cost=float(usage["estimated_cost"])
                     if usage.get("estimated_cost") is not None else None,
+                tool_calls=self._tool_calls(message),
             )
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise LlmError("The LLM response did not contain a chat message.") from error
+
+    def chat_json(self, *, system: str, user: str, timeout: float = 20.0) -> LlmResponse:
+        return self.chat(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            max_tokens=220,
+            timeout=timeout,
+            json_response=True,
+        )

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(InterfayceOverlay LANGUAGES CXX RC)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION" INTERFAYCE_PROJECT_VERSION)
+string(STRIP "${INTERFAYCE_PROJECT_VERSION}" INTERFAYCE_PROJECT_VERSION)
+project(InterfayceOverlay VERSION ${INTERFAYCE_PROJECT_VERSION} LANGUAGES CXX RC)
 
 if(NOT WIN32)
     message(FATAL_ERROR "The first native Interfayce host targets Windows + SteamVR.")
@@ -35,9 +37,29 @@ add_executable(InterfayceOverlay
     src/desktop_surface_manager.cpp
     src/desktop_surface_registry.cpp
     src/overlay_renderer.cpp
+    src/tray_icon.cpp
 )
+add_library(interfayce_battery_estimator STATIC
+    src/battery_estimator.cpp
+)
+target_compile_features(interfayce_battery_estimator PRIVATE cxx_std_20)
+target_include_directories(interfayce_battery_estimator PUBLIC src)
 target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
-target_link_libraries(InterfayceOverlay PRIVATE openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32)
+target_compile_definitions(InterfayceOverlay PRIVATE
+    INTERFAYCE_VERSION="${PROJECT_VERSION}"
+)
+target_link_libraries(InterfayceOverlay PRIVATE interfayce_battery_estimator openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32 crypt32)
+
+add_executable(InterfayceBatteryEstimatorTests
+    tests/battery_estimator_tests.cpp
+)
+target_compile_features(InterfayceBatteryEstimatorTests PRIVATE cxx_std_20)
+target_link_libraries(InterfayceBatteryEstimatorTests PRIVATE interfayce_battery_estimator)
+# The installed overlay is a background VR utility, so a normal launch must not
+# allocate a console window. Keep main/mainCRTStartup so the existing command
+# probes and argument handling continue to work unchanged.
+set_target_properties(InterfayceOverlay PROPERTIES WIN32_EXECUTABLE TRUE)
+target_link_options(InterfayceOverlay PRIVATE /ENTRY:mainCRTStartup)
 
 add_library(interfayce_process_audio STATIC
     src/process_loopback_capture.cpp
@@ -74,4 +96,7 @@ add_custom_command(TARGET InterfayceOverlay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/steamvr"
         "$<TARGET_FILE_DIR:InterfayceOverlay>/assets/steamvr"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/ui"
+        "$<TARGET_FILE_DIR:InterfayceOverlay>/assets/ui"
 )

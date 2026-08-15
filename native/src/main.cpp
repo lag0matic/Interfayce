@@ -2,16 +2,21 @@
 #include <WS2tcpip.h>
 #include <Windows.h>
 #include <TlHelp32.h>
+#include <wincrypt.h>
+#include <dwmapi.h>
 #include <openvr.h>
 
 #include "overlay_renderer.h"
+#include "battery_estimator.h"
 #include "broadcast_controller.h"
 #include "desktop_surface_manager.h"
 #include "desktop_surface_registry.h"
+#include "tray_icon.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cwctype>
 #include <array>
 #include <cmath>
 #include <filesystem>
@@ -55,6 +60,13 @@ std::filesystem::path ExecutableDirectory(char* executablePath) {
 }
 
 std::filesystem::path ProjectRoot(const std::filesystem::path& executableDirectory) {
+    // A staged/package build may live inside the source tree. Prefer its complete
+    // colocated runtime so bundled tools do not accidentally resolve against the
+    // surrounding development checkout.
+    if (std::filesystem::exists(executableDirectory / "runtime" / "node.exe")
+        && std::filesystem::exists(executableDirectory / "tools" / "slimevr_probe.cjs")) {
+        return executableDirectory;
+    }
     const auto developmentRoot = executableDirectory.parent_path().parent_path().parent_path();
     return std::filesystem::exists(developmentRoot / "src" / "interfayce")
         ? developmentRoot : executableDirectory;
@@ -70,6 +82,46 @@ std::filesystem::path UserCacheFile(std::wstring_view filename) {
     std::error_code ignored;
     std::filesystem::create_directories(directory, ignored);
     return directory / filename;
+}
+
+std::optional<std::string> LocalServiceToken() {
+    wchar_t localAppData[32768]{};
+    const auto length = GetEnvironmentVariableW(
+        L"LOCALAPPDATA", localAppData, static_cast<DWORD>(std::size(localAppData)));
+    if (length == 0 || length >= std::size(localAppData)) return std::nullopt;
+    const auto path = std::filesystem::path(localAppData) / "Interfayce" / "secure"
+        / "local-service-token.dpapi";
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return std::nullopt;
+    const std::vector<BYTE> protectedBytes(
+        (std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    if (protectedBytes.empty() || protectedBytes.size() > MAXDWORD) return std::nullopt;
+    static constexpr BYTE entropyBytes[] = "Interfayce secure settings v1";
+    DATA_BLOB protectedBlob{static_cast<DWORD>(protectedBytes.size()),
+        const_cast<BYTE*>(protectedBytes.data())};
+    DATA_BLOB entropyBlob{static_cast<DWORD>(sizeof(entropyBytes) - 1),
+        const_cast<BYTE*>(entropyBytes)};
+    DATA_BLOB clearBlob{};
+    if (!CryptUnprotectData(&protectedBlob, nullptr, &entropyBlob, nullptr, nullptr,
+            CRYPTPROTECT_UI_FORBIDDEN, &clearBlob)) {
+        return std::nullopt;
+    }
+    std::string token(reinterpret_cast<char*>(clearBlob.pbData), clearBlob.cbData);
+    LocalFree(clearBlob.pbData);
+    return token.empty() ? std::nullopt : std::optional<std::string>{std::move(token)};
+}
+
+std::wstring LocalClockText() {
+    SYSTEMTIME localTime{};
+    GetLocalTime(&localTime);
+    wchar_t formatted[64]{};
+    const int length = GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS,
+        &localTime, nullptr, formatted, static_cast<int>(std::size(formatted)));
+    if (length <= 1) return L"";
+    std::wstring result(formatted, static_cast<size_t>(length - 1));
+    const auto suffix = result.find(L' ');
+    if (suffix != std::wstring::npos) result.erase(suffix);
+    return result;
 }
 
 std::filesystem::path NodeExecutable(const std::filesystem::path& projectRoot) {
@@ -147,7 +199,10 @@ bool IsLocalTcpPortOpen(uint16_t port, std::chrono::milliseconds timeout) {
 }
 
 std::optional<std::string> LocalHttpRequest(std::string_view method, std::string_view path,
-                                            std::chrono::milliseconds timeout) {
+                                            std::chrono::milliseconds timeout,
+                                            std::string_view body = {}) {
+    const auto serviceToken = LocalServiceToken();
+    if (!serviceToken) return std::nullopt;
     WSADATA winsock{};
     if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return std::nullopt;
     const SOCKET socketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -164,13 +219,42 @@ std::optional<std::string> LocalHttpRequest(std::string_view method, std::string
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(kVoiceServicePort);
-    if (connect(socketHandle, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    u_long nonBlocking = 1;
+    ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
+    bool connected = connect(socketHandle, reinterpret_cast<sockaddr*>(&address),
+        sizeof(address)) == 0;
+    if (!connected) {
+        const int connectError = WSAGetLastError();
+        if (connectError == WSAEWOULDBLOCK || connectError == WSAEINPROGRESS
+            || connectError == WSAEINVAL) {
+            fd_set writable;
+            FD_ZERO(&writable);
+            FD_SET(socketHandle, &writable);
+            timeval wait{};
+            // Localhost should complete immediately. Never let service traffic
+            // stall the latency-sensitive OpenVR input loop.
+            wait.tv_usec = 50000;
+            if (select(0, nullptr, &writable, nullptr, &wait) > 0) {
+                int socketError = 0;
+                int length = sizeof(socketError);
+                connected = getsockopt(socketHandle, SOL_SOCKET, SO_ERROR,
+                    reinterpret_cast<char*>(&socketError), &length) == 0
+                    && socketError == 0;
+            }
+        }
+    }
+    nonBlocking = 0;
+    ioctlsocket(socketHandle, FIONBIO, &nonBlocking);
+    if (!connected) {
         closesocket(socketHandle);
         WSACleanup();
         return std::nullopt;
     }
     const std::string request = std::string(method) + " " + std::string(path)
-        + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(kVoiceServicePort)
+        + "\r\nX-Interfayce-Token: " + *serviceToken
+        + "\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: "
+        + std::to_string(body.size()) + "\r\n\r\n" + std::string(body);
     size_t sent = 0;
     while (sent < request.size()) {
         const auto amount = send(socketHandle, request.data() + sent,
@@ -200,6 +284,11 @@ std::optional<std::string> LocalHttpRequest(std::string_view method, std::string
     const auto bodyStart = response.find("\r\n\r\n");
     return bodyStart == std::string::npos
         ? std::optional<std::string>{} : response.substr(bodyStart + 4);
+}
+
+bool VoiceServiceAvailable() {
+    const auto response = LocalHttpRequest("GET", "/health", std::chrono::milliseconds(150));
+    return response && *response == "ready";
 }
 
 bool LaunchVoiceService(const std::filesystem::path& executableDirectory,
@@ -275,6 +364,23 @@ bool LaunchDesktopSettings(const std::filesystem::path& executableDirectory,
     return true;
 }
 
+bool RelaunchInterfayce(const std::filesystem::path& executable,
+                        const std::filesystem::path& workingDirectory) {
+    std::wstring command = L"\"" + executable.wstring() + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
+    startup.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION process{};
+    const bool launched = CreateProcessW(executable.wstring().c_str(), command.data(),
+        nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+        workingDirectory.wstring().c_str(), &startup, &process) != FALSE;
+    if (!launched) return false;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
+}
+
 std::wstring Utf8ToWide(const std::string& text) {
     if (text.empty()) return {};
     const auto length = MultiByteToWideChar(CP_UTF8, 0, text.data(),
@@ -283,6 +389,17 @@ std::wstring Utf8ToWide(const std::string& text) {
     std::wstring result(static_cast<size_t>(length), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
         result.data(), length);
+    return result;
+}
+
+std::string WideToUtf8(const std::wstring& text) {
+    if (text.empty()) return {};
+    const auto length = WideCharToMultiByte(CP_UTF8, 0, text.data(),
+        static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (length <= 0) return {};
+    std::string result(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+        result.data(), length, nullptr, nullptr);
     return result;
 }
 
@@ -315,6 +432,39 @@ struct CommsState {
     bool active{};
 };
 
+struct AssistantPanelState {
+    std::wstring status{L"READY"};
+    std::wstring transcript;
+    std::wstring response;
+    bool active{};
+};
+
+std::optional<AssistantPanelState> ParseAssistantState(const std::string& response) {
+    if (response.empty()) return std::nullopt;
+    AssistantPanelState state;
+    const auto first = response.find('\t');
+    const auto second = first == std::string::npos
+        ? std::string::npos : response.find('\t', first + 1);
+    state.status = Utf8ToWide(response.substr(0, first));
+    if (first != std::string::npos) {
+        state.transcript = Utf8ToWide(response.substr(
+            first + 1, second == std::string::npos ? std::string::npos : second - first - 1));
+    }
+    if (second != std::string::npos) state.response = Utf8ToWide(response.substr(second + 1));
+    state.active = state.status == L"LISTENING" || state.status == L"THINKING"
+        || state.status == L"SEARCHING" || state.status == L"READING"
+        || state.status == L"CHECKING" || state.status == L"RESPONDING"
+        || state.status == L"STOPPING";
+    return state;
+}
+
+std::optional<AssistantPanelState> RequestAssistantState(
+        std::string_view method, std::string_view path,
+        std::chrono::milliseconds timeout = std::chrono::milliseconds(750)) {
+    const auto response = LocalHttpRequest(method, path, timeout);
+    return response ? ParseAssistantState(*response) : std::nullopt;
+}
+
 std::optional<CommsState> ParseCommsState(const std::string& response) {
     if (response.empty()) return std::nullopt;
     const auto separator = response.find('\t');
@@ -331,6 +481,70 @@ std::optional<CommsState> ParseCommsState(const std::string& response) {
 std::optional<CommsState> RequestCommsState(std::string_view method, std::string_view path) {
     const auto response = LocalHttpRequest(method, path, std::chrono::milliseconds(750));
     return response ? ParseCommsState(*response) : std::nullopt;
+}
+
+std::optional<std::array<std::wstring, 4>> RequestCommsShortcutLabels() {
+    const auto response = LocalHttpRequest(
+        "GET", "/comms/shortcuts", std::chrono::milliseconds(750));
+    if (!response) return std::nullopt;
+    std::array<std::wstring, 4> labels;
+    size_t start = 0;
+    for (size_t index = 0; index < labels.size(); ++index) {
+        const auto end = response->find('\t', start);
+        labels[index] = Utf8ToWide(response->substr(
+            start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return labels;
+}
+
+struct DesktopFavorite {
+    std::wstring label;
+    std::wstring executable;
+    bool operator==(const DesktopFavorite&) const = default;
+};
+
+struct PendingFavoriteCapture {
+    uint64_t surfaceId{};
+    std::wstring executable;
+    std::chrono::steady_clock::time_point nextPoll;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+std::optional<std::array<DesktopFavorite, 3>> RequestDesktopFavorites() {
+    const auto response = LocalHttpRequest(
+        "GET", "/desktop/favorites", std::chrono::milliseconds(750));
+    if (!response) return std::nullopt;
+    std::array<DesktopFavorite, 3> favorites;
+    size_t start = 0;
+    for (size_t index = 0; index < favorites.size() && start <= response->size(); ++index) {
+        const auto end = response->find('\n', start);
+        const auto line = response->substr(
+            start, end == std::string::npos ? std::string::npos : end - start);
+        const auto separator = line.find('\t');
+        if (separator != std::string::npos) {
+            favorites[index].label = Utf8ToWide(line.substr(0, separator));
+            favorites[index].executable = Utf8ToWide(line.substr(separator + 1));
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return favorites;
+}
+
+void RecordDesktopRecent(const interfayce::DesktopSource& source) {
+    if (source.kind != interfayce::DesktopSource::Kind::Window
+        || source.executablePath.empty()) return;
+    auto label = std::filesystem::path(source.executablePath).stem().wstring();
+    if (label.empty()) label = source.detail;
+    if (label.empty()) label = source.label;
+    if (!label.empty()) label.front() = static_cast<wchar_t>(std::towupper(label.front()));
+    const auto body = WideToUtf8(label) + "\t" + WideToUtf8(source.executablePath);
+    std::thread([body] {
+        static_cast<void>(LocalHttpRequest(
+            "POST", "/desktop/recent", std::chrono::milliseconds(250), body));
+    }).detach();
 }
 
 void LaunchSpotifyControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
@@ -377,30 +591,42 @@ struct TtsSettingsState {
     bool muted{};
     float hapticStrength{0.22F};
     float broadcastGainDb{12.0F};
+    bool wristRight{};
+    float wristOffsetX{};
+    float wristOffsetY{};
+    float wristOffsetZ{};
+    float wristPitch{};
+    float wristYaw{};
+    float wristRoll{};
+    float playspaceTravelLimitMeters{10.0F};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
-    const auto firstTab = response.find('\t');
-    if (firstTab == std::string::npos) return std::nullopt;
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (start <= response.size()) {
+        const auto end = response.find('\t', start);
+        fields.push_back(response.substr(start,
+            end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (fields.size() < 2) return std::nullopt;
     try {
         TtsSettingsState state;
-        state.volumePercent = (std::max)(0, (std::min)(100,
-            std::stoi(response.substr(0, firstTab))));
-        const auto muteEnd = response.find('\t', firstTab + 1);
-        state.muted = response.substr(firstTab + 1, muteEnd - firstTab - 1) == "1";
-        if (muteEnd != std::string::npos) {
-            const auto speedEnd = response.find('\t', muteEnd + 1);
-            if (speedEnd != std::string::npos && speedEnd + 1 < response.size()) {
-                const auto gainEnd = response.find('\t', speedEnd + 1);
-                state.hapticStrength = std::clamp(
-                    std::stof(response.substr(speedEnd + 1,
-                        gainEnd - speedEnd - 1)), 0.0F, 1.0F);
-                if (gainEnd != std::string::npos && gainEnd + 1 < response.size()) {
-                    state.broadcastGainDb = std::clamp(
-                        std::stof(response.substr(gainEnd + 1)), 0.0F, 24.0F);
-                }
-            }
-        }
+        state.volumePercent = std::clamp(std::stoi(fields[0]), 0, 100);
+        state.muted = fields[1] == "1";
+        if (fields.size() > 3) state.hapticStrength = std::clamp(std::stof(fields[3]), 0.0F, 1.0F);
+        if (fields.size() > 4) state.broadcastGainDb = std::clamp(std::stof(fields[4]), 0.0F, 24.0F);
+        if (fields.size() > 5) state.wristRight = fields[5] == "right";
+        if (fields.size() > 6) state.wristOffsetX = std::clamp(std::stof(fields[6]), -0.10F, 0.10F);
+        if (fields.size() > 7) state.wristOffsetY = std::clamp(std::stof(fields[7]), -0.10F, 0.10F);
+        if (fields.size() > 8) state.wristOffsetZ = std::clamp(std::stof(fields[8]), -0.10F, 0.10F);
+        if (fields.size() > 9) state.wristPitch = std::clamp(std::stof(fields[9]), -45.0F, 45.0F);
+        if (fields.size() > 10) state.wristYaw = std::clamp(std::stof(fields[10]), -45.0F, 45.0F);
+        if (fields.size() > 11) state.wristRoll = std::clamp(std::stof(fields[11]), -45.0F, 45.0F);
+        if (fields.size() > 12) state.playspaceTravelLimitMeters =
+            std::clamp(std::stof(fields[12]), 1.0F, 50.0F);
         return state;
     } catch (...) {
         return std::nullopt;
@@ -431,6 +657,15 @@ std::wstring ReadControllerBatteryLine(vr::IVRSystem* system) {
         + batteryText(vr::TrackedControllerRole_RightHand, L"R");
 }
 
+int ReadControllerBatteryPercent(vr::IVRSystem* system, vr::ETrackedControllerRole role) {
+    const auto index = system->GetTrackedDeviceIndexForControllerRole(role);
+    if (index == vr::k_unTrackedDeviceIndexInvalid || !system->IsTrackedDeviceConnected(index)) {
+        return -1;
+    }
+    return static_cast<int>(std::lround(system->GetFloatTrackedDeviceProperty(
+        index, vr::Prop_DeviceBatteryPercentage_Float) * 100.0F));
+}
+
 std::wstring DesktopSurfaceLine(size_t count) {
     if (count == 0) return L"No open surfaces";
     return std::to_wstring(count) + (count == 1 ? L" open surface" : L" open surfaces");
@@ -439,30 +674,90 @@ std::wstring DesktopSurfaceLine(size_t count) {
 struct SlimeRigStatus {
     std::array<std::wstring, 8> slots{};
     bool mountReady{};
+    bool received{};
 };
+
+std::optional<std::string> RunHiddenAndCapture(std::wstring command,
+                                               const std::filesystem::path& workingDirectory,
+                                               std::chrono::milliseconds timeout) {
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (!CreatePipe(&readPipe, &writePipe, &security, 0)) return std::nullopt;
+    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+    const HANDLE nullInput = CreateFileW(L"NUL", GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING, 0, nullptr);
+    if (nullInput == INVALID_HANDLE_VALUE) {
+        CloseHandle(writePipe);
+        CloseHandle(readPipe);
+        return std::nullopt;
+    }
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
+    startup.wShowWindow = SW_HIDE;
+    startup.hStdOutput = writePipe;
+    startup.hStdError = writePipe;
+    startup.hStdInput = nullInput;
+    PROCESS_INFORMATION process{};
+    const bool launched = CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, workingDirectory.wstring().c_str(), &startup, &process) != FALSE;
+    CloseHandle(writePipe);
+    CloseHandle(nullInput);
+    if (!launched) {
+        CloseHandle(readPipe);
+        return std::nullopt;
+    }
+    CloseHandle(process.hThread);
+
+    const DWORD waitResult = WaitForSingleObject(process.hProcess,
+        static_cast<DWORD>(timeout.count()));
+    if (waitResult == WAIT_TIMEOUT) {
+        TerminateProcess(process.hProcess, 1);
+        WaitForSingleObject(process.hProcess, 1000);
+    }
+    std::string output;
+    std::array<char, 512> buffer{};
+    DWORD bytesRead = 0;
+    while (ReadFile(readPipe, buffer.data(), static_cast<DWORD>(buffer.size()),
+            &bytesRead, nullptr) && bytesRead > 0) {
+        output.append(buffer.data(), bytesRead);
+    }
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hProcess);
+    CloseHandle(readPipe);
+    return waitResult == WAIT_OBJECT_0 && exitCode == 0
+        ? std::optional<std::string>{std::move(output)} : std::nullopt;
+}
 
 SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoot) {
     SlimeRigStatus status;
-    const std::string command = "\"" + NodeExecutable(projectRoot).string() + "\" \""
-        + (projectRoot / "tools" / "slimevr_probe.cjs").string() + "\" --summary";
-    if (FILE* pipe = _popen(command.c_str(), "r")) {
-        char buffer[512]{};
-        if (std::fgets(buffer, sizeof(buffer), pipe)) {
-            std::string line(buffer);
-            size_t start = 0;
-            for (size_t index = 0; index < status.slots.size() && start <= line.size(); ++index) {
-                const auto end = line.find('\t', start);
-                const auto value = line.substr(start, end == std::string::npos ? std::string::npos : end - start);
-                status.slots[index].assign(value.begin(), value.end());
-                while (!status.slots[index].empty() && (status.slots[index].back() == L'\n' || status.slots[index].back() == L'\r')) {
-                    status.slots[index].pop_back();
-                }
-                if (end == std::string::npos) break;
-                start = end + 1;
+    std::wstring command = L"\"" + NodeExecutable(projectRoot).wstring() + L"\" \""
+        + (projectRoot / "tools" / "slimevr_probe.cjs").wstring() + L"\" --summary";
+    if (const auto captured = RunHiddenAndCapture(
+            std::move(command), projectRoot, std::chrono::milliseconds(6500))) {
+        status.received = true;
+        const auto newline = captured->find_first_of("\r\n");
+        const std::string line = captured->substr(0, newline);
+        size_t start = 0;
+        for (size_t index = 0; index < status.slots.size() && start <= line.size(); ++index) {
+            const auto end = line.find('\t', start);
+            const auto value = line.substr(
+                start, end == std::string::npos ? std::string::npos : end - start);
+            status.slots[index] = value == "--" ? L"" : Utf8ToWide(value);
+            if (end == std::string::npos) {
+                start = line.size() + 1;
+                break;
             }
-            if (start <= line.size()) status.mountReady = line.substr(start).starts_with("MOUNT_OK");
+            start = end + 1;
         }
-        _pclose(pipe);
+        if (start <= line.size()) {
+            status.mountReady = line.substr(start).starts_with("MOUNT_OK");
+        }
     }
     return status;
 }
@@ -541,6 +836,20 @@ vr::HmdMatrix34_t InnerLeftWristTransform() {
     return transform;
 }
 
+vr::HmdMatrix34_t InnerRightWristTransform() {
+    constexpr float kDiagonal = 0.70710678F;
+    vr::HmdMatrix34_t transform{};
+    transform.m[1][0] = kDiagonal;
+    transform.m[2][0] = -kDiagonal;
+    transform.m[1][1] = -kDiagonal;
+    transform.m[2][1] = -kDiagonal;
+    transform.m[0][2] = -1.0F;
+    transform.m[0][3] = -0.005F;
+    transform.m[1][3] = 0.071F;
+    transform.m[2][3] = 0.189F;
+    return transform;
+}
+
 vr::HmdMatrix34_t MultiplyTransforms(const vr::HmdMatrix34_t& left, const vr::HmdMatrix34_t& right) {
     vr::HmdMatrix34_t result{};
     for (int row = 0; row < 3; ++row) {
@@ -554,6 +863,59 @@ vr::HmdMatrix34_t MultiplyTransforms(const vr::HmdMatrix34_t& left, const vr::Hm
     return result;
 }
 
+vr::HmdMatrix34_t ConfiguredWristTransform(const TtsSettingsState& settings) {
+    constexpr float kDegreesToRadians = 0.01745329252F;
+    const float pitch = settings.wristPitch * kDegreesToRadians;
+    const float yaw = settings.wristYaw * kDegreesToRadians;
+    const float roll = settings.wristRoll * kDegreesToRadians;
+    const float cx = std::cos(pitch);
+    const float sx = std::sin(pitch);
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    const float cz = std::cos(roll);
+    const float sz = std::sin(roll);
+
+    vr::HmdMatrix34_t rotateX{};
+    rotateX.m[0][0] = 1.0F;
+    rotateX.m[1][1] = cx;
+    rotateX.m[1][2] = -sx;
+    rotateX.m[2][1] = sx;
+    rotateX.m[2][2] = cx;
+    vr::HmdMatrix34_t rotateY{};
+    rotateY.m[0][0] = cy;
+    rotateY.m[0][2] = sy;
+    rotateY.m[1][1] = 1.0F;
+    rotateY.m[2][0] = -sy;
+    rotateY.m[2][2] = cy;
+    vr::HmdMatrix34_t rotateZ{};
+    rotateZ.m[0][0] = cz;
+    rotateZ.m[0][1] = -sz;
+    rotateZ.m[1][0] = sz;
+    rotateZ.m[1][1] = cz;
+    rotateZ.m[2][2] = 1.0F;
+    auto adjustment = MultiplyTransforms(rotateZ, MultiplyTransforms(rotateY, rotateX));
+    adjustment.m[0][3] = settings.wristOffsetX;
+    adjustment.m[1][3] = settings.wristOffsetY;
+    adjustment.m[2][3] = settings.wristOffsetZ;
+    return MultiplyTransforms(
+        settings.wristRight ? InnerRightWristTransform() : InnerLeftWristTransform(), adjustment);
+}
+
+vr::ETrackedControllerRole WristControllerRole(const TtsSettingsState& settings) {
+    return settings.wristRight
+        ? vr::TrackedControllerRole_RightHand : vr::TrackedControllerRole_LeftHand;
+}
+
+bool WristPlacementChanged(const TtsSettingsState& left, const TtsSettingsState& right) {
+    return left.wristRight != right.wristRight
+        || left.wristOffsetX != right.wristOffsetX
+        || left.wristOffsetY != right.wristOffsetY
+        || left.wristOffsetZ != right.wristOffsetZ
+        || left.wristPitch != right.wristPitch
+        || left.wristYaw != right.wristYaw
+        || left.wristRoll != right.wristRoll;
+}
+
 struct WristPresentation {
     float gaze{};
     float facing{};
@@ -561,15 +923,15 @@ struct WristPresentation {
 };
 
 std::optional<WristPresentation> ReadWristPresentation(
-        vr::IVRSystem* system, const vr::HmdMatrix34_t& wristTransform) {
-    const auto leftController = system->GetTrackedDeviceIndexForControllerRole(
-        vr::TrackedControllerRole_LeftHand);
-    if (leftController == vr::k_unTrackedDeviceIndexInvalid) return std::nullopt;
+        vr::IVRSystem* system, const vr::HmdMatrix34_t& wristTransform,
+        vr::ETrackedControllerRole wristRole) {
+    const auto wristController = system->GetTrackedDeviceIndexForControllerRole(wristRole);
+    if (wristController == vr::k_unTrackedDeviceIndexInvalid) return std::nullopt;
     std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
     system->GetDeviceToAbsoluteTrackingPose(
         vr::TrackingUniverseStanding, 0.0F, poses.data(), static_cast<uint32_t>(poses.size()));
     const auto& hmd = poses[vr::k_unTrackedDeviceIndex_Hmd];
-    const auto& hand = poses[leftController];
+    const auto& hand = poses[wristController];
     if (!hmd.bPoseIsValid || !hand.bPoseIsValid
         || hmd.eTrackingResult != vr::TrackingResult_Running_OK
         || hand.eTrackingResult != vr::TrackingResult_Running_OK) {
@@ -662,6 +1024,12 @@ void DestroyStaleOverlay(const char* key) {
 
 int main(int argc, char** argv) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool versionRequested = argc > 1 && std::string_view(argv[1]) == "--version";
+    if (versionRequested) {
+        std::cout << "Interfayce " << INTERFAYCE_VERSION << '\n';
+        CoUninitialize();
+        return 0;
+    }
     const bool requestShutdown = argc > 1 && std::string_view(argv[1]) == "--shutdown";
     if (requestShutdown) {
         const HANDLE event = OpenEventW(EVENT_MODIFY_STATE, FALSE, kShutdownEventName);
@@ -696,6 +1064,18 @@ int main(int argc, char** argv) {
                   << "\t127.0.0.1:21110\n"
                   << "SPOTIFY\t" << (spotifyAvailable ? "running" : "offline")
                   << "\tSpotify.exe\n";
+        CoUninitialize();
+        return 0;
+    }
+    const bool slimeSummary = argc > 1 && std::string_view(argv[1]) == "--slime-summary";
+    if (slimeSummary) {
+        const auto root = ProjectRoot(ExecutableDirectory(argv[0]));
+        const auto status = ReadSlimeTrackerBatteries(root);
+        for (size_t index = 0; index < status.slots.size(); ++index) {
+            if (index > 0) std::wcout << L'\t';
+            std::wcout << (status.slots[index].empty() ? L"--" : status.slots[index]);
+        }
+        std::wcout << L'\t' << (status.mountReady ? L"MOUNT_OK" : L"MOUNT_WAIT") << L'\n';
         CoUninitialize();
         return 0;
     }
@@ -763,6 +1143,54 @@ int main(int argc, char** argv) {
         CoUninitialize();
         return receivedFrame ? 0 : 1;
     }
+    const bool windowGeometryProbe = argc > 2
+        && std::string_view(argv[1]) == "--window-geometry-probe";
+    if (windowGeometryProbe) {
+        Microsoft::WRL::ComPtr<ID3D11Device> captureDevice;
+        Microsoft::WRL::ComPtr<ID3D11DeviceContext> captureContext;
+        D3D_FEATURE_LEVEL featureLevel{};
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+                &captureDevice, &featureLevel, &captureContext))) {
+            CoUninitialize();
+            return 1;
+        }
+        const auto query = Utf8ToWide(argv[2]);
+        const auto windows = interfayce::DesktopSurfaceManager{}.EnumerateWindows();
+        const auto source = std::find_if(windows.begin(), windows.end(), [&](const auto& item) {
+            return item.label.find(query) != std::wstring::npos;
+        });
+        if (source == windows.end()) {
+            std::wcerr << L"No captured window matched: " << query << L'\n';
+            CoUninitialize();
+            return 1;
+        }
+        interfayce::DesktopCapture capture;
+        if (!capture.Start(captureDevice.Get(), *source)) {
+            CoUninitialize();
+            return 1;
+        }
+        RECT windowBounds{};
+        RECT frameBounds{};
+        RECT clientBounds{};
+        GetWindowRect(source->window, &windowBounds);
+        DwmGetWindowAttribute(source->window, DWMWA_EXTENDED_FRAME_BOUNDS,
+            &frameBounds, sizeof(frameBounds));
+        GetClientRect(source->window, &clientBounds);
+        POINT clientOrigin{clientBounds.left, clientBounds.top};
+        ClientToScreen(source->window, &clientOrigin);
+        std::wcout << source->label << L"\nWGC=" << capture.Width() << L'x' << capture.Height()
+            << L"\nWINDOW=" << windowBounds.left << L',' << windowBounds.top << L' '
+            << windowBounds.right - windowBounds.left << L'x' << windowBounds.bottom - windowBounds.top
+            << L"\nDWM=" << frameBounds.left << L',' << frameBounds.top << L' '
+            << frameBounds.right - frameBounds.left << L'x' << frameBounds.bottom - frameBounds.top
+            << L"\nCLIENT=" << clientOrigin.x << L',' << clientOrigin.y << L' '
+            << clientBounds.right - clientBounds.left << L'x' << clientBounds.bottom - clientBounds.top
+            << L"\nDPI=" << GetDpiForWindow(source->window) << L'\n';
+        capture.Stop();
+        CoUninitialize();
+        return 0;
+    }
     const bool probeOnly = argc > 1 && std::string_view(argv[1]) == "--probe";
     const bool overlayProbe = argc > 1 && std::string_view(argv[1]) == "--overlay-probe";
     const bool inputCapture = argc > 1 && std::string_view(argv[1]) == "--input-capture";
@@ -786,8 +1214,7 @@ int main(int argc, char** argv) {
     const auto projectRoot = ProjectRoot(directory);
     const auto musicArtPath = UserCacheFile(L"spotify-art.jpg");
     const auto actionManifest = directory / "assets" / "steamvr" / "actions.json";
-    bool voiceServiceAvailable = IsLocalTcpPortOpen(
-        kVoiceServicePort, std::chrono::milliseconds(75));
+    bool voiceServiceAvailable = VoiceServiceAvailable();
     if (!voiceServiceAvailable) LaunchVoiceService(directory, projectRoot);
     bool slimeAvailable = SlimeAdapterAvailable(projectRoot)
         && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
@@ -836,6 +1263,13 @@ int main(int argc, char** argv) {
         kRightHapticActionPath, &rightHapticAction);
 
     interfayce::OverlayRenderer renderer;
+    renderer.SetRigBodyArtPath((directory / "assets" / "ui" / "rig-body-scanner.png").wstring());
+    renderer.SetPlayspaceResetArtPath(
+        (directory / "assets" / "ui" / "playspace-reset.png").wstring());
+    renderer.SetHoloGlyphAtlasPath(
+        (directory / "assets" / "ui" / "holo-glyph-atlas.png").wstring());
+    std::wstring clockText = LocalClockText();
+    renderer.SetClockText(clockText);
     interfayce::BroadcastController broadcast(
         directory / "InterfayceAudioEngine.exe");
     renderer.SetSlimeAvailable(slimeAvailable);
@@ -843,6 +1277,8 @@ int main(int argc, char** argv) {
         voiceServiceAvailable ? L"VOICE READY" : L"VOICE WARMING", false);
     renderer.SetMusicBroadcastState(false, broadcast.StatusText());
     renderer.SetCommsStatus(voiceServiceAvailable ? L"IDLE" : L"VOICE WARMING", L"", false);
+    renderer.SetAssistantStatus(
+        voiceServiceAvailable ? L"READY" : L"VOICE WARMING", L"", L"", false);
     TtsSettingsState ttsSettings;
     if (voiceServiceAvailable) {
         if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
@@ -970,18 +1406,19 @@ int main(int argc, char** argv) {
                       << vr::VROverlay()->GetOverlayErrorNameFromEnum(wristTextureError) << '\n';
         }
     }
-    const auto wristTransform = headsetPanel ? HeadsetCalibrationTransform() : InnerLeftWristTransform();
+    auto wristTransform = headsetPanel
+        ? HeadsetCalibrationTransform() : ConfiguredWristTransform(ttsSettings);
     bool wristAttached = false;
     const auto attachWristOverlay = [&]() {
         const auto device = headsetPanel ? vr::k_unTrackedDeviceIndex_Hmd
-            : system->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
+            : system->GetTrackedDeviceIndexForControllerRole(WristControllerRole(ttsSettings));
         if (device == vr::k_unTrackedDeviceIndexInvalid) {
             return false;
         }
         const auto attachError = vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
             wristOverlay, device, &wristTransform);
         if (attachError != vr::VROverlayError_None) {
-            std::cerr << "Could not attach Interfayce wrist panel to the left controller: "
+            std::cerr << "Could not attach Interfayce wrist panel to the configured controller: "
                       << static_cast<int>(attachError) << '\n';
             return false;
         }
@@ -992,7 +1429,8 @@ int main(int argc, char** argv) {
             return false;
         }
         std::cout << "Interfayce wrist panel attached to "
-                  << (headsetPanel ? "headset calibration view" : "left controller") << ".\n";
+                  << (headsetPanel ? "headset calibration view"
+                      : ttsSettings.wristRight ? "right controller" : "left controller") << ".\n";
         return true;
     };
     wristAttached = attachWristOverlay();
@@ -1022,10 +1460,16 @@ int main(int argc, char** argv) {
     if (!rawPanel && !desktopSurfaces.Initialize(system, renderer.Device())) {
         std::cerr << "Could not initialize desktop surface registry.\n";
     }
+    desktopSurfaces.SetDeckVisible(false);
 
     std::cout << "Interfayce overlay host is running.\n";
     const HANDLE shutdownEvent = CreateEventW(nullptr, TRUE, FALSE, kShutdownEventName);
+    interfayce::TrayIcon tray;
+    if (argc == 1 && !tray.Initialize(GetModuleHandleW(nullptr))) {
+        std::cerr << "Could not create the Interfayce notification icon.\n";
+    }
     bool running = true;
+    bool restartRequested = false;
     const bool boundedCapture = inputCapture || dragPreview || temporaryDrag
         || (argc > 1 && std::string_view(argv[1]) == "--session-drag");
     const auto captureDeadline = std::chrono::steady_clock::now()
@@ -1043,6 +1487,7 @@ int main(int argc, char** argv) {
     bool musicPlaying = false;
     std::wstring desktopLine = DesktopSurfaceLine(0);
     interfayce::DesktopPanelState desktopPanel;
+    std::array<DesktopFavorite, 3> desktopFavorites;
     std::wstring rigLine;
     std::array<std::wstring, 8> rigSlots;
     bool mountReady = false;
@@ -1051,13 +1496,41 @@ int main(int argc, char** argv) {
     std::future<std::wstring> musicVoiceCommand;
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
+    std::array<std::wstring, 4> commsShortcuts;
+    AssistantPanelState assistantState;
+    std::future<std::optional<AssistantPanelState>> assistantCommand;
+    auto nextAssistantPoll = std::chrono::steady_clock::now();
     auto nextCommsPoll = std::chrono::steady_clock::now();
+    auto nextCommsShortcutPoll = std::chrono::steady_clock::now();
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+    auto nextDesktopFavoritePoll = std::chrono::steady_clock::now();
+    std::vector<PendingFavoriteCapture> pendingFavoriteCaptures;
     auto nextRigPoll = std::chrono::steady_clock::now();
+    std::future<SlimeRigStatus> slimeBatteryPoll;
+    std::future<std::optional<std::string>> batteryStatusPost;
+    auto nextControllerBatteryPoll = std::chrono::steady_clock::now();
+    std::array<int, 2> controllerBatteries{-1, -1};
+    static constexpr std::array<const char*, 10> batteryNames{
+        "Left hand", "Right hand", "Left elbow", "Right elbow", "Chest",
+        "Hip", "Left thigh", "Right thigh", "Left foot", "Right foot"};
+    interfayce::BatteryRuntimeEstimator batteryEstimator(
+        UserCacheFile(L"battery-discharge-rates.tsv"));
+    std::wstring batteryEstimateText;
+    int displayedLowestBattery = -1;
+    auto nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     bool restoreHoldActive = false;
+    int restoreHoldSegment = 0;
     bool rigResetHoldActive = false;
+    bool rigResetHoldCompleted = false;
+    bool shutdownHoldActive = false;
     const wchar_t* rigResetKind = nullptr;
     auto restoreHoldStarted = std::chrono::steady_clock::now();
+    auto rigResetHoldStarted = std::chrono::steady_clock::now();
+    auto shutdownHoldStarted = std::chrono::steady_clock::now();
+    auto pressFeedbackUntil = std::chrono::steady_clock::time_point{};
+    bool pressFeedbackActive = false;
+    int rigResetHoldSegment = 0;
+    int shutdownHoldSegment = 0;
     std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
     std::optional<uint64_t> activeScrollSurface;
     double verticalScrollRemainder = 0.0;
@@ -1077,6 +1550,16 @@ int main(int argc, char** argv) {
     };
     auto lastPreviewLog = std::chrono::steady_clock::now();
     while (running && (!boundedCapture || std::chrono::steady_clock::now() < captureDeadline)) {
+        if (const auto trayAction = tray.Poll()) {
+            if (*trayAction == interfayce::TrayAction::OpenSettings) {
+                if (!LaunchDesktopSettings(directory, projectRoot)) {
+                    std::cerr << "Could not launch the desktop settings window.\n";
+                }
+            } else {
+                restartRequested = *trayAction == interfayce::TrayAction::Restart;
+                running = false;
+            }
+        }
         if (shutdownEvent != nullptr && WaitForSingleObject(shutdownEvent, 0) == WAIT_OBJECT_0) {
             running = false;
             continue;
@@ -1084,12 +1567,35 @@ int main(int argc, char** argv) {
         if (!wristAttached) {
             wristAttached = attachWristOverlay();
         }
+        if (std::chrono::steady_clock::now() >= nextClockPoll) {
+            nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            const auto updatedClock = LocalClockText();
+            if (updatedClock != clockText) {
+                clockText = updatedClock;
+                renderer.SetClockText(clockText);
+                if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
+        }
+        if (pressFeedbackActive && std::chrono::steady_clock::now() >= pressFeedbackUntil) {
+            pressFeedbackActive = false;
+            renderer.SetPressFeedback(0.0F, 0.0F, false);
+            if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
         const auto wristFadeNow = std::chrono::steady_clock::now();
         const float wristFadeSeconds = static_cast<float>((std::min)(
             std::chrono::duration<double>(wristFadeNow - lastWristFadeUpdate).count(), 0.05));
         lastWristFadeUpdate = wristFadeNow;
         if (!rawPanel && !headsetPanel) {
-            if (const auto presentation = ReadWristPresentation(system, wristTransform)) {
+            if (const auto presentation = ReadWristPresentation(
+                    system, wristTransform, WristControllerRole(ttsSettings))) {
                 if (wristPresented) {
                     wristPresented = presentation->gaze >= 0.68F
                         && presentation->facing >= 0.28F && presentation->distance <= 1.20F;
@@ -1135,6 +1641,7 @@ int main(int argc, char** argv) {
             sizeof(rightSurfaceGrab), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetAnalogActionData(rightSurfaceScrollAction, &rightSurfaceScroll,
             sizeof(rightSurfaceScroll), vr::k_ulInvalidInputValueHandle);
+        const auto& wristUiClick = ttsSettings.wristRight ? leftUiClick : rightUiClick;
         if (!printedInputDiagnostics) {
             std::array<vr::VRInputValueHandle_t, 16> leftOrigins{};
             std::array<vr::VRInputValueHandle_t, 16> rightOrigins{};
@@ -1165,18 +1672,29 @@ int main(int argc, char** argv) {
         bool desktopNewSurfaceHit = false;
         bool desktopKeyboardSpawnHit = false;
         bool desktopSurfaceListHit = false;
+        std::optional<size_t> desktopFavoriteHit;
         bool desktopListBackHit = false;
+        bool desktopBringAllHit = false;
         bool musicMicHit = false;
         bool musicBroadcastHit = false;
+        bool musicPreviousHit = false;
+        bool musicToggleHit = false;
+        bool musicNextHit = false;
         bool commsMicHit = false;
         bool commsClearHit = false;
+        bool assistantMicHit = false;
+        bool assistantCancelHit = false;
+        bool assistantClearHit = false;
+        std::optional<size_t> commsShortcutHit;
         bool ttsVolumeDownHit = false;
         bool ttsMuteHit = false;
         bool ttsVolumeUpHit = false;
         bool broadcastGainDownHit = false;
         bool broadcastGainUpHit = false;
         bool desktopSettingsHit = false;
+        bool shutdownButtonHit = false;
         std::optional<size_t> desktopBringIndex;
+        std::optional<size_t> desktopLockIndex;
         std::optional<size_t> desktopReuseIndex;
         std::optional<size_t> desktopCloseIndex;
         std::optional<interfayce::DesktopSurfaceHit> desktopSurfaceHit;
@@ -1188,12 +1706,15 @@ int main(int argc, char** argv) {
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
-        const auto pointerRay = ReadPointerRay(system, DragHand::Right);
-        if (pointerRay) {
+        const auto panelPointerRay = ReadPointerRay(
+            system, ttsSettings.wristRight ? DragHand::Left : DragHand::Right);
+        if (panelPointerRay) {
             vr::VROverlayIntersectionParams_t ray{};
             ray.eOrigin = vr::TrackingUniverseStanding;
-            ray.vSource = {{pointerRay->source.x, pointerRay->source.y, pointerRay->source.z}};
-            ray.vDirection = {{pointerRay->direction.x, pointerRay->direction.y, pointerRay->direction.z}};
+            ray.vSource = {{panelPointerRay->source.x, panelPointerRay->source.y,
+                panelPointerRay->source.z}};
+            ray.vDirection = {{panelPointerRay->direction.x, panelPointerRay->direction.y,
+                panelPointerRay->direction.z}};
             if (wristAlpha >= 0.30F
                 && vr::VROverlay()->ComputeOverlayIntersection(wristOverlay, &ray, &panelHit)) {
                 panelHitFound = true;
@@ -1201,64 +1722,104 @@ int main(int argc, char** argv) {
                 const auto y = (1.0F - panelHit.vUVs.v[1]) * 384.0F;
                 panelX = x;
                 panelY = y;
+                const auto circleHit = [&](float centerX, float centerY, float radius) {
+                    const float dx = x - centerX;
+                    const float dy = y - centerY;
+                    return dx * dx + dy * dy <= radius * radius;
+                };
+                const auto restoreX = x - 199.0F;
+                const auto restoreY = y - 250.0F;
                 restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
-                    && x >= 68.0F && x <= 330.0F && y >= 154.0F && y <= 346.0F;
-                musicMicHit = selectedDeck == 0
-                    && x >= 480.0F && x <= 560.0F && y >= 190.0F && y <= 260.0F;
-                musicBroadcastHit = selectedDeck == 0
-                    && x >= 480.0F && x <= 560.0F && y >= 108.0F && y <= 182.0F;
-                commsMicHit = selectedDeck == 5
-                    && x >= 195.0F && x <= 345.0F && y >= 205.0F && y <= 355.0F;
-                commsClearHit = selectedDeck == 5
-                    && x >= 495.0F && x <= 625.0F && y >= 215.0F && y <= 345.0F;
-                ttsVolumeDownHit = selectedDeck == 4
-                    && x >= 126.0F && x <= 226.0F && y >= 250.0F && y <= 350.0F;
-                ttsMuteHit = selectedDeck == 4
-                    && x >= 334.0F && x <= 434.0F && y >= 250.0F && y <= 350.0F;
-                ttsVolumeUpHit = selectedDeck == 4
-                    && x >= 542.0F && x <= 642.0F && y >= 250.0F && y <= 350.0F;
-                broadcastGainDownHit = selectedDeck == 4
-                    && x >= 500.0F && x <= 580.0F && y >= 184.0F && y <= 256.0F;
-                broadcastGainUpHit = selectedDeck == 4
-                    && x >= 610.0F && x <= 690.0F && y >= 184.0F && y <= 256.0F;
-                desktopSettingsHit = selectedDeck == 4
-                    && x >= 650.0F && x <= 730.0F && y >= 94.0F && y <= 170.0F;
-                rigFullResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 42.0F && x <= 350.0F && y >= 320.0F && y <= 366.0F;
-                rigMountResetHit = slimeAvailable && selectedDeck == 3
-                    && x >= 414.0F && x <= 722.0F && y >= 320.0F && y <= 366.0F;
+                    && restoreX * restoreX + restoreY * restoreY <= 98.0F * 98.0F;
+                musicMicHit = selectedDeck == 0 && circleHit(520, 225, 35);
+                musicBroadcastHit = selectedDeck == 0 && circleHit(520, 145, 35);
+                musicPreviousHit = selectedDeck == 0 && spotifyAvailable && circleHit(140, 287, 39);
+                musicToggleHit = selectedDeck == 0 && spotifyAvailable && circleHit(384, 287, 49);
+                musicNextHit = selectedDeck == 0 && spotifyAvailable && circleHit(628, 287, 39);
+                commsClearHit = selectedDeck == 5 && circleHit(560, 285, 40);
+                if (selectedDeck == 5 && y >= 198.0F && y <= 236.0F) {
+                    constexpr std::array<float, 4> shortcutLeft{42, 218, 394, 570};
+                    for (size_t index = 0; index < shortcutLeft.size(); ++index) {
+                        if (!commsShortcuts[index].empty() && x >= shortcutLeft[index]
+                            && x <= shortcutLeft[index] + 156.0F) {
+                            commsShortcutHit = index;
+                            break;
+                        }
+                    }
+                }
+                commsMicHit = selectedDeck == 5 && circleHit(270, 285, 46);
+                assistantMicHit = selectedDeck == 6 && circleHit(220, 286, 49);
+                assistantCancelHit = selectedDeck == 6 && circleHit(384, 286, 40);
+                assistantClearHit = selectedDeck == 6 && circleHit(548, 286, 40);
+                ttsVolumeDownHit = selectedDeck == 4 && circleHit(176, 300, 49);
+                ttsMuteHit = selectedDeck == 4 && circleHit(384, 300, 49);
+                ttsVolumeUpHit = selectedDeck == 4 && circleHit(592, 300, 49);
+                broadcastGainDownHit = selectedDeck == 4 && circleHit(540, 220, 36);
+                broadcastGainUpHit = selectedDeck == 4 && circleHit(650, 220, 36);
+                desktopSettingsHit = selectedDeck == 4 && circleHit(690, 132, 37);
+                shutdownButtonHit = selectedDeck == 4 && circleHit(704, 300, 41);
+                rigFullResetHit = slimeAvailable && selectedDeck == 3 && circleHit(118, 274, 36);
+                rigMountResetHit = slimeAvailable && selectedDeck == 3 && circleHit(650, 274, 36);
                 if (selectedDeck == 1 && desktopPanel.showSurfaceList) {
                     desktopListBackHit = x >= 36.0F && x <= 92.0F && y >= 102.0F && y <= 154.0F;
+                    desktopBringAllHit = !desktopPanel.surfaces.empty() && circleHit(684, 128, 31);
                     if (y >= 166.0F && y < 352.0F) {
                         const auto row = static_cast<size_t>((y - 166.0F) / 62.0F);
                         if (row < desktopPanel.surfaces.size() && row < 3) {
-                            if (x >= 492.0F && x <= 558.0F
+                            const float rowCenterY = 166.0F + static_cast<float>(row) * 62.0F + 25.0F;
+                            if (circleHit(450, rowCenterY, 23)
                                 && desktopPanel.surfaces[row].reusable) desktopReuseIndex = row;
-                            if (x >= 566.0F && x <= 632.0F) desktopBringIndex = row;
-                            if (x >= 640.0F && x <= 712.0F) desktopCloseIndex = row;
+                            if (circleHit(520, rowCenterY, 23)) desktopLockIndex = row;
+                            if (circleHit(590, rowCenterY, 23)) desktopBringIndex = row;
+                            if (circleHit(674, rowCenterY, 23)) desktopCloseIndex = row;
                         }
                     }
                 } else {
-                    desktopNewSurfaceHit = selectedDeck == 1 && x >= 70.0F && x <= 230.0F && y >= 252.0F && y <= 338.0F;
-                    desktopKeyboardSpawnHit = selectedDeck == 1 && x >= 304.0F && x <= 464.0F && y >= 252.0F && y <= 338.0F;
-                    desktopSurfaceListHit = selectedDeck == 1 && x >= 538.0F && x <= 698.0F && y >= 252.0F && y <= 338.0F;
-                }
-            }
-            if (!panelHitFound) {
-                desktopSurfaceHit = desktopSurfaces.HitTest(ray);
-                keyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(ray);
-                if (desktopSurfaceHit && keyboardSurfaceHit) {
-                    if (keyboardSurfaceHit->distance < desktopSurfaceHit->distance) {
-                        desktopSurfaceHit.reset();
-                    } else {
-                        keyboardSurfaceHit.reset();
+                    if (selectedDeck == 1 && y >= 132.0F && y <= 200.0F) {
+                        constexpr std::array<float, 3> favoriteLeft{70, 304, 538};
+                        for (size_t index = 0; index < favoriteLeft.size(); ++index) {
+                            if (!desktopFavorites[index].label.empty()
+                                && x >= favoriteLeft[index]
+                                && x <= favoriteLeft[index] + 160.0F) {
+                                desktopFavoriteHit = index;
+                                break;
+                            }
+                        }
                     }
+                    const auto deskY = y - 278.0F;
+                    const auto newX = x - 150.0F;
+                    const auto keyboardX = x - 384.0F;
+                    const auto listX = x - 618.0F;
+                    desktopNewSurfaceHit = selectedDeck == 1
+                        && newX * newX + deskY * deskY <= 48.0F * 48.0F;
+                    desktopKeyboardSpawnHit = selectedDeck == 1
+                        && keyboardX * keyboardX + deskY * deskY <= 48.0F * 48.0F;
+                    desktopSurfaceListHit = selectedDeck == 1
+                        && listX * listX + deskY * deskY <= 48.0F * 48.0F;
                 }
-                desktopFrameHit = desktopSurfaces.FrameHitTest(ray);
             }
         }
+        const auto rightPointerRay = ReadPointerRay(system, DragHand::Right);
+        if (rightPointerRay && !panelHitFound) {
+            vr::VROverlayIntersectionParams_t rightRay{};
+            rightRay.eOrigin = vr::TrackingUniverseStanding;
+            rightRay.vSource = {{rightPointerRay->source.x, rightPointerRay->source.y,
+                rightPointerRay->source.z}};
+            rightRay.vDirection = {{rightPointerRay->direction.x, rightPointerRay->direction.y,
+                rightPointerRay->direction.z}};
+            desktopSurfaceHit = desktopSurfaces.HitTest(rightRay);
+            keyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(rightRay);
+            if (desktopSurfaceHit && keyboardSurfaceHit) {
+                if (keyboardSurfaceHit->distance < desktopSurfaceHit->distance) {
+                    desktopSurfaceHit.reset();
+                } else {
+                    keyboardSurfaceHit.reset();
+                }
+            }
+            desktopFrameHit = desktopSurfaces.FrameHitTest(rightRay);
+        }
         const auto leftPointerRay = ReadPointerRay(system, DragHand::Left);
-        if (leftPointerRay) {
+        if (leftPointerRay && !panelHitFound) {
             vr::VROverlayIntersectionParams_t leftRay{};
             leftRay.eOrigin = vr::TrackingUniverseStanding;
             leftRay.vSource = {{leftPointerRay->source.x, leftPointerRay->source.y,
@@ -1279,6 +1840,16 @@ int main(int argc, char** argv) {
         desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
         desktopSurfaces.SetHoveredKeyboard(
             keyboardSurfaceHit ? keyboardSurfaceHit : leftKeyboardSurfaceHit);
+        const std::optional<uint64_t> rightAimSurface = keyboardSurfaceHit
+            ? std::optional<uint64_t>{keyboardSurfaceHit->id}
+            : desktopSurfaceHit ? std::optional<uint64_t>{desktopSurfaceHit->id}
+            : desktopFrameHit;
+        const std::optional<uint64_t> leftAimSurface = leftKeyboardSurfaceHit
+            ? std::optional<uint64_t>{leftKeyboardSurfaceHit->id}
+            : leftDesktopSurfaceHit ? std::optional<uint64_t>{leftDesktopSurfaceHit->id}
+            : leftDesktopFrameHit;
+        const auto rightGrabTarget = rightAimSurface;
+        const auto leftGrabTarget = leftAimSurface;
         std::optional<uint64_t> highlightedSurface;
         if (keyboardSurfaceHit) highlightedSurface = keyboardSurfaceHit->id;
         else if (leftKeyboardSurfaceHit) highlightedSurface = leftKeyboardSurfaceHit->id;
@@ -1286,6 +1857,18 @@ int main(int argc, char** argv) {
         else if (leftDesktopSurfaceHit) highlightedSurface = leftDesktopSurfaceHit->id;
         else highlightedSurface = desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit;
         desktopSurfaces.SetHoveredFrame(highlightedSurface);
+        const bool panelActionable = (panelHitFound && panelY <= 82.0F)
+            || restoreButtonHit || rigFullResetHit
+            || (rigMountResetHit && mountReady)
+            || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
+            || desktopFavoriteHit || desktopListBackHit || desktopBringAllHit
+            || desktopBringIndex.has_value() || desktopLockIndex.has_value()
+            || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
+            || musicMicHit || musicBroadcastHit || musicPreviousHit || musicToggleHit || musicNextHit
+            || commsMicHit || commsClearHit || commsShortcutHit.has_value()
+            || assistantMicHit || assistantCancelHit || assistantClearHit
+            || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
+            || broadcastGainDownHit || broadcastGainUpHit || shutdownButtonHit;
         if (panelHitFound) {
             vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0035F);
             vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 11);
@@ -1297,20 +1880,13 @@ int main(int argc, char** argv) {
             localCursor.m[1][3] = (panelHit.vUVs.v[1] - 0.5F) * 0.1025F;
             localCursor.m[2][3] = 0.006F;
             const auto cursorTransform = MultiplyTransforms(wristTransform, localCursor);
-            const auto leftController = system->GetTrackedDeviceIndexForControllerRole(
-                vr::TrackedControllerRole_LeftHand);
-            if (leftController != vr::k_unTrackedDeviceIndexInvalid) {
+            const auto wristController = system->GetTrackedDeviceIndexForControllerRole(
+                WristControllerRole(ttsSettings));
+            if (wristController != vr::k_unTrackedDeviceIndexInvalid) {
                 vr::VROverlay()->SetOverlayTransformTrackedDeviceRelative(
-                    cursorOverlay, leftController, &cursorTransform);
-                const bool actionable = restoreButtonHit || rigFullResetHit || rigMountResetHit
-                    || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
-                    || desktopListBackHit || desktopBringIndex.has_value()
-                    || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
-                    || musicMicHit || musicBroadcastHit || commsMicHit || commsClearHit
-                    || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
-                    || broadcastGainDownHit || broadcastGainUpHit;
+                    cursorOverlay, wristController, &cursorTransform);
                 vr::VROverlay()->SetOverlayColor(cursorOverlay,
-                    actionable ? 0.20F : 0.02F, actionable ? 1.0F : 0.85F, 1.0F);
+                    panelActionable ? 0.20F : 0.02F, panelActionable ? 1.0F : 0.85F, 1.0F);
                 vr::VROverlay()->ShowOverlay(cursorOverlay);
             }
         } else if (keyboardSurfaceHit) {
@@ -1366,20 +1942,20 @@ int main(int argc, char** argv) {
         } else {
             vr::VROverlay()->HideOverlay(leftCursorOverlay);
         }
-        if (leftSurfaceGrab.bChanged && leftSurfaceGrab.bState && leftDesktopFrameHit) {
+        if (leftSurfaceGrab.bChanged && leftSurfaceGrab.bState && leftGrabTarget) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Left)) {
-                if (desktopSurfaces.BeginGrab(*leftDesktopFrameHit,
+                if (desktopSurfaces.BeginGrab(*leftGrabTarget,
                         interfayce::DesktopGrabHand::Left, *handPose)) {
-                    std::cout << "Desktop surface " << *leftDesktopFrameHit
+                    std::cout << "Desktop surface " << *leftGrabTarget
                               << " grabbed with left hand.\n";
                 }
             }
         }
-        if (rightSurfaceGrab.bChanged && rightSurfaceGrab.bState && desktopFrameHit) {
+        if (rightSurfaceGrab.bChanged && rightSurfaceGrab.bState && rightGrabTarget) {
             if (const auto handPose = ReadControllerPose(system, DragHand::Right)) {
-                if (desktopSurfaces.BeginGrab(*desktopFrameHit,
+                if (desktopSurfaces.BeginGrab(*rightGrabTarget,
                         interfayce::DesktopGrabHand::Right, *handPose)) {
-                    std::cout << "Desktop surface " << *desktopFrameHit
+                    std::cout << "Desktop surface " << *rightGrabTarget
                               << " grabbed with right hand.\n";
                 }
             }
@@ -1400,7 +1976,20 @@ int main(int argc, char** argv) {
         if (rightSurfaceGrab.bChanged && !rightSurfaceGrab.bState) {
             desktopSurfaces.EndGrab(interfayce::DesktopGrabHand::Right);
         }
-        if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit) {
+        if (wristUiClick.bChanged && wristUiClick.bState && panelHitFound && panelActionable) {
+            pressFeedbackActive = true;
+            pressFeedbackUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(130);
+            renderer.SetPressFeedback(panelX, panelY, true);
+            const auto feedbackHaptic = ttsSettings.wristRight ? leftHapticAction : rightHapticAction;
+            vr::VRInput()->TriggerHapticVibrationAction(feedbackHaptic, 0.0F, 0.025F, 105.0F,
+                ttsSettings.hapticStrength * 0.65F, vr::k_ulInvalidInputValueHandle);
+            if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
+        if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit && !panelHitFound) {
             if (desktopSurfaces.ActivateKeyboardHit(*leftKeyboardSurfaceHit)) {
                 vr::VRInput()->TriggerHapticVibrationAction(
                     leftHapticAction, 0.0F, 0.035F, 115.0F, ttsSettings.hapticStrength,
@@ -1419,18 +2008,23 @@ int main(int argc, char** argv) {
                         interfayce::DesktopPointerEvent::PrimaryDown)) {
                     activeDesktopPointer = desktopSurfaceHit;
                 }
-            } else if (desktopSurfaces.ActivateHit(*desktopSurfaceHit)) {
-                if (desktopSurfaceHit->sourceIndex) {
-                    desktopPanel.surfaces = desktopSurfaces.Summaries();
-                    std::cout << "Desktop source assigned to surface " << desktopSurfaceHit->id << '\n';
+            } else {
+                const auto selectedSource = desktopSurfaces.SourceForHit(*desktopSurfaceHit);
+                if (desktopSurfaces.ActivateHit(*desktopSurfaceHit)) {
+                    if (selectedSource) RecordDesktopRecent(*selectedSource);
+                    if (desktopSurfaceHit->sourceIndex) {
+                        desktopPanel.surfaces = desktopSurfaces.Summaries();
+                        std::cout << "Desktop source assigned to surface "
+                                  << desktopSurfaceHit->id << '\n';
+                    }
+                } else if (desktopSurfaceHit->sourceIndex || desktopSurfaceHit->pageDelta != 0) {
+                    std::cerr << "Could not start selected desktop capture\n";
                 }
-            } else if (desktopSurfaceHit->sourceIndex || desktopSurfaceHit->pageDelta != 0) {
-                std::cerr << "Could not start selected desktop capture\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && panelHitFound && panelY <= 82.0F) {
-            const int requestedDeck = panelX < 129.0F ? 0 : panelX < 253.0F ? 5
-                : panelX < 359.0F ? 1 : panelX < 485.0F ? 2
-                : panelX < 613.0F ? 3 : 4;
+        } else if (wristUiClick.bChanged && wristUiClick.bState && panelHitFound && panelY <= 82.0F) {
+            const int requestedDeck = panelX < 115.0F ? 0 : panelX < 209.0F ? 5
+                : panelX < 303.0F ? 6 : panelX < 397.0F ? 1
+                : panelX < 491.0F ? 2 : panelX < 585.0F ? 3 : 4;
             if (requestedDeck == 0) {
                 spotifyAvailable = IsProcessRunning(L"Spotify.exe");
                 if (spotifyAvailable) {
@@ -1445,23 +2039,16 @@ int main(int argc, char** argv) {
             if (requestedDeck == 1) {
                 desktopPanel.showSurfaceList = false;
                 desktopPanel.surfaces = desktopSurfaces.Summaries();
+                if (const auto favorites = RequestDesktopFavorites()) {
+                    desktopFavorites = *favorites;
+                    for (size_t index = 0; index < favorites->size(); ++index) {
+                        desktopPanel.favorites[index] = (*favorites)[index].label;
+                    }
+                }
                 desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
             }
             if (requestedDeck == 3) {
                 rigLine = ReadControllerBatteryLine(system);
-                if (slimeAvailable
-                    && !IsLocalTcpPortOpen(21110, std::chrono::milliseconds(100))) {
-                    slimeAvailable = false;
-                    renderer.SetSlimeAvailable(false);
-                }
-                if (slimeAvailable) {
-                    const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
-                    rigSlots = slimeStatus.slots;
-                    mountReady = slimeStatus.mountReady;
-                } else {
-                    rigSlots = {};
-                    mountReady = false;
-                }
             }
             if (requestedDeck == 4) {
                 if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
@@ -1470,22 +2057,40 @@ int main(int argc, char** argv) {
                     static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
             }
             if (requestedDeck == 5) {
+                if (const auto labels = RequestCommsShortcutLabels()) {
+                    commsShortcuts = *labels;
+                    renderer.SetCommsShortcuts(commsShortcuts);
+                }
                 if (const auto current = RequestCommsState("GET", "/comms/status")) {
                     commsState = *current;
                     renderer.SetCommsStatus(
                         commsState.status, commsState.transcript, commsState.active);
                 }
                 nextCommsPoll = std::chrono::steady_clock::now();
+                nextCommsShortcutPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            }
+            if (requestedDeck == 6) {
+                if (const auto current = RequestAssistantState("GET", "/assistant/status")) {
+                    assistantState = *current;
+                    renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                        assistantState.response, assistantState.active);
+                }
+                nextAssistantPoll = std::chrono::steady_clock::now();
             }
             if (requestedDeck != selectedDeck && renderer.Initialize(
                     system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
                     requestedDeck == 0 && !spotifyAvailable ? L"" : musicArtPath.wstring(),
                     rigLine, rigSlots, mountReady, desktopPanel)) {
                 selectedDeck = requestedDeck;
+                desktopSurfaces.SetDeckVisible(selectedDeck == 1);
+                if (selectedDeck != 1) {
+                    vr::VROverlay()->HideOverlay(cursorOverlay);
+                    vr::VROverlay()->HideOverlay(leftCursorOverlay);
+                }
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && musicBroadcastHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && musicBroadcastHit) {
             if (broadcast.Enabled()) {
                 broadcast.Stop();
                 renderer.SetMusicBroadcastState(false, broadcast.StatusText());
@@ -1504,10 +2109,9 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && musicMicHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && musicMicHit) {
             if (!musicVoiceCommand.valid()) {
-                voiceServiceAvailable = IsLocalTcpPortOpen(
-                    kVoiceServicePort, std::chrono::milliseconds(75));
+                voiceServiceAvailable = VoiceServiceAvailable();
                 if (!voiceServiceAvailable) {
                     LaunchVoiceService(directory, projectRoot);
                     renderer.SetMusicVoiceStatus(L"VOICE WARMING", false);
@@ -1522,10 +2126,24 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState
+        } else if (wristUiClick.bChanged && wristUiClick.bState && commsShortcutHit) {
+            const auto path = "/comms/shortcut/" + std::to_string(*commsShortcutHit);
+            if (const auto changed = RequestCommsState("POST", path)) {
+                commsState = *changed;
+            } else {
+                commsState = {L"COMMS ERROR", L"Shortcut service did not respond", false};
+            }
+            renderer.SetCommsStatus(
+                commsState.status, commsState.transcript, commsState.active);
+            nextCommsPoll = std::chrono::steady_clock::now();
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (commsMicHit || commsClearHit)) {
-            voiceServiceAvailable = IsLocalTcpPortOpen(
-                kVoiceServicePort, std::chrono::milliseconds(75));
+            voiceServiceAvailable = VoiceServiceAvailable();
             if (!voiceServiceAvailable) {
                 LaunchVoiceService(directory, projectRoot);
                 commsState = {L"VOICE WARMING", L"", false};
@@ -1543,7 +2161,36 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState
+        } else if (wristUiClick.bChanged && wristUiClick.bState
+                   && (assistantMicHit || assistantCancelHit || assistantClearHit)) {
+            voiceServiceAvailable = VoiceServiceAvailable();
+            if (!voiceServiceAvailable) {
+                LaunchVoiceService(directory, projectRoot);
+                assistantState = {L"VOICE WARMING", L"", L"", false};
+            } else if (assistantMicHit && !assistantCommand.valid()) {
+                assistantState = {L"LISTENING", L"", L"", true};
+                assistantCommand = std::async(std::launch::async, [] {
+                    return RequestAssistantState("POST", "/listen/assistant",
+                        std::chrono::seconds(60));
+                });
+            } else if (assistantCancelHit && assistantCommand.valid()) {
+                if (const auto changed = RequestAssistantState("POST", "/assistant/cancel")) {
+                    assistantState = *changed;
+                }
+            } else if (assistantClearHit && !assistantCommand.valid()) {
+                if (const auto changed = RequestAssistantState("POST", "/assistant/clear")) {
+                    assistantState = *changed;
+                }
+            }
+            renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                assistantState.response, assistantState.active);
+            nextAssistantPoll = std::chrono::steady_clock::now();
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (broadcastGainDownHit || broadcastGainUpHit)) {
             const auto path = broadcastGainDownHit
                 ? "/settings/broadcast/gain/down" : "/settings/broadcast/gain/up";
@@ -1568,7 +2215,7 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState
+        } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit)) {
             const auto path = ttsVolumeDownHit ? "/settings/tts/volume/down"
                 : ttsVolumeUpHit ? "/settings/tts/volume/up"
@@ -1582,22 +2229,54 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSettingsHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopSettingsHit) {
             if (!LaunchDesktopSettings(directory, projectRoot)) {
                 std::cerr << "Could not launch the desktop settings window.\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && selectedDeck == 0
-                   && panelY >= 245.0F && panelY <= 333.0F) {
-            if (!spotifyAvailable) {
-                // Controls remain inert while no Spotify media session can exist.
-            } else if (panelX >= 70.0F && panelX <= 210.0F) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && shutdownButtonHit) {
+            shutdownHoldActive = true;
+            shutdownHoldStarted = std::chrono::steady_clock::now();
+            shutdownHoldSegment = 1;
+            renderer.SetShutdownHoldProgress(1.0F / 12.0F);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState
+                   && (musicPreviousHit || musicToggleHit || musicNextHit)) {
+            if (musicPreviousHit) {
                 LaunchSpotifyControl(projectRoot, L"previous");
-            } else if (panelX >= 314.0F && panelX <= 454.0F) {
+            } else if (musicToggleHit) {
                 LaunchSpotifyControl(projectRoot, L"toggle");
-            } else if (panelX >= 558.0F && panelX <= 698.0F) {
+            } else if (musicNextHit) {
                 LaunchSpotifyControl(projectRoot, L"next");
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopNewSurfaceHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopFavoriteHit) {
+            const auto& favorite = desktopFavorites[*desktopFavoriteHit];
+            const auto sources = desktopSourceManager.EnumerateSources();
+            const auto surfaceId = desktopSurfaces.SpawnPicker(sources);
+            if (surfaceId != 0) {
+                if (const auto runningWindow = desktopSourceManager.FindWindowForTarget(
+                        favorite.executable)) {
+                    if (desktopSurfaces.AssignSource(surfaceId, *runningWindow)) {
+                        RecordDesktopRecent(*runningWindow);
+                    }
+                } else if (desktopSourceManager.LaunchTarget(favorite.executable)) {
+                    const auto now = std::chrono::steady_clock::now();
+                    pendingFavoriteCaptures.push_back({
+                        surfaceId, favorite.executable, now + std::chrono::milliseconds(150),
+                        now + std::chrono::seconds(10)});
+                }
+                desktopPanel.surfaces = desktopSurfaces.Summaries();
+                desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+                if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopNewSurfaceHit) {
             const auto sources = desktopSourceManager.EnumerateSources();
             const auto surfaceId = desktopSurfaces.SpawnPicker(sources);
             if (surfaceId != 0) {
@@ -1613,7 +2292,7 @@ int main(int argc, char** argv) {
             } else {
                 std::cerr << "Could not spawn desktop picker surface\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopKeyboardSpawnHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopKeyboardSpawnHit) {
             const auto keyboardId = desktopSurfaces.SpawnKeyboard();
             if (keyboardId != 0) {
                 desktopPanel.surfaces = desktopSurfaces.Summaries();
@@ -1627,7 +2306,7 @@ int main(int argc, char** argv) {
             } else {
                 std::cerr << "Could not spawn keyboard surface\n";
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceListHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopSurfaceListHit) {
             desktopPanel.showSurfaceList = true;
             desktopPanel.surfaces = desktopSurfaces.Summaries();
             if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
@@ -1635,16 +2314,26 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopListBackHit) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopListBackHit) {
             desktopPanel.showSurfaceList = false;
             if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
                     rigLine, rigSlots, mountReady, desktopPanel)) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopBringIndex) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopBringAllHit) {
+            desktopSurfaces.BringAllToMe();
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopLockIndex) {
+            desktopSurfaces.ToggleLocked(desktopPanel.surfaces[*desktopLockIndex].id);
+            desktopPanel.surfaces = desktopSurfaces.Summaries();
+            if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopBringIndex) {
             desktopSurfaces.BringToMe(desktopPanel.surfaces[*desktopBringIndex].id);
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopReuseIndex) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopReuseIndex) {
             const auto sources = desktopSourceManager.EnumerateSources();
             desktopSurfaces.ReturnToPicker(
                 desktopPanel.surfaces[*desktopReuseIndex].id, sources);
@@ -1655,7 +2344,7 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopCloseIndex) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopCloseIndex) {
             desktopSurfaces.Close(desktopPanel.surfaces[*desktopCloseIndex].id);
             desktopPanel.surfaces = desktopSurfaces.Summaries();
             desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
@@ -1664,13 +2353,30 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && restoreButtonHit && selectedDeck == 2) {
+        } else if (wristUiClick.bChanged && wristUiClick.bState && restoreButtonHit && selectedDeck == 2) {
             restoreHoldActive = true;
             restoreHoldStarted = std::chrono::steady_clock::now();
-        } else if (rightUiClick.bChanged && rightUiClick.bState && (rigFullResetHit || (rigMountResetHit && mountReady))) {
+            restoreHoldSegment = 1;
+            renderer.SetPlayspaceHoldProgress(1.0F / 12.0F);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && (rigFullResetHit || (rigMountResetHit && mountReady))) {
             rigResetHoldActive = true;
+            rigResetHoldCompleted = false;
             rigResetKind = rigFullResetHit ? L"full" : L"mounting";
-            restoreHoldStarted = std::chrono::steady_clock::now();
+            rigResetHoldStarted = std::chrono::steady_clock::now();
+            rigResetHoldSegment = 1;
+            renderer.SetRigHoldProgress(
+                rigFullResetHit ? 1.0F / 12.0F : 0.0F,
+                rigMountResetHit ? 1.0F / 12.0F : 0.0F);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
         }
         if (rightUiClick.bState && activeDesktopPointer && desktopSurfaceHit
             && desktopSurfaceHit->captured && desktopSurfaceHit->id == activeDesktopPointer->id) {
@@ -1739,8 +2445,7 @@ int main(int argc, char** argv) {
             }
             if (!voiceServiceAvailable && musicNow >= nextVoiceHealthPoll) {
                 nextVoiceHealthPoll = musicNow + std::chrono::seconds(1);
-                voiceServiceAvailable = IsLocalTcpPortOpen(
-                    kVoiceServicePort, std::chrono::milliseconds(75));
+                voiceServiceAvailable = VoiceServiceAvailable();
                 if (voiceServiceAvailable) {
                     renderer.SetMusicVoiceStatus(L"VOICE READY", false);
                     if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
@@ -1803,14 +2508,115 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (selectedDeck == 5
+            && std::chrono::steady_clock::now() >= nextCommsShortcutPoll) {
+            nextCommsShortcutPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            if (const auto labels = RequestCommsShortcutLabels(); labels && *labels != commsShortcuts) {
+                commsShortcuts = *labels;
+                renderer.SetCommsShortcuts(commsShortcuts);
+                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
+        }
+        if (assistantCommand.valid()
+            && assistantCommand.wait_for(std::chrono::milliseconds(0))
+                == std::future_status::ready) {
+            if (const auto completed = assistantCommand.get()) assistantState = *completed;
+            else assistantState = {L"ERROR", assistantState.transcript,
+                L"Voice service did not respond", false};
+            renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                assistantState.response, assistantState.active);
+            if (selectedDeck == 6 && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
+        if (selectedDeck == 6
+            && std::chrono::steady_clock::now() >= nextAssistantPoll) {
+            nextAssistantPoll = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+            if (const auto current = RequestAssistantState("GET", "/assistant/status")) {
+                if (current->status != assistantState.status
+                    || current->transcript != assistantState.transcript
+                    || current->response != assistantState.response) {
+                    assistantState = *current;
+                    renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                        assistantState.response, assistantState.active);
+                    if (renderer.Initialize(system, selectedDeck, musicLine,
+                            musicArtPath.wstring(), rigLine, rigSlots,
+                            mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                }
+            }
+        }
+        bool favoriteCaptureChanged = false;
+        const auto favoriteNow = std::chrono::steady_clock::now();
+        for (auto pending = pendingFavoriteCaptures.begin();
+             pending != pendingFavoriteCaptures.end();) {
+            if (favoriteNow >= pending->deadline) {
+                pending = pendingFavoriteCaptures.erase(pending);
+                favoriteCaptureChanged = true;
+                continue;
+            }
+            if (favoriteNow < pending->nextPoll) {
+                ++pending;
+                continue;
+            }
+            pending->nextPoll = favoriteNow + std::chrono::milliseconds(150);
+            if (const auto source = desktopSourceManager.FindWindowForTarget(
+                    pending->executable)) {
+                if (desktopSurfaces.AssignSource(pending->surfaceId, *source)) {
+                    RecordDesktopRecent(*source);
+                }
+                pending = pendingFavoriteCaptures.erase(pending);
+                favoriteCaptureChanged = true;
+            } else {
+                ++pending;
+            }
+        }
+        if (favoriteCaptureChanged) {
+            desktopPanel.surfaces = desktopSurfaces.Summaries();
+            desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
+            if (selectedDeck == 1 && renderer.Initialize(system, selectedDeck, desktopLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
+        if (selectedDeck == 1
+            && std::chrono::steady_clock::now() >= nextDesktopFavoritePoll) {
+            nextDesktopFavoritePoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            if (const auto favorites = RequestDesktopFavorites();
+                    favorites && *favorites != desktopFavorites) {
+                desktopFavorites = *favorites;
+                for (size_t index = 0; index < favorites->size(); ++index) {
+                    desktopPanel.favorites[index] = (*favorites)[index].label;
+                }
+                if (renderer.Initialize(system, selectedDeck, desktopLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
+        }
         if (std::chrono::steady_clock::now() >= nextRuntimeSettingsPoll) {
             nextRuntimeSettingsPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             if (const auto loaded = ReadTtsSettings()) {
                 const bool wristDisplayChanged = loaded->volumePercent != ttsSettings.volumePercent
                     || loaded->muted != ttsSettings.muted
                     || loaded->broadcastGainDb != ttsSettings.broadcastGainDb;
+                const bool wristPlacementChanged = WristPlacementChanged(*loaded, ttsSettings);
                 ttsSettings = *loaded;
                 broadcast.SetGainDb(ttsSettings.broadcastGainDb);
+                if (wristPlacementChanged && !headsetPanel) {
+                    wristTransform = ConfiguredWristTransform(ttsSettings);
+                    wristAttached = attachWristOverlay();
+                }
                 if (selectedDeck == 4 && wristDisplayChanged) {
                     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
                     renderer.SetBroadcastGainDb(
@@ -1823,35 +2629,94 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (selectedDeck == 3 && slimeAvailable
-            && std::chrono::steady_clock::now() >= nextRigPoll) {
-            nextRigPoll = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-            if (!IsLocalTcpPortOpen(21110, std::chrono::milliseconds(100))) {
-                slimeAvailable = false;
-                renderer.SetSlimeAvailable(false);
-                rigSlots = {};
-                mountReady = false;
-                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                        ReadControllerBatteryLine(system), rigSlots, mountReady, desktopPanel)) {
-                    const auto updatedTexture = renderer.Texture();
-                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-                }
-                continue;
-            }
-            const auto updatedRigLine = ReadControllerBatteryLine(system);
-            const auto slimeStatus = ReadSlimeTrackerBatteries(projectRoot);
-            const auto updatedRigSlots = slimeStatus.slots;
-            if ((updatedRigLine != rigLine || updatedRigSlots != rigSlots)
-                && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                    updatedRigLine, updatedRigSlots, slimeStatus.mountReady)) {
-                rigLine = updatedRigLine;
-                rigSlots = updatedRigSlots;
-                mountReady = slimeStatus.mountReady;
-                const auto updatedTexture = renderer.Texture();
-                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+        const auto batteryNow = std::chrono::steady_clock::now();
+        bool batteryStateChanged = false;
+        bool batterySampleReady = false;
+        bool batteryHeaderChanged = false;
+        if (batteryStatusPost.valid()
+            && batteryStatusPost.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            batteryStatusPost.get();
+        }
+        if (batteryNow >= nextControllerBatteryPoll) {
+            nextControllerBatteryPoll = batteryNow + std::chrono::seconds(15);
+            const std::array<int, 2> updated{
+                ReadControllerBatteryPercent(system, vr::TrackedControllerRole_LeftHand),
+                ReadControllerBatteryPercent(system, vr::TrackedControllerRole_RightHand)};
+            batteryStateChanged = updated != controllerBatteries;
+            batterySampleReady = true;
+            controllerBatteries = updated;
+            rigLine = ReadControllerBatteryLine(system);
+        }
+        if (slimeAvailable && !slimeBatteryPoll.valid() && batteryNow >= nextRigPoll) {
+            nextRigPoll = batteryNow + std::chrono::seconds(30);
+            slimeBatteryPoll = std::async(std::launch::async,
+                [projectRoot] { return ReadSlimeTrackerBatteries(projectRoot); });
+        }
+        if (slimeBatteryPoll.valid()
+            && slimeBatteryPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            const auto updated = slimeBatteryPoll.get();
+            if (updated.received) {
+                batteryStateChanged = batteryStateChanged || updated.slots != rigSlots
+                    || updated.mountReady != mountReady;
+                batterySampleReady = true;
+                rigSlots = updated.slots;
+                mountReady = updated.mountReady;
             }
         }
-        if (rightUiClick.bChanged && !rightUiClick.bState && restoreHoldActive) {
+        if (batterySampleReady) {
+            bool learnedRateChanged = false;
+            for (size_t index = 0; index < controllerBatteries.size(); ++index) {
+                learnedRateChanged = batteryEstimator.Observe(
+                    batteryNames[index], controllerBatteries[index], batteryNow)
+                    || learnedRateChanged;
+            }
+            for (size_t index = 0; index < rigSlots.size(); ++index) {
+                const int percent = rigSlots[index].empty() ? -1 : _wtoi(rigSlots[index].c_str());
+                learnedRateChanged = batteryEstimator.Observe(
+                    batteryNames[index + 2], percent, batteryNow) || learnedRateChanged;
+            }
+            if (learnedRateChanged && !batteryEstimator.Save()) {
+                std::cerr << "Could not save learned battery discharge rates\n";
+            }
+            const auto estimate = batteryEstimator.Estimate();
+            const auto estimateText = interfayce::FormatBatteryEstimate(estimate);
+            batteryHeaderChanged = estimateText != batteryEstimateText
+                || estimate.lowestPercent != displayedLowestBattery;
+            if (batteryHeaderChanged) {
+                batteryEstimateText = estimateText;
+                displayedLowestBattery = estimate.lowestPercent;
+                renderer.SetBatteryEstimate(batteryEstimateText, displayedLowestBattery);
+            }
+        }
+        if (batteryStateChanged) {
+            std::string payload;
+            for (size_t index = 0; index < controllerBatteries.size(); ++index) {
+                if (controllerBatteries[index] >= 0) {
+                    payload += std::string(batteryNames[index]) + "="
+                        + std::to_string(controllerBatteries[index]) + "\n";
+                }
+            }
+            for (size_t index = 0; index < rigSlots.size(); ++index) {
+                const int percent = rigSlots[index].empty() ? -1 : _wtoi(rigSlots[index].c_str());
+                if (percent >= 0) {
+                    payload += std::string(batteryNames[index + 2]) + "="
+                        + std::to_string(percent) + "\n";
+                }
+            }
+            if (!payload.empty() && !batteryStatusPost.valid()) {
+                batteryStatusPost = std::async(std::launch::async, [payload] {
+                    return LocalHttpRequest(
+                        "POST", "/battery/status", std::chrono::seconds(2), payload);
+                });
+            }
+        }
+        if ((batteryHeaderChanged || (batteryStateChanged && selectedDeck == 3))
+            && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                rigLine, rigSlots, mountReady, desktopPanel)) {
+            const auto updatedTexture = renderer.Texture();
+            vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+        }
+        if (wristUiClick.bChanged && !wristUiClick.bState && restoreHoldActive) {
             const auto heldFor = std::chrono::steady_clock::now() - restoreHoldStarted;
             if (restoreButtonHit && heldFor >= std::chrono::milliseconds(750)) {
                 restoreBaseline(sessionBaseline, "wrist restore control");
@@ -1867,16 +2732,103 @@ int main(int argc, char** argv) {
                 std::cout << "wrist restore cancelled: hold for 0.75 seconds\n";
             }
             restoreHoldActive = false;
-        }
-        if (rightUiClick.bChanged && !rightUiClick.bState && rigResetHoldActive) {
-            const auto heldFor = std::chrono::steady_clock::now() - restoreHoldStarted;
-            const bool stillOnControl = rigResetKind == std::wstring_view(L"full") ? rigFullResetHit : rigMountResetHit;
-            if (stillOnControl && heldFor >= std::chrono::milliseconds(1000)) {
-                LaunchSlimeReset(projectRoot, rigResetKind);
-                std::cout << "SlimeVR " << (rigResetKind == std::wstring_view(L"full") ? "full" : "mounting") << " reset requested\n";
+            restoreHoldSegment = 0;
+            renderer.SetPlayspaceHoldProgress(0.0F);
+            if (selectedDeck == 2 && renderer.Initialize(system, selectedDeck, musicLine,
+                    musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
-            rigResetHoldActive = false;
-            rigResetKind = nullptr;
+        }
+        if (restoreHoldActive && wristUiClick.bState && restoreButtonHit) {
+            const auto elapsed = std::chrono::steady_clock::now() - restoreHoldStarted;
+            constexpr float restoreSeconds = 0.75F;
+            const float progress = (std::min)(1.0F,
+                std::chrono::duration<float>(elapsed).count() / restoreSeconds);
+            const int segment = (std::min)(12, 1 + static_cast<int>(progress * 12.0F));
+            if (segment != restoreHoldSegment) {
+                restoreHoldSegment = segment;
+                renderer.SetPlayspaceHoldProgress(progress);
+                if (selectedDeck == 2 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            }
+        }
+        if (shutdownHoldActive) {
+            const bool stillHolding = wristUiClick.bState && shutdownButtonHit;
+            const auto elapsed = std::chrono::steady_clock::now() - shutdownHoldStarted;
+            constexpr auto requiredHold = std::chrono::seconds(3);
+            if (!stillHolding) {
+                shutdownHoldActive = false;
+                shutdownHoldSegment = 0;
+                renderer.SetShutdownHoldProgress(0.0F);
+                if (selectedDeck == 4 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else if (elapsed >= requiredHold) {
+                renderer.SetShutdownHoldProgress(1.0F);
+                running = false;
+            } else {
+                const float progress = std::chrono::duration<float>(elapsed).count() / 3.0F;
+                const int segment = (std::min)(12,
+                    1 + static_cast<int>(progress * 12.0F));
+                if (segment != shutdownHoldSegment) {
+                    shutdownHoldSegment = segment;
+                    renderer.SetShutdownHoldProgress(progress);
+                    if (selectedDeck == 4 && renderer.Initialize(system, selectedDeck, musicLine,
+                            musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                }
+            }
+        }
+        if (rigResetHoldActive) {
+            const bool fullReset = rigResetKind == std::wstring_view(L"full");
+            const bool stillHolding = wristUiClick.bState
+                && (fullReset ? rigFullResetHit : (rigMountResetHit && mountReady));
+            const auto elapsed = std::chrono::steady_clock::now() - rigResetHoldStarted;
+            if (!stillHolding) {
+                rigResetHoldActive = false;
+                rigResetHoldCompleted = false;
+                rigResetHoldSegment = 0;
+                rigResetKind = nullptr;
+                renderer.SetRigHoldProgress(0.0F, 0.0F);
+                if (selectedDeck == 3 && renderer.Initialize(system, selectedDeck, musicLine,
+                        musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else if (!rigResetHoldCompleted && elapsed >= std::chrono::seconds(1)) {
+                rigResetHoldCompleted = true;
+                renderer.SetRigHoldProgress(fullReset ? 1.0F : 0.0F, fullReset ? 0.0F : 1.0F);
+                LaunchSlimeReset(projectRoot, rigResetKind);
+                std::cout << "SlimeVR " << (fullReset ? "full" : "mounting")
+                          << " reset requested\n";
+                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto updatedTexture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                }
+            } else if (!rigResetHoldCompleted) {
+                const float progress = std::chrono::duration<float>(elapsed).count();
+                const int segment = (std::min)(12,
+                    1 + static_cast<int>(progress * 12.0F));
+                if (segment != rigResetHoldSegment) {
+                    rigResetHoldSegment = segment;
+                    renderer.SetRigHoldProgress(
+                        fullReset ? progress : 0.0F, fullReset ? 0.0F : progress);
+                    if (renderer.Initialize(system, selectedDeck, musicLine,
+                            musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                }
+            }
         }
 
         const auto desiredHand = leftDrag.bState ? DragHand::Left
@@ -1944,10 +2896,13 @@ int main(int argc, char** argv) {
                 }
             }
             if ((temporaryDrag || sessionDrag) && (temporaryBaseline || sessionBaseline)) {
-                constexpr float kMaximumTemporaryDragMeters = 2.0F;
-                if (std::abs(previewOffset.x) > kMaximumTemporaryDragMeters
-                    || std::abs(previewOffset.y) > kMaximumTemporaryDragMeters
-                    || std::abs(previewOffset.z) > kMaximumTemporaryDragMeters) {
+                // This is a configurable tracking-fault guard, not a fixed
+                // assumption about the user's useful playspace travel.
+                const float maximumSessionOffsetMeters =
+                    ttsSettings.playspaceTravelLimitMeters;
+                if (std::abs(previewOffset.x) > maximumSessionOffsetMeters
+                    || std::abs(previewOffset.y) > maximumSessionOffsetMeters
+                    || std::abs(previewOffset.z) > maximumSessionOffsetMeters) {
                     std::cerr << "session drag cancelled: implausible offset\n";
                     restoreBaseline(temporaryBaseline, "temporary drag");
                     restoreBaseline(sessionBaseline, "session drag");
@@ -1985,10 +2940,22 @@ int main(int argc, char** argv) {
     broadcast.Stop();
     desktopSurfaces.Shutdown();
     LocalHttpRequest("POST", "/shutdown", std::chrono::seconds(2));
+    if (restartRequested) {
+        const auto serviceDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (std::chrono::steady_clock::now() < serviceDeadline
+               && IsLocalTcpPortOpen(kVoiceServicePort, std::chrono::milliseconds(50))) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
     vr::VROverlay()->DestroyOverlay(wristOverlay);
     vr::VROverlay()->DestroyOverlay(cursorOverlay);
     vr::VROverlay()->DestroyOverlay(leftCursorOverlay);
     if (shutdownEvent != nullptr) CloseHandle(shutdownEvent);
+    tray.Shutdown();
     vr::VR_Shutdown();
+    CoUninitialize();
+    if (restartRequested && !RelaunchInterfayce(std::filesystem::absolute(argv[0]), directory)) {
+        return 1;
+    }
     return 0;
 }

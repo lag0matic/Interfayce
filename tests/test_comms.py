@@ -61,6 +61,14 @@ class CommsDictationTests(unittest.TestCase):
         self.assertEqual(osc.clears, 1)
         self.assertEqual(snapshot.state, "CLEARED")
 
+    def test_shortcut_sends_bounded_normalized_message(self):
+        osc = FakeOsc()
+        comms = CommsDictation(FakeTranscriber(), threading.Lock(), osc=osc)
+        snapshot = comms.send_shortcut("  Be   right back.  ")
+        self.assertEqual(osc.messages, ["Be right back."])
+        self.assertEqual(snapshot.state, "SHORTCUT")
+        self.assertEqual(snapshot.transcript, "Be right back.")
+
     def test_refuses_to_cross_route_while_other_voice_capture_owns_lock(self):
         lock = threading.Lock()
         lock.acquire()
@@ -98,6 +106,19 @@ class CommsDictationTests(unittest.TestCase):
         self.assertEqual(len(osc.messages[0]), 144)
         comms.toggle()
         release.set()
+
+    def test_auto_stops_after_three_seconds_of_silence(self):
+        def capture(**_kwargs):
+            time.sleep(0.01)
+            raise type("WaitTimeoutError", (Exception,), {})()
+
+        comms = CommsDictation(FakeTranscriber(), threading.Lock(), capture=capture,
+                               osc=FakeOsc(), silence_auto_stop_seconds=0.04)
+        self.assertEqual(comms.toggle().state, "LISTENING")
+        deadline = time.monotonic() + 1.0
+        while comms.snapshot().state != "IDLE" and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(comms.snapshot().state, "IDLE")
 
 
 if __name__ == "__main__":

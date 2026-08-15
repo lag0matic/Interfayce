@@ -73,6 +73,90 @@ class LlmClientTests(unittest.TestCase):
         read_key.assert_not_called()
         send.assert_not_called()
 
+    def test_plain_http_is_limited_to_loopback(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SECURE_DIRECTORY": directory
+        }):
+            set_api_key("secret-token")
+            remote = OpenAiCompatibleClient(AppSettings(
+                llm_enabled=True, llm_endpoint="http://example.test/v1", llm_model="model"))
+            self.assertFalse(remote.configured)
+            with self.assertRaisesRegex(LlmError, "HTTPS"):
+                remote.chat_json(system="s", user="u")
+
+            local = OpenAiCompatibleClient(AppSettings(
+                llm_enabled=True, llm_endpoint="http://127.0.0.1:8080/v1", llm_model="model"))
+            self.assertTrue(local.configured)
+
+    def test_general_chat_round_trips_validated_tool_calls(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SECURE_DIRECTORY": directory
+        }):
+            set_api_key("secret-token")
+            response = _Response({
+                "choices": [{"message": {
+                    "content": None,
+                    "tool_calls": [{
+                        "id": "call_weather",
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"location":"Richmond, Indiana"}',
+                        },
+                    }],
+                }}],
+                "usage": {},
+            })
+            client = OpenAiCompatibleClient(AppSettings(
+                llm_enabled=True,
+                llm_endpoint="https://example.test/v1",
+                llm_model="example-model",
+            ))
+            with patch("interfayce.llm_client.urlopen", return_value=response) as send:
+                result = client.chat(
+                    messages=[{"role": "user", "content": "Weather?"}],
+                    tools=[{
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "description": "Return current weather for a location.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"location": {"type": "string"}},
+                                "required": ["location"],
+                            },
+                        },
+                    }],
+                )
+            body = json.loads(send.call_args.args[0].data)
+            self.assertEqual(body["tool_choice"], "auto")
+            self.assertNotIn("response_format", body)
+            self.assertEqual(result.content, "")
+            self.assertEqual(result.tool_calls[0].name, "get_weather")
+            self.assertEqual(result.tool_calls[0].arguments,
+                             {"location": "Richmond, Indiana"})
+
+    def test_malformed_tool_arguments_fail_closed(self) -> None:
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SECURE_DIRECTORY": directory
+        }):
+            set_api_key("secret-token")
+            response = _Response({"choices": [{"message": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_bad",
+                    "type": "function",
+                    "function": {"name": "tool", "arguments": "[]"},
+                }],
+            }}]})
+            with patch("interfayce.llm_client.urlopen", return_value=response):
+                with self.assertRaisesRegex(LlmError, "JSON object"):
+                    OpenAiCompatibleClient(AppSettings(
+                        llm_enabled=True,
+                        llm_endpoint="https://example.test/v1",
+                        llm_model="example-model",
+                    )).chat(messages=[{"role": "user", "content": "test"}])
+
 
 if __name__ == "__main__":
     unittest.main()

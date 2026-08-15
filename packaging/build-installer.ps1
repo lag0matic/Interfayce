@@ -12,7 +12,9 @@ $work = Join-Path $PSScriptRoot ".work"
 $protocolRoot = Join-Path $cache "solarxr-protocol"
 $protocolCommit = "00c38a6dc28070b30850a89c26b17928e56245d4"
 $nodeVersion = "24.15.0"
-$appVersion = "0.1.0"
+$appVersion = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
+$parakeetModel = Join-Path $projectRoot "models\parakeet"
+$parakeetFiles = @("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
 
 function Reset-GeneratedDirectory([string]$path) {
     $resolvedParent = [IO.Path]::GetFullPath((Split-Path -Parent $path))
@@ -28,6 +30,11 @@ function Reset-GeneratedDirectory([string]$path) {
 
 Push-Location $projectRoot
 try {
+    foreach ($modelFile in $parakeetFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $parakeetModel $modelFile))) {
+            throw "Required local Parakeet model file is missing: $modelFile"
+        }
+    }
     if (-not $SkipNativeBuild) {
         if (Get-Process InterfayceOverlay -ErrorAction SilentlyContinue) {
             & "native\build\bin\InterfayceOverlay.exe" --shutdown
@@ -90,13 +97,18 @@ try {
     Copy-Item (Join-Path $nodeExtract "node.exe"),(Join-Path $nodeExtract "LICENSE") `
         (Join-Path $stage "runtime")
     Copy-Item assets\branding\interfayce-icon-1024.png (Join-Path $stage "Interfayce.png")
+    New-Item -ItemType Directory -Path (Join-Path $stage "models\parakeet") -Force | Out-Null
+    Copy-Item -LiteralPath ($parakeetFiles | ForEach-Object { Join-Path $parakeetModel $_ }) `
+        -Destination (Join-Path $stage "models\parakeet")
+    Copy-Item -LiteralPath (Join-Path $parakeetModel "MODEL-SOURCE.md") `
+        -Destination (Join-Path $stage "models\parakeet")
 
     $iscc = @(
         "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
         "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $iscc) { throw "Inno Setup 6 is required to build the installer." }
-    & $iscc (Join-Path $PSScriptRoot "Interfayce.iss")
+    & $iscc "/DAppVersion=$appVersion" (Join-Path $PSScriptRoot "Interfayce.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
 
     Get-FileHash (Join-Path $outRoot "installer\Interfayce-Setup-$appVersion.exe") -Algorithm SHA256

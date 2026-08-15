@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "interfayce"
-version = "0.1.0"
+version = "1.2.0"
 description = "Personal VRChat cockpit groundwork"
 requires-python = ">=3.11"
 license = { text = "Private" }
 readme = "README.md"
 dependencies = [
+    "tzdata>=2025.2,<2027",
     "winrt-Windows.Foundation>=3.2,<4",
     "winrt-Windows.Foundation.Collections>=3.2,<4",
     "winrt-Windows.Media.Control>=3.2,<4",

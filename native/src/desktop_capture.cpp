@@ -159,6 +159,14 @@ float DesktopCapture::AspectRatio() const {
     return impl_->height > 0 ? static_cast<float>(impl_->width) / static_cast<float>(impl_->height) : 1.0F;
 }
 
+int DesktopCapture::Width() const {
+    return impl_->width;
+}
+
+int DesktopCapture::Height() const {
+    return impl_->height;
+}
+
 void DesktopCapture::Stop() {
     if (!impl_) return;
     try {

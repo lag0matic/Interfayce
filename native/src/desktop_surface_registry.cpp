@@ -20,6 +20,8 @@ constexpr UINT kKeyboardHeight = 440;
 constexpr float kFrameAspectRatio = 128.0F;
 constexpr float kGlowAspectRatio = 16.0F;
 
+enum class KeyboardCommand { None, Copy, Paste };
+
 struct KeyboardKeyDefinition {
     D2D1_RECT_F bounds{};
     std::wstring label;
@@ -28,6 +30,7 @@ struct KeyboardKeyDefinition {
     bool togglesShift{};
     bool togglesControl{};
     bool togglesAlt{};
+    KeyboardCommand command{KeyboardCommand::None};
 };
 
 std::vector<KeyboardKeyDefinition> KeyboardLayout(bool shifted) {
@@ -54,10 +57,10 @@ std::vector<KeyboardKeyDefinition> KeyboardLayout(bool shifted) {
     keys.push_back({D2D1::RectF(24, 340, 114, 420), L"CTRL", 0, 0, false, true});
     keys.push_back({D2D1::RectF(126, 340, 216, 420), L"ALT", 0, 0, false, false, true});
     keys.push_back({D2D1::RectF(228, 340, 920, 420), L"SPACE", L' '});
-    keys.push_back({D2D1::RectF(932, 340, 986, 420), L"LEFT", 0, VK_LEFT});
-    keys.push_back({D2D1::RectF(994, 340, 1048, 420), L"DOWN", 0, VK_DOWN});
-    keys.push_back({D2D1::RectF(1056, 340, 1110, 420), L"UP", 0, VK_UP});
-    keys.push_back({D2D1::RectF(1118, 340, 1176, 420), L"RIGHT", 0, VK_RIGHT});
+    keys.push_back({D2D1::RectF(932, 340, 1050, 420), L"", 0, 0,
+        false, false, false, KeyboardCommand::Copy});
+    keys.push_back({D2D1::RectF(1058, 340, 1176, 420), L"", 0, 0,
+        false, false, false, KeyboardCommand::Paste});
     return keys;
 }
 
@@ -150,8 +153,6 @@ std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source,
         bounds = info.rcMonitor;
     } else {
         if (source.window == nullptr || !IsWindow(source.window)) return std::nullopt;
-        if (IsIconic(source.window)) ShowWindowAsync(source.window, SW_RESTORE);
-        SetForegroundWindow(source.window);
         if (FAILED(DwmGetWindowAttribute(source.window, DWMWA_EXTENDED_FRAME_BOUNDS,
                 &bounds, sizeof(bounds))) && !GetWindowRect(source.window, &bounds)) return std::nullopt;
     }
@@ -163,21 +164,65 @@ std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source,
     };
 }
 
+void PrepareWindowForInput(HWND window) {
+    if (window == nullptr || !IsWindow(window)) return;
+    if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
+    SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    BringWindowToTop(window);
+    SetForegroundWindow(window);
+}
+
 bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent event) {
     const auto virtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
     const auto virtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const auto virtualWidth = (std::max)(GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1, 1);
     const auto virtualHeight = (std::max)(GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1, 1);
-    INPUT input{};
-    input.type = INPUT_MOUSE;
-    input.mi.dx = static_cast<LONG>(std::lround(
+    INPUT movement{};
+    movement.type = INPUT_MOUSE;
+    movement.mi.dx = static_cast<LONG>(std::lround(
         static_cast<double>(point.x - virtualLeft) * 65535.0 / virtualWidth));
-    input.mi.dy = static_cast<LONG>(std::lround(
+    movement.mi.dy = static_cast<LONG>(std::lround(
         static_cast<double>(point.y - virtualTop) * 65535.0 / virtualHeight));
-    input.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE;
-    if (event == interfayce::DesktopPointerEvent::PrimaryDown) input.mi.dwFlags |= MOUSEEVENTF_LEFTDOWN;
-    if (event == interfayce::DesktopPointerEvent::PrimaryUp) input.mi.dwFlags |= MOUSEEVENTF_LEFTUP;
-    return SendInput(1, &input, sizeof(input)) == 1;
+    movement.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
+        | MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE;
+    if (event == interfayce::DesktopPointerEvent::Move) {
+        return SendInput(1, &movement, sizeof(movement)) == 1;
+    }
+    INPUT button{};
+    button.type = INPUT_MOUSE;
+    button.mi.dwFlags = event == interfayce::DesktopPointerEvent::PrimaryDown
+        ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
+    std::array<INPUT, 2> inputs{movement, button};
+    return SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT))
+        == inputs.size();
+}
+
+bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
+                         interfayce::DesktopPointerEvent event) {
+    if (rootWindow == nullptr || !IsWindow(rootWindow)) return false;
+    // Some retained-mode/web UI frameworks validate posted client messages
+    // against the global cursor position. Keep both coordinate spaces aligned.
+    SetCursorPos(screenPoint.x, screenPoint.y);
+    HWND target = WindowFromPoint(screenPoint);
+    if (target == nullptr
+        || (target != rootWindow && !IsChild(rootWindow, target))) {
+        target = rootWindow;
+    }
+    POINT clientPoint = screenPoint;
+    if (!ScreenToClient(target, &clientPoint)) return false;
+    const LPARAM coordinates = MAKELPARAM(
+        static_cast<short>(clientPoint.x), static_cast<short>(clientPoint.y));
+    const WPARAM buttons = event == interfayce::DesktopPointerEvent::PrimaryUp
+        ? 0 : MK_LBUTTON;
+    if (!PostMessageW(target, WM_MOUSEMOVE,
+            event == interfayce::DesktopPointerEvent::Move ? buttons : 0, coordinates)) {
+        return false;
+    }
+    const UINT message = event == interfayce::DesktopPointerEvent::PrimaryDown
+        ? WM_LBUTTONDOWN : event == interfayce::DesktopPointerEvent::PrimaryUp
+            ? WM_LBUTTONUP : 0;
+    return message == 0 || PostMessageW(target, message, buttons, coordinates) != FALSE;
 }
 
 bool InjectDesktopScroll(const POINT point, int32_t verticalDelta, int32_t horizontalDelta) {
@@ -208,6 +253,14 @@ bool InjectKeyboardKey(const KeyboardKeyDefinition& key, bool controlled, bool a
         input.ki.dwFlags = release ? KEYEVENTF_KEYUP : 0;
         inputs.push_back(input);
     };
+    if (key.command != KeyboardCommand::None) {
+        addVirtual(VK_CONTROL, false);
+        addVirtual(key.command == KeyboardCommand::Copy ? 'C' : 'V', false);
+        addVirtual(key.command == KeyboardCommand::Copy ? 'C' : 'V', true);
+        addVirtual(VK_CONTROL, true);
+        const auto count = static_cast<UINT>(inputs.size());
+        return SendInput(count, inputs.data(), sizeof(INPUT)) == count;
+    }
     if (controlled) addVirtual(VK_CONTROL, false);
     if (altered) addVirtual(VK_MENU, false);
     if (key.character != 0 && (controlled || altered)) {
@@ -502,9 +555,33 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
         context_->DrawRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
             pressed ? cyanBrush_.Get() : modifierSelected ? violetBrush_.Get() : violetDimBrush_.Get(),
             pressed ? 3.0F : modifierSelected ? 2.0F : 1.0F);
-        drawText(key.label, itemFormat_.Get(),
-            D2D1::RectF(key.bounds.left + 8, key.bounds.top + 18,
-                key.bounds.right - 8, key.bounds.bottom - 8), textBrush_.Get());
+        if (key.command == KeyboardCommand::Copy) {
+            auto* brush = pressed ? cyanBrush_.Get() : textBrush_.Get();
+            const float centerX = (key.bounds.left + key.bounds.right) * 0.5F;
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 22, key.bounds.top + 20,
+                    centerX + 12, key.bounds.bottom - 15), 3, 3), brush, 2.2F);
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 10, key.bounds.top + 13,
+                    centerX + 24, key.bounds.bottom - 22), 3, 3), brush, 2.2F);
+        } else if (key.command == KeyboardCommand::Paste) {
+            auto* brush = pressed ? cyanBrush_.Get() : textBrush_.Get();
+            const float centerX = (key.bounds.left + key.bounds.right) * 0.5F;
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 22, key.bounds.top + 20,
+                    centerX + 22, key.bounds.bottom - 13), 4, 4), brush, 2.2F);
+            context_->FillRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(centerX - 10, key.bounds.top + 13,
+                    centerX + 10, key.bounds.top + 25), 4, 4), brush);
+            context_->DrawLine(D2D1::Point2F(centerX - 12, key.bounds.top + 42),
+                D2D1::Point2F(centerX + 12, key.bounds.top + 42), brush, 1.7F);
+            context_->DrawLine(D2D1::Point2F(centerX - 12, key.bounds.top + 52),
+                D2D1::Point2F(centerX + 7, key.bounds.top + 52), brush, 1.7F);
+        } else {
+            drawText(key.label, itemFormat_.Get(),
+                D2D1::RectF(key.bounds.left + 8, key.bounds.top + 18,
+                    key.bounds.right - 8, key.bounds.bottom - 8), textBrush_.Get());
+        }
     }
     return SUCCEEDED(context_->EndDraw());
 }
@@ -718,7 +795,7 @@ uint64_t DesktopSurfaceRegistry::SpawnKeyboard() {
     surface.overlayKey = "com.lag0matic.interfayce.keyboard";
     surface.label = L"Keyboard";
     surface.keyboard = true;
-    surface.widthMeters = 0.96F;
+    surface.widthMeters = 0.72F;
     surface.aspectRatio = static_cast<float>(kKeyboardWidth) / kKeyboardHeight;
     surface.texture = std::make_unique<DesktopPickerTexture>();
     std::wstring targetLabel;
@@ -753,6 +830,7 @@ uint64_t DesktopSurfaceRegistry::SpawnKeyboard() {
 
 std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
         const vr::VROverlayIntersectionParams_t& ray) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<DesktopSurfaceHit> nearest;
     for (const auto& surface : surfaces_) {
         if (!surface.visible || surface.keyboard) continue;
@@ -785,6 +863,7 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::HitTest(
 std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::SurfaceAimHitTest(
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<DesktopSurfaceHit> nearest;
     const auto dot = [](const vr::HmdVector3_t& left, const vr::HmdVector3_t& right) {
         return left.v[0] * right.v[0] + left.v[1] * right.v[1] + left.v[2] * right.v[2];
@@ -833,6 +912,7 @@ std::optional<DesktopSurfaceHit> DesktopSurfaceRegistry::SurfaceAimHitTest(
 std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
         const vr::VROverlayIntersectionParams_t& ray,
         float edgeToleranceMeters) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<KeyboardSurfaceHit> nearest;
     for (const auto& surface : surfaces_) {
         if (!surface.visible || !surface.keyboard) continue;
@@ -883,6 +963,7 @@ std::optional<KeyboardSurfaceHit> DesktopSurfaceRegistry::KeyboardHitTest(
 
 std::optional<uint64_t> DesktopSurfaceRegistry::FrameHitTest(
         const vr::VROverlayIntersectionParams_t& ray) const {
+    if (!deckVisible_) return std::nullopt;
     std::optional<uint64_t> nearestId;
     float nearestDistance = (std::numeric_limits<float>::max)();
     for (const auto& surface : surfaces_) {
@@ -898,6 +979,15 @@ std::optional<uint64_t> DesktopSurfaceRegistry::FrameHitTest(
         }
     }
     return nearestId;
+}
+
+std::optional<DesktopSource> DesktopSurfaceRegistry::SourceForHit(
+        const DesktopSurfaceHit& hit) const {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [&hit](const auto& surface) { return surface.id == hit.id; });
+    if (found == surfaces_.end() || found->capture || !hit.sourceIndex
+        || *hit.sourceIndex >= found->sources.size()) return std::nullopt;
+    return found->sources[*hit.sourceIndex];
 }
 
 bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
@@ -931,15 +1021,30 @@ bool DesktopSurfaceRegistry::ActivateHit(const DesktopSurfaceHit& hit) {
             == vr::VROverlayError_None;
     }
     if (!hit.sourceIndex || *hit.sourceIndex >= found->sources.size()) return false;
+    return AssignSource(hit.id, found->sources[*hit.sourceIndex]);
+}
+
+bool DesktopSurfaceRegistry::AssignSource(uint64_t id, const DesktopSource& source) {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [id](const auto& surface) { return surface.id == id; });
+    if (found == surfaces_.end() || found->capture || found->keyboard) return false;
+    auto sourceIndex = std::find_if(found->sources.begin(), found->sources.end(),
+        [&source](const auto& candidate) {
+            return candidate.kind == source.kind && candidate.id == source.id;
+        });
+    if (sourceIndex == found->sources.end()) {
+        found->sources.push_back(source);
+        sourceIndex = std::prev(found->sources.end());
+    }
     auto capture = std::make_unique<DesktopCapture>();
-    if (!capture->Start(device_, found->sources[*hit.sourceIndex])) return false;
+    if (!capture->Start(device_, *sourceIndex)) return false;
     const auto texture = capture->Texture();
     if (vr::VROverlay()->SetOverlayTexture(found->overlay, &texture) != vr::VROverlayError_None) {
         capture->Stop();
         return false;
     }
-    found->label = found->sources[*hit.sourceIndex].label;
-    found->assignedSource = *hit.sourceIndex;
+    found->label = sourceIndex->label;
+    found->assignedSource = static_cast<size_t>(std::distance(found->sources.begin(), sourceIndex));
     found->hoveredSource.reset();
     found->aspectRatio = capture->AspectRatio();
     found->capture = std::move(capture);
@@ -954,7 +1059,11 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
     if (found == surfaces_.end() || !found->capture || !found->assignedSource
         || *found->assignedSource >= found->sources.size()) return false;
     if (event == DesktopPointerEvent::PrimaryDown) {
-        focusedSurfaceId_ = found->id;
+        RememberFocusedSurface(found->id);
+        const auto& source = found->sources[*found->assignedSource];
+        if (source.kind == DesktopSource::Kind::Window) {
+            PrepareWindowForInput(source.window);
+        }
         for (auto& surface : surfaces_) {
             if (surface.keyboard) {
                 surface.texture->RenderKeyboard(
@@ -963,8 +1072,46 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
             }
         }
     }
-    const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
-    return point && InjectDesktopPointer(*point, event);
+    const auto& source = found->sources[*found->assignedSource];
+    const auto point = DesktopPointForHit(source, hit.u, hit.v);
+    const bool injected = point && (source.kind == DesktopSource::Kind::Window
+        ? InjectWindowPointer(source.window, *point, event)
+        : InjectDesktopPointer(*point, event));
+    return injected;
+}
+
+void DesktopSurfaceRegistry::RememberFocusedSurface(uint64_t id) {
+    focusHistory_.erase(std::remove(focusHistory_.begin(), focusHistory_.end(), id),
+        focusHistory_.end());
+    focusHistory_.push_back(id);
+    focusedSurfaceId_ = id;
+}
+
+void DesktopSurfaceRegistry::ForgetFocusedSurface(uint64_t id) {
+    focusHistory_.erase(std::remove(focusHistory_.begin(), focusHistory_.end(), id),
+        focusHistory_.end());
+    if (!focusedSurfaceId_ || *focusedSurfaceId_ != id) return;
+    focusedSurfaceId_.reset();
+    std::wstring targetLabel;
+    while (!focusHistory_.empty()) {
+        const auto candidateId = focusHistory_.back();
+        const auto candidate = std::find_if(surfaces_.begin(), surfaces_.end(),
+            [candidateId](const auto& surface) {
+                return surface.id == candidateId && surface.capture;
+            });
+        if (candidate != surfaces_.end()) {
+            focusedSurfaceId_ = candidateId;
+            targetLabel = candidate->label;
+            break;
+        }
+        focusHistory_.pop_back();
+    }
+    for (auto& surface : surfaces_) {
+        if (surface.keyboard) {
+            surface.texture->RenderKeyboard(targetLabel, surface.keyboardShifted,
+                surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
+        }
+    }
 }
 
 bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
@@ -1002,8 +1149,7 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
             || *target->assignedSource >= target->sources.size()) return false;
         const auto& source = target->sources[*target->assignedSource];
         if (source.kind == DesktopSource::Kind::Window && source.window != nullptr) {
-            if (IsIconic(source.window)) ShowWindowAsync(source.window, SW_RESTORE);
-            SetForegroundWindow(source.window);
+            PrepareWindowForInput(source.window);
         }
         if (!InjectKeyboardKey(key, keyboard->keyboardControlled, keyboard->keyboardAltered)) {
             return false;
@@ -1096,7 +1242,31 @@ void DesktopSurfaceRegistry::SetHoveredFrame(std::optional<uint64_t> id) {
     }
 }
 
+void DesktopSurfaceRegistry::SetDeckVisible(bool visible) {
+    if (deckVisible_ == visible) return;
+    deckVisible_ = visible;
+    for (auto& grab : activeGrabs_) grab.reset();
+    activeScale_.reset();
+
+    for (auto& surface : surfaces_) {
+        if (!visible) {
+            vr::VROverlay()->HideOverlay(surface.overlay);
+            for (const auto frame : surface.frameOverlays) vr::VROverlay()->HideOverlay(frame);
+            for (const auto glow : surface.glowOverlays) vr::VROverlay()->HideOverlay(glow);
+            continue;
+        }
+        surface.visible = vr::VROverlay()->ShowOverlay(surface.overlay)
+            == vr::VROverlayError_None;
+        if (!surface.visible) continue;
+        for (const auto frame : surface.frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+        for (const auto glow : surface.glowOverlays) vr::VROverlay()->ShowOverlay(glow);
+    }
+}
+
 void DesktopSurfaceRegistry::Update() {
+    // Keep Windows capture sessions alive for instant restoration, but do not
+    // copy frames or update OpenVR textures while the Desk deck is parked.
+    if (!deckVisible_) return;
     for (auto& surface : surfaces_) {
         if (surface.keyboard && surface.pressedKey
             && std::chrono::steady_clock::now() >= surface.keyFlashUntil) {
@@ -1112,7 +1282,15 @@ void DesktopSurfaceRegistry::Update() {
                 surface.hoveredKey, std::nullopt);
         }
         if (!surface.capture) continue;
-        const auto result = surface.capture->Update();
+        bool sourceLost = false;
+        if (surface.assignedSource && *surface.assignedSource < surface.sources.size()) {
+            const auto& source = surface.sources[*surface.assignedSource];
+            sourceLost = source.kind == DesktopSource::Kind::Window
+                && (source.window == nullptr || !IsWindow(source.window)
+                    || !IsWindowVisible(source.window));
+        }
+        const auto result = sourceLost
+            ? DesktopCapture::UpdateResult::Closed : surface.capture->Update();
         if (result == DesktopCapture::UpdateResult::TextureChanged) {
             const auto texture = surface.capture->Texture();
             vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
@@ -1120,22 +1298,18 @@ void DesktopSurfaceRegistry::Update() {
             UpdateFrameOverlays(surface);
         } else if (result == DesktopCapture::UpdateResult::Closed
                    || result == DesktopCapture::UpdateResult::Failed) {
-            surface.capture->Stop();
-            surface.capture.reset();
-            if (focusedSurfaceId_ && *focusedSurfaceId_ == surface.id) focusedSurfaceId_.reset();
-            surface.assignedSource.reset();
-            surface.label = L"Choose source";
-            surface.applicationPage = 0;
-            surface.aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
-            surface.texture->Render(surface.sources);
-            const auto texture = surface.texture->Texture();
-            vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture);
-            UpdateFrameOverlays(surface);
+            const auto surfaceId = surface.id;
+            ReturnToPicker(surfaceId, DesktopSurfaceManager{}.EnumerateSources());
         }
     }
 }
 
 bool DesktopSurfaceRegistry::PlaceAtEyeLine(Surface& surface) const {
+    return PlaceRelativeToHmd(surface, 0.0F, surface.keyboard ? -0.28F : -0.04F, -1.05F);
+}
+
+bool DesktopSurfaceRegistry::PlaceRelativeToHmd(
+        Surface& surface, float x, float y, float z) const {
     std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
     system_->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0F, poses.data(),
         static_cast<uint32_t>(poses.size()));
@@ -1145,8 +1319,9 @@ bool DesktopSurfaceRegistry::PlaceAtEyeLine(Surface& surface) const {
     offset.m[0][0] = 1.0F;
     offset.m[1][1] = 1.0F;
     offset.m[2][2] = 1.0F;
-    offset.m[1][3] = surface.keyboard ? -0.28F : -0.04F;
-    offset.m[2][3] = -1.05F;
+    offset.m[0][3] = x;
+    offset.m[1][3] = y;
+    offset.m[2][3] = z;
     const auto transform = Multiply(hmd.mDeviceToAbsoluteTracking, offset);
     if (vr::VROverlay()->SetOverlayTransformAbsolute(surface.overlay,
             vr::TrackingUniverseStanding, &transform) != vr::VROverlayError_None) return false;
@@ -1166,6 +1341,63 @@ bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
     return found->visible;
 }
 
+bool DesktopSurfaceRegistry::BringAllToMe() {
+    if (surfaces_.empty()) return false;
+    for (auto& grab : activeGrabs_) grab.reset();
+    activeScale_.reset();
+
+    std::vector<Surface*> desktops;
+    Surface* keyboard = nullptr;
+    for (auto& surface : surfaces_) {
+        if (surface.keyboard) keyboard = &surface;
+        else desktops.push_back(&surface);
+    }
+
+    bool allPlaced = true;
+    constexpr size_t kColumns = 3;
+    for (size_t index = 0; index < desktops.size(); ++index) {
+        const auto row = index / kColumns;
+        const auto rowStart = row * kColumns;
+        const auto rowCount = (std::min)(kColumns, desktops.size() - rowStart);
+        const auto column = index - rowStart;
+        const float x = (static_cast<float>(column)
+            - static_cast<float>(rowCount - 1) * 0.5F) * 0.72F;
+        const float y = (keyboard ? 0.12F : -0.04F) - static_cast<float>(row) * 0.48F;
+        const float z = -1.10F - std::abs(x) * 0.08F;
+        allPlaced = PlaceRelativeToHmd(*desktops[index], x, y, z) && allPlaced;
+    }
+    if (keyboard) {
+        const float keyboardY = desktops.empty() ? -0.28F : -0.43F;
+        allPlaced = PlaceRelativeToHmd(*keyboard, 0.0F, keyboardY, -0.92F) && allPlaced;
+    }
+
+    for (auto& surface : surfaces_) {
+        surface.visible = vr::VROverlay()->ShowOverlay(surface.overlay)
+            == vr::VROverlayError_None;
+        if (!surface.visible) {
+            allPlaced = false;
+            continue;
+        }
+        for (const auto frame : surface.frameOverlays) vr::VROverlay()->ShowOverlay(frame);
+        for (const auto glow : surface.glowOverlays) vr::VROverlay()->ShowOverlay(glow);
+    }
+    return allPlaced;
+}
+
+bool DesktopSurfaceRegistry::ToggleLocked(uint64_t id) {
+    const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
+        [id](const auto& surface) { return surface.id == id; });
+    if (found == surfaces_.end()) return false;
+    found->locked = !found->locked;
+    if (found->locked) {
+        for (auto& grab : activeGrabs_) {
+            if (grab && grab->id == id) grab.reset();
+        }
+        if (activeScale_ && activeScale_->id == id) activeScale_.reset();
+    }
+    return true;
+}
+
 bool DesktopSurfaceRegistry::ReturnToPicker(
         uint64_t id, const std::vector<DesktopSource>& sources) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
@@ -1183,15 +1415,7 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
     found->applicationPage = 0;
     found->label = L"Choose source";
     found->aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
-    if (focusedSurfaceId_ && *focusedSurfaceId_ == id) {
-        focusedSurfaceId_.reset();
-        for (auto& surface : surfaces_) {
-            if (surface.keyboard) {
-                surface.texture->RenderKeyboard(L"", surface.keyboardShifted,
-                    surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
-            }
-        }
-    }
+    ForgetFocusedSurface(id);
     if (!found->texture->Render(found->sources)) return false;
     found->additionalPickerPages.clear();
     const auto applicationCount = static_cast<size_t>(std::count_if(
@@ -1219,15 +1443,7 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
         if (grab && grab->id == id) grab.reset();
     }
     if (activeScale_ && activeScale_->id == id) activeScale_.reset();
-    if (focusedSurfaceId_ && *focusedSurfaceId_ == id) {
-        focusedSurfaceId_.reset();
-        for (auto& surface : surfaces_) {
-            if (surface.keyboard && surface.id != id) {
-                surface.texture->RenderKeyboard(L"", surface.keyboardShifted,
-                    surface.keyboardControlled, surface.keyboardAltered, surface.hoveredKey);
-            }
-        }
-    }
+    ForgetFocusedSurface(id);
     DestroySurfaceOverlays(*found);
     surfaces_.erase(found);
     return true;
@@ -1237,7 +1453,7 @@ bool DesktopSurfaceRegistry::BeginGrab(uint64_t id, DesktopGrabHand hand,
                                        const vr::HmdMatrix34_t& handTransform) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
-    if (found == surfaces_.end()) return false;
+    if (found == surfaces_.end() || found->locked) return false;
     const auto index = GrabIndex(hand);
     activeGrabs_[index] = GrabState{
         id, Multiply(InverseRigid(handTransform), found->transform), handTransform};
@@ -1321,7 +1537,7 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
     summaries.reserve(surfaces_.size());
     for (const auto& surface : surfaces_) {
         summaries.push_back({surface.id, surface.label, surface.visible,
-            !surface.keyboard && surface.capture != nullptr});
+            !surface.keyboard && surface.capture != nullptr, surface.locked});
     }
     return summaries;
 }
@@ -1330,6 +1546,7 @@ void DesktopSurfaceRegistry::Shutdown() {
     for (auto& grab : activeGrabs_) grab.reset();
     activeScale_.reset();
     focusedSurfaceId_.reset();
+    focusHistory_.clear();
     for (auto& surface : surfaces_) {
         DestroySurfaceOverlays(surface);
     }

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import threading
+import time
 from typing import Callable, Protocol
 
 from .osc import VrchatOscClient
@@ -33,7 +34,7 @@ class CommsSnapshot:
 
 
 class CommsDictation:
-    """Runs bounded utterance capture repeatedly until explicitly stopped."""
+    """Runs bounded utterance capture until stopped or safely idle."""
 
     def __init__(
         self,
@@ -42,11 +43,13 @@ class CommsDictation:
         *,
         capture: Callable[..., object] = capture_microphone_once,
         osc: VrchatOscClient | None = None,
+        silence_auto_stop_seconds: float = 3.0,
     ) -> None:
         self._transcriber = transcriber
         self._command_lock = command_lock
         self._capture = capture
         self._osc = osc or VrchatOscClient()
+        self._silence_auto_stop_seconds = max(0.1, silence_auto_stop_seconds)
         self._state_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -55,6 +58,9 @@ class CommsDictation:
     def snapshot(self) -> CommsSnapshot:
         with self._state_lock:
             return self._snapshot
+
+    def set_silence_auto_stop_seconds(self, seconds: float) -> None:
+        self._silence_auto_stop_seconds = max(1.0, min(30.0, float(seconds)))
 
     def _set_snapshot(self, state: str, transcript: str = "") -> None:
         with self._state_lock:
@@ -85,6 +91,17 @@ class CommsDictation:
         LOGGER.info("Comms chatbox clear pulse sent")
         return self.snapshot()
 
+    def send_shortcut(self, message: str) -> CommsSnapshot:
+        text = " ".join(message.split())[:144]
+        if not text:
+            raise ValueError("Comms shortcut is empty.")
+        self._osc.send_chatbox_message(text)
+        thread = self._thread
+        listening = thread is not None and thread.is_alive() and not self._stop.is_set()
+        self._set_snapshot("SENT" if listening else "SHORTCUT", text)
+        LOGGER.info("Comms shortcut sent: chars=%s", len(text))
+        return self.snapshot()
+
     def _run(self) -> None:
         if not self._command_lock.acquire(blocking=False):
             self._set_snapshot("ERROR", "Voice capture is already active.")
@@ -92,6 +109,7 @@ class CommsDictation:
         LOGGER.info("Comms dictation started")
         try:
             first_capture = True
+            last_utterance = time.monotonic()
             while not self._stop.is_set():
                 try:
                     audio = self._capture(
@@ -104,6 +122,10 @@ class CommsDictation:
                     # Silence is expected while armed; SpeechRecognition reports it
                     # as WaitTimeoutError after the short listening window.
                     if error.__class__.__name__ == "WaitTimeoutError":
+                        if time.monotonic() - last_utterance >= self._silence_auto_stop_seconds:
+                            LOGGER.info("Comms dictation auto-stopped after %.1fs of silence",
+                                        self._silence_auto_stop_seconds)
+                            break
                         continue
                     LOGGER.exception("Comms microphone capture failed")
                     self._set_snapshot("ERROR", str(error))
@@ -125,8 +147,9 @@ class CommsDictation:
                     LOGGER.exception("Comms OSC send failed")
                     self._set_snapshot("ERROR", str(error))
                     return
-                LOGGER.info("Comms transcript sent: %r", transcript)
+                LOGGER.info("Comms transcript sent: chars=%s", len(transcript))
                 self._set_snapshot("SENT", transcript)
+                last_utterance = time.monotonic()
         finally:
             self._command_lock.release()
             if self.snapshot().state != "ERROR":

@@ -1,6 +1,7 @@
 #include "desktop_surface_manager.h"
 
 #include <algorithm>
+#include <appmodel.h>
 #include <cstring>
 #include <cwctype>
 #include <dwmapi.h>
@@ -20,6 +21,7 @@ std::wstring Lowercase(std::wstring value) {
 struct ProcessIdentity {
     std::wstring name;
     std::wstring path;
+    std::wstring packageFamily;
 };
 
 ProcessIdentity ProcessForWindow(HWND window) {
@@ -32,10 +34,39 @@ ProcessIdentity ProcessForWindow(HWND window) {
     std::wstring path(32768, L'\0');
     DWORD length = static_cast<DWORD>(path.size());
     const bool found = QueryFullProcessImageNameW(process, 0, path.data(), &length) != FALSE;
+    std::wstring packageFamily;
+    UINT32 packageLength = 0;
+    if (GetPackageFamilyName(process, &packageLength, nullptr) == ERROR_INSUFFICIENT_BUFFER
+        && packageLength > 1) {
+        packageFamily.resize(packageLength);
+        if (GetPackageFamilyName(process, &packageLength, packageFamily.data()) == ERROR_SUCCESS) {
+            if (!packageFamily.empty() && packageFamily.back() == L'\0') packageFamily.pop_back();
+        } else {
+            packageFamily.clear();
+        }
+    }
     CloseHandle(process);
     if (!found) return {};
     path.resize(length);
-    return {std::filesystem::path(path).filename().wstring(), path};
+    return {std::filesystem::path(path).filename().wstring(), path, packageFamily};
+}
+
+bool IsAppIdTarget(const std::wstring& target) {
+    return target.starts_with(L"aumid:") && target.find(L'!') != std::wstring::npos;
+}
+
+std::wstring PackageFamilyFromTarget(const std::wstring& target) {
+    if (!IsAppIdTarget(target)) return {};
+    const auto separator = target.find(L'!', 6);
+    return separator == std::wstring::npos ? std::wstring{} : target.substr(6, separator - 6);
+}
+
+bool IsSafeAppId(const std::wstring& target) {
+    if (!IsAppIdTarget(target)) return false;
+    return std::all_of(target.begin() + 6, target.end(), [](wchar_t character) {
+        return std::iswalnum(character) || character == L'.' || character == L'_'
+            || character == L'-' || character == L'!';
+    });
 }
 
 std::vector<uint8_t> IconPixelsForExecutable(const std::wstring& path) {
@@ -90,6 +121,19 @@ bool IsUsefulApplicationWindow(HWND window, const std::wstring& processName) {
     return !processName.empty() && !ignoredProcesses.contains(Lowercase(processName));
 }
 
+std::optional<interfayce::DesktopSource> SourceForWindow(HWND window) {
+    const auto length = GetWindowTextLengthW(window);
+    if (length == 0) return std::nullopt;
+    const auto process = ProcessForWindow(window);
+    if (!IsUsefulApplicationWindow(window, process.name)) return std::nullopt;
+    std::wstring title(static_cast<size_t>(length) + 1, L'\0');
+    GetWindowTextW(window, title.data(), static_cast<int>(title.size()));
+    title.resize(static_cast<size_t>(length));
+    return interfayce::DesktopSource{interfayce::DesktopSource::Kind::Window,
+        std::to_wstring(reinterpret_cast<uintptr_t>(window)), title, process.name,
+        process.path, IconPixelsForExecutable(process.path), window, nullptr};
+}
+
 }  // namespace
 
 namespace interfayce {
@@ -109,7 +153,7 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateDisplays() const {
                 : std::wstring(info.szDevice);
             output.push_back({DesktopSource::Kind::Display, info.szDevice, label,
                 (info.dwFlags & MONITORINFOF_PRIMARY) ? L"Primary display" : L"Display",
-                {}, nullptr, monitor});
+                {}, {}, nullptr, monitor});
         }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&displays));
@@ -119,17 +163,8 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateDisplays() const {
 std::vector<DesktopSource> DesktopSurfaceManager::EnumerateWindows() const {
     std::vector<DesktopSource> windows;
     EnumWindows([](HWND window, LPARAM data) {
-        const auto length = GetWindowTextLengthW(window);
-        if (length == 0) return TRUE;
-        const auto process = ProcessForWindow(window);
-        if (!IsUsefulApplicationWindow(window, process.name)) return TRUE;
-        std::wstring title(static_cast<size_t>(length) + 1, L'\0');
-        GetWindowTextW(window, title.data(), static_cast<int>(title.size()));
-        title.resize(static_cast<size_t>(length));
         auto& output = *reinterpret_cast<std::vector<DesktopSource>*>(data);
-        output.push_back({DesktopSource::Kind::Window,
-            std::to_wstring(reinterpret_cast<uintptr_t>(window)), title, process.name,
-            IconPixelsForExecutable(process.path), window, nullptr});
+        if (auto source = SourceForWindow(window)) output.push_back(std::move(*source));
         return TRUE;
     }, reinterpret_cast<LPARAM>(&windows));
     std::sort(windows.begin(), windows.end(), [](const auto& left, const auto& right) {
@@ -143,6 +178,53 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateSources() const {
     auto windows = EnumerateWindows();
     sources.insert(sources.end(), windows.begin(), windows.end());
     return sources;
+}
+
+std::optional<DesktopSource> DesktopSurfaceManager::FindWindowForTarget(
+        const std::wstring& target) const {
+    if (target.empty()) return std::nullopt;
+    const bool appId = IsAppIdTarget(target);
+    const auto wanted = appId
+        ? Lowercase(PackageFamilyFromTarget(target))
+        : Lowercase(std::filesystem::path(target).lexically_normal().wstring());
+    struct Context {
+        const std::wstring* wanted{};
+        bool appId{};
+        std::optional<DesktopSource> source;
+    } context{&wanted, appId};
+    EnumWindows([](HWND window, LPARAM data) {
+        auto& context = *reinterpret_cast<Context*>(data);
+        const auto process = ProcessForWindow(window);
+        const auto identity = context.appId
+            ? Lowercase(process.packageFamily)
+            : Lowercase(std::filesystem::path(process.path).lexically_normal().wstring());
+        if (identity != *context.wanted) return TRUE;
+        context.source = SourceForWindow(window);
+        return context.source ? FALSE : TRUE;
+    }, reinterpret_cast<LPARAM>(&context));
+    return context.source;
+}
+
+bool DesktopSurfaceManager::LaunchTarget(const std::wstring& target) const {
+    if (IsAppIdTarget(target)) {
+        if (!IsSafeAppId(target)) return false;
+        const auto shellTarget = L"shell:AppsFolder\\" + target.substr(6);
+        return reinterpret_cast<INT_PTR>(ShellExecuteW(
+            nullptr, L"open", shellTarget.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) > 32;
+    }
+    const std::filesystem::path path(target);
+    if (!path.is_absolute() || Lowercase(path.extension().wstring()) != L".exe"
+        || !std::filesystem::is_regular_file(path)) return false;
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    const auto workingDirectory = path.parent_path().wstring();
+    const bool launched = CreateProcessW(path.c_str(), nullptr, nullptr, nullptr, FALSE,
+        CREATE_DEFAULT_ERROR_MODE, nullptr, workingDirectory.c_str(), &startup, &process) != FALSE;
+    if (!launched) return false;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
 }
 
 }  // namespace interfayce
