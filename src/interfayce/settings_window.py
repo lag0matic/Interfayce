@@ -21,6 +21,8 @@ from .remote_stt import (delete_remote_stt_api_key, load_remote_stt_api_key,
 from .settings import load_settings, set_desktop_configuration
 from .spotify_oauth import (SpotifyOAuthError, SpotifyWebApi, connect as connect_spotify,
                             disconnect as disconnect_spotify, load_token)
+from .web_research import (delete_brave_search_key, load_brave_search_key,
+                           set_brave_search_key)
 
 
 VOICE_SERVICE_PORT = 43817
@@ -109,6 +111,7 @@ class SettingsWindow:
         self.llm_reasoning = tk.StringVar(value=current.llm_reasoning_effort)
         self.llm_temperature = tk.DoubleVar(value=current.llm_temperature)
         self.llm_key = tk.StringVar()
+        self.brave_key = tk.StringVar()
         self.comms_shortcut_labels = [
             tk.StringVar(value=label) for label, _message in current.comms_shortcuts]
         self.comms_shortcut_messages = [
@@ -135,6 +138,7 @@ class SettingsWindow:
         self.spotify_status = tk.StringVar()
         self.llm_status = tk.StringVar()
         self.stt_status = tk.StringVar()
+        self.brave_status = tk.StringVar()
         self.diagnostic_summary = tk.StringVar(value="Diagnostics have not run yet.")
         self.update_status = tk.StringVar(value="Update checks run only when requested.")
         self.save_status = tk.StringVar(value="Settings are shared with the wrist controls.")
@@ -376,6 +380,21 @@ class SettingsWindow:
         ttk.Button(key_row, text="Remove", command=self.remove_llm_key).pack(side="left", padx=(8, 0))
         row += 1
         ttk.Label(panel, textvariable=self.llm_status, style="Muted.Panel.TLabel").grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        row = self._section(panel, row + 1, "WEB RESEARCH")
+        ttk.Label(panel, text="Brave Search API key", style="Panel.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        brave_key_row = ttk.Frame(panel, style="Panel.TFrame")
+        brave_key_row.grid(row=row, column=1, sticky="ew", pady=4)
+        ttk.Entry(brave_key_row, textvariable=self.brave_key, show="●").pack(
+            side="left", fill="x", expand=True)
+        ttk.Button(brave_key_row, text="Save", command=self.save_brave_key).pack(
+            side="left", padx=(8, 0))
+        ttk.Button(brave_key_row, text="Remove", command=self.remove_brave_key).pack(
+            side="left", padx=(8, 0))
+        row += 1
+        ttk.Label(panel, textvariable=self.brave_status, style="Muted.Panel.TLabel").grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=2)
@@ -748,6 +767,22 @@ class SettingsWindow:
         self._refresh_integration_status()
         self.save_status.set("LLM key removed")
 
+    def save_brave_key(self) -> None:
+        try:
+            set_brave_search_key(self.brave_key.get())
+        except ValueError as error:
+            messagebox.showerror("Interfayce", str(error), parent=self.root)
+            return
+        self.brave_key.set("")
+        self._refresh_integration_status()
+        self.save_status.set("Brave Search key protected and saved")
+
+    def remove_brave_key(self) -> None:
+        delete_brave_search_key()
+        self.brave_key.set("")
+        self._refresh_integration_status()
+        self.save_status.set("Brave Search key removed")
+
     def connect_spotify(self) -> None:
         if not self._persist():
             return
@@ -795,6 +830,10 @@ class SettingsWindow:
         else:
             state = "Enabled, but configuration is incomplete"
         self.llm_status.set(f"{state} • API key {'stored securely' if key_stored else 'not stored'}")
+        brave_key_stored = load_brave_search_key() is not None
+        self.brave_status.set(
+            "Assistant web research enabled • API key stored securely"
+            if brave_key_stored else "Assistant web research unavailable • API key not stored")
 
     def _poll_status(self) -> None:
         self.service_status.set(

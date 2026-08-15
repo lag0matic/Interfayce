@@ -33,7 +33,7 @@ python -m interfayce spotify-oauth-status
 
 The client secret is not used. OAuth tokens are protected with Windows DPAPI under the current Windows account.
 
-The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, local/remote STT, TTS behavior, haptics, broadcast gain, desktop favorites, Kokoro, Spotify OAuth, and the optional constrained LLM fallback. Desktop favorites accept constrained executable paths or registered Store-app identities: a wrist press captures an existing window or launches the app and binds its first eligible window, with the ordinary source picker retained on failure. Its Diagnostics tab refreshes bounded local checks whenever Settings opens, shows the exact build identity, and checks GitHub releases only when requested. Tokens and API keys are protected with Windows DPAPI; a fresh installation contains no personal endpoints and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
+The desktop settings window opens from the monitor icon on the wrist Settings deck. It remains closed otherwise and owns audio devices, local/remote STT, TTS behavior, haptics, broadcast gain, desktop favorites, Kokoro, Spotify OAuth, Brave Search, and the optional constrained LLM fallback. Desktop favorites accept constrained executable paths or registered Store-app identities: a wrist press captures an existing window or launches the app and binds its first eligible window, with the ordinary source picker retained on failure. Its Diagnostics tab refreshes bounded local checks whenever Settings opens, shows the exact build identity, and checks GitHub releases only when requested. User-managed tokens and API keys can be saved, replaced, or removed from Settings and are protected with Windows DPAPI; a fresh installation contains no personal endpoints or credentials and leaves the LLM disabled. For an explicit development launch, `python -m interfayce settings` opens the same single-instance window.
 
 Empty Desk favorite slots are automatically filled by the most recently captured unpinned applications. The small local history is bounded, deduplicated, and updated only after a window capture succeeds; explicit favorites always retain their configured slots and take priority over history.
 
@@ -55,7 +55,7 @@ The reproducible per-user installer bundles the native overlay/audio engine, the
 powershell -ExecutionPolicy Bypass -File packaging\build-installer.ps1
 ```
 
-The result is `packaging\out\installer\Interfayce-Setup-1.2.1.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
+The result is `packaging\out\installer\Interfayce-Setup-1.2.2.exe`. It installs under `%LOCALAPPDATA%\Programs\Interfayce` without elevation. Personal settings remain under `%LOCALAPPDATA%\Interfayce`; uninstalling or upgrading the application deliberately leaves them intact. VB-CABLE is optional for the rest of Interfayce but required for Spotify-to-VRChat broadcast.
 
 ## Offline native checks
 
