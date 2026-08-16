@@ -191,8 +191,22 @@ bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent eve
     }
     INPUT button{};
     button.type = INPUT_MOUSE;
-    button.mi.dwFlags = event == interfayce::DesktopPointerEvent::PrimaryDown
-        ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
+    switch (event) {
+    case interfayce::DesktopPointerEvent::PrimaryDown:
+        button.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+        break;
+    case interfayce::DesktopPointerEvent::PrimaryUp:
+        button.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+        break;
+    case interfayce::DesktopPointerEvent::SecondaryDown:
+        button.mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
+        break;
+    case interfayce::DesktopPointerEvent::SecondaryUp:
+        button.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
+        break;
+    case interfayce::DesktopPointerEvent::Move:
+        return SendInput(1, &movement, sizeof(movement)) == 1;
+    }
     std::array<INPUT, 2> inputs{movement, button};
     return SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT))
         == inputs.size();
@@ -213,15 +227,22 @@ bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
     if (!ScreenToClient(target, &clientPoint)) return false;
     const LPARAM coordinates = MAKELPARAM(
         static_cast<short>(clientPoint.x), static_cast<short>(clientPoint.y));
-    const WPARAM buttons = event == interfayce::DesktopPointerEvent::PrimaryUp
-        ? 0 : MK_LBUTTON;
+    const bool primary = event == interfayce::DesktopPointerEvent::PrimaryDown
+        || event == interfayce::DesktopPointerEvent::PrimaryUp;
+    const bool secondary = event == interfayce::DesktopPointerEvent::SecondaryDown
+        || event == interfayce::DesktopPointerEvent::SecondaryUp;
+    const bool released = event == interfayce::DesktopPointerEvent::PrimaryUp
+        || event == interfayce::DesktopPointerEvent::SecondaryUp;
+    const WPARAM buttons = released ? 0 : primary ? MK_LBUTTON : secondary ? MK_RBUTTON : 0;
     if (!PostMessageW(target, WM_MOUSEMOVE,
             event == interfayce::DesktopPointerEvent::Move ? buttons : 0, coordinates)) {
         return false;
     }
     const UINT message = event == interfayce::DesktopPointerEvent::PrimaryDown
         ? WM_LBUTTONDOWN : event == interfayce::DesktopPointerEvent::PrimaryUp
-            ? WM_LBUTTONUP : 0;
+            ? WM_LBUTTONUP : event == interfayce::DesktopPointerEvent::SecondaryDown
+                ? WM_RBUTTONDOWN : event == interfayce::DesktopPointerEvent::SecondaryUp
+                    ? WM_RBUTTONUP : 0;
     return message == 0 || PostMessageW(target, message, buttons, coordinates) != FALSE;
 }
 
@@ -1058,7 +1079,8 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         [&hit](const auto& surface) { return surface.id == hit.id; });
     if (found == surfaces_.end() || !found->capture || !found->assignedSource
         || *found->assignedSource >= found->sources.size()) return false;
-    if (event == DesktopPointerEvent::PrimaryDown) {
+    if (event == DesktopPointerEvent::PrimaryDown
+        || event == DesktopPointerEvent::SecondaryDown) {
         RememberFocusedSurface(found->id);
         const auto& source = found->sources[*found->assignedSource];
         if (source.kind == DesktopSource::Kind::Window) {

@@ -17,6 +17,16 @@
           "path": "/user/hand/right/output/haptic"
         }
       ],
+      "poses": [
+        {
+          "output": "/actions/interfayce/in/left_pointer_pose",
+          "path": "/user/hand/left/pose/tip"
+        },
+        {
+          "output": "/actions/interfayce/in/right_pointer_pose",
+          "path": "/user/hand/right/pose/tip"
+        }
+      ],
       "sources": [
         {
           "path": "/user/hand/left/input/b",
@@ -90,6 +100,15 @@
           "inputs": {
             "position": {
               "output": "/actions/interfayce/in/right_surface_scroll"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trackpad",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/interfayce/in/right_secondary_click"
             }
           }
         }

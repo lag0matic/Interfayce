@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 import logging
 import secrets
 from pathlib import Path
 import mimetypes
 import re
+import wave
 from typing import Protocol
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -61,6 +63,17 @@ def _multipart(wav_data: bytes, model: str) -> tuple[bytes, str]:
         f"\r\n--{boundary}--\r\n".encode(),
     ))
     return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _warmup_wav() -> bytes:
+    """Return a short, valid silent WAV that forces the STT model through inference."""
+    output = BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16_000)
+        wav.writeframes(b"\0" * (16_000 // 2))
+    return output.getvalue()
 
 
 def transcribe_audio_file(path: str | Path, endpoint: str, model: str,
@@ -127,14 +140,18 @@ class RemoteSttTranscriber:
 
     def warm(self) -> None:
         try:
-            request = Request(self.health_endpoint, headers=self._headers())
-            with urlopen(request, timeout=3.0) as response:
+            body, content_type = _multipart(_warmup_wav(), self.model)
+            headers = self._headers()
+            headers["Content-Type"] = content_type
+            request = Request(self.endpoint, data=body, headers=headers, method="POST")
+            with urlopen(request, timeout=self.timeout_seconds) as response:
                 if response.status != 200:
-                    raise RuntimeError(f"Remote STT health returned HTTP {response.status}.")
+                    raise RuntimeError(f"Remote STT warm-up returned HTTP {response.status}.")
+                response.read()
         except Exception:
             if self.fallback is None:
                 raise
-            LOGGER.warning("Remote STT health check failed; warming local fallback", exc_info=True)
+            LOGGER.warning("Remote STT warm-up failed; warming local fallback", exc_info=True)
             self.fallback.warm()
 
     def transcribe(self, audio: object) -> str:

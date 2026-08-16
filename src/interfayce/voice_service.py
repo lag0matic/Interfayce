@@ -14,7 +14,7 @@ from .comms import CommsDictation
 from .assistant import AssistantSnapshot, AssistantState
 from .assistant_harness import AssistantHarness, tts_text
 from .battery_alerts import BatteryAlertMonitor
-from .kokoro import speak_in_background
+from .kokoro import speak_in_background, synthesize
 from .local_service import get_or_create_token, request_is_authorized
 from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_llm import (MusicConversationMemory, MusicLlmValidationError,
@@ -67,6 +67,7 @@ class VoiceRuntime:
             settings.stt_endpoint, settings.stt_model, fallback=local_transcriber
         ) if settings.stt_endpoint else local_transcriber)
         self.command_lock = threading.Lock()
+        self._warm_lock = threading.Lock()
         self._assistant_lock = threading.Lock()
         self._assistant_status = "READY"
         self._assistant_transcript = ""
@@ -181,12 +182,24 @@ class VoiceRuntime:
             return None
 
     def warm(self) -> None:
+        if not self._warm_lock.acquire(blocking=False):
+            LOGGER.info("Speech model warm-up is already running")
+            return
         try:
-            LOGGER.info("Warming configured STT")
-            self.transcriber.warm()
-            LOGGER.info("Configured STT ready")
-        except Exception:
-            LOGGER.exception("Parakeet warm-up failed")
+            try:
+                LOGGER.info("Warming configured STT")
+                self.transcriber.warm()
+                LOGGER.info("Configured STT ready")
+            except Exception:
+                LOGGER.exception("Configured STT warm-up failed")
+            try:
+                LOGGER.info("Warming configured TTS")
+                synthesize("Ready.")
+                LOGGER.info("Configured TTS ready")
+            except Exception:
+                LOGGER.exception("Configured TTS warm-up failed")
+        finally:
+            self._warm_lock.release()
 
     def music_command(self) -> str:
         if not self.command_lock.acquire(blocking=False):
@@ -354,6 +367,11 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 return
             if self.path == "/listen/music":
                 self._reply(200, runtime.music_command())
+            elif self.path == "/warm":
+                threading.Thread(
+                    target=runtime.warm, name="InterfayceVoiceWarm", daemon=True
+                ).start()
+                self._reply(200, "warming")
             elif self.path == "/listen/assistant":
                 self._reply(200, runtime.assistant_command())
             elif self.path == "/assistant/clear":
