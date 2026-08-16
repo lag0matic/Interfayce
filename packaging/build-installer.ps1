@@ -97,6 +97,7 @@ try {
     Copy-Item (Join-Path $nodeExtract "node.exe"),(Join-Path $nodeExtract "LICENSE") `
         (Join-Path $stage "runtime")
     Copy-Item assets\branding\interfayce-icon-1024.png (Join-Path $stage "Interfayce.png")
+    Copy-Item LICENSE (Join-Path $stage "LICENSE")
     New-Item -ItemType Directory -Path (Join-Path $stage "models\parakeet") -Force | Out-Null
     Copy-Item -LiteralPath ($parakeetFiles | ForEach-Object { Join-Path $parakeetModel $_ }) `
         -Destination (Join-Path $stage "models\parakeet")
