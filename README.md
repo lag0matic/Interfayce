@@ -49,8 +49,8 @@ Basic transport and track status use the Windows media session and do not requir
 - Push-to-listen speech transcription into the VRChat OSC chatbox.
 - Configurable automatic stop after a period of silence.
 - Clear-chat control and four configurable canned OSC shortcuts.
-- Bundled local Parakeet speech recognition; no COVAS installation is required by the packaged app.
-- Optional remote Faster-Whisper service for improved recognition of artist and song names, with local Parakeet fallback.
+- Bundled local Parakeet speech recognition for an immediately available local engine and fallback.
+- Optional remote Faster-Whisper service, recommended for the best overall speed, efficiency, and recognition of difficult artist and song names.
 
 ### ASK assistant
 
@@ -164,7 +164,7 @@ Configure the full endpoint, model, voice, playback device, speed, and volume in
 
 ### Remote STT
 
-The packaged app includes local Parakeet STT. For better recognition of difficult names, the optional portable Windows server in [`remote-stt`](remote-stt/README.md) exposes an OpenAI-compatible transcription endpoint and can run Faster-Whisper on another machine.
+The packaged app includes local Parakeet STT, so speech recognition works without a separate installation. For the best overall speed and efficiency, the recommended setup is the optional portable Windows server in [`remote-stt`](remote-stt/README.md). It exposes an OpenAI-compatible transcription endpoint and runs Faster-Whisper on another machine, keeping that workload away from the VR PC while improving recognition of difficult names.
 
 Keep the remote server on a trusted LAN; do not expose its port directly to the internet. Enter its URL, model, and generated API key in Settings.
 
