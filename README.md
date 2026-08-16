@@ -283,7 +283,7 @@ Review the endpoint and provider privacy policies before enabling cloud services
 
 Interfayce is actively used and playtested, but remains a personal project. Compatibility is centered on the maintainer's setup, and no general support commitment is made. Bug reports and careful technical discussion are welcome; feature work is prioritized around real VR use.
 
-No general-use license has been granted at this time. Do not assume permission to redistribute the source or packaged installer.
+Interfayce is available under the [PolyForm Noncommercial License 1.0.0](LICENSE). It permits personal and other non-commercial use, modification, and redistribution under its terms, while reserving commercial use. Because of that commercial restriction, Interfayce is source-available rather than OSI-approved open-source software.
 
 Additional project references:
 
