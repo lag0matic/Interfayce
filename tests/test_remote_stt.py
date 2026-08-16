@@ -48,6 +48,17 @@ class RemoteSttTests(unittest.TestCase):
         self.assertIn(b"whisper-turbo", request.data)
 
     @patch("interfayce.remote_stt.load_remote_stt_api_key", return_value="key")
+    @patch("interfayce.remote_stt.urlopen")
+    def test_remote_warmup_runs_silent_audio_through_model(self, open_url, _load_key):
+        open_url.return_value = _Response({"text": ""})
+        RemoteSttTranscriber("http://server:5010", "whisper-turbo").warm()
+        request = open_url.call_args.args[0]
+        self.assertEqual(request.full_url,
+                         "http://server:5010/v1/audio/transcriptions")
+        self.assertIn(b"RIFF", request.data)
+        self.assertIn(b"whisper-turbo", request.data)
+
+    @patch("interfayce.remote_stt.load_remote_stt_api_key", return_value="key")
     @patch("interfayce.remote_stt.urlopen", side_effect=OSError("offline"))
     def test_failure_uses_local_fallback(self, _open_url, _load_key):
         fallback = _Fallback()

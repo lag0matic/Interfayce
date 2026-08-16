@@ -39,6 +39,9 @@ constexpr char kRightUiClickActionPath[] = "/actions/interfayce/in/right_ui_clic
 constexpr char kLeftSurfaceGrabActionPath[] = "/actions/interfayce/in/left_surface_grab";
 constexpr char kRightSurfaceGrabActionPath[] = "/actions/interfayce/in/right_surface_grab";
 constexpr char kRightSurfaceScrollActionPath[] = "/actions/interfayce/in/right_surface_scroll";
+constexpr char kLeftPointerPoseActionPath[] = "/actions/interfayce/in/left_pointer_pose";
+constexpr char kRightPointerPoseActionPath[] = "/actions/interfayce/in/right_pointer_pose";
+constexpr char kRightSecondaryClickActionPath[] = "/actions/interfayce/in/right_secondary_click";
 constexpr char kLeftHapticActionPath[] = "/actions/interfayce/out/left_haptic";
 constexpr char kRightHapticActionPath[] = "/actions/interfayce/out/right_haptic";
 constexpr char kWristOverlayKey[] = "com.lag0matic.interfayce.wrist.panel";
@@ -971,7 +974,23 @@ float ApplyDeadzone(float value, float deadzone = 0.18F) {
     return std::copysign((std::min)(scaled, 1.0F), value);
 }
 
-std::optional<PointerRay> ReadPointerRay(vr::IVRSystem* system, DragHand hand) {
+std::optional<PointerRay> ReadPointerRay(
+        vr::IVRSystem* system, DragHand hand, vr::VRActionHandle_t poseAction) {
+    if (poseAction != vr::k_ulInvalidActionHandle) {
+        vr::InputPoseActionData_t actionPose{};
+        const auto poseError = vr::VRInput()->GetPoseActionDataRelativeToNow(
+            poseAction, vr::TrackingUniverseStanding, 0.0F, &actionPose,
+            sizeof(actionPose), vr::k_ulInvalidInputValueHandle);
+        if (poseError == vr::VRInputError_None && actionPose.bActive
+            && actionPose.pose.bDeviceIsConnected && actionPose.pose.bPoseIsValid
+            && actionPose.pose.eTrackingResult == vr::TrackingResult_Running_OK) {
+            const auto& tipPose = actionPose.pose.mDeviceToAbsoluteTracking;
+            return PointerRay{
+                {tipPose.m[0][3], tipPose.m[1][3], tipPose.m[2][3]},
+                {-tipPose.m[0][2], -tipPose.m[1][2], -tipPose.m[2][2]},
+            };
+        }
+    }
     const auto role = hand == DragHand::Left
         ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand;
     const auto device = system->GetTrackedDeviceIndexForControllerRole(role);
@@ -1215,7 +1234,13 @@ int main(int argc, char** argv) {
     const auto musicArtPath = UserCacheFile(L"spotify-art.jpg");
     const auto actionManifest = directory / "assets" / "steamvr" / "actions.json";
     bool voiceServiceAvailable = VoiceServiceAvailable();
-    if (!voiceServiceAvailable) LaunchVoiceService(directory, projectRoot);
+    if (!voiceServiceAvailable) {
+        LaunchVoiceService(directory, projectRoot);
+    } else {
+        // The resident service can outlive the overlay. Ask it to warm the configured
+        // speech models on every app start without delaying the OpenVR input loop.
+        LocalHttpRequest("POST", "/warm", std::chrono::milliseconds(150));
+    }
     bool slimeAvailable = SlimeAdapterAvailable(projectRoot)
         && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
     bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
@@ -1243,6 +1268,9 @@ int main(int argc, char** argv) {
     vr::VRActionHandle_t leftSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightSurfaceGrabAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightSurfaceScrollAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t leftPointerPoseAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t rightPointerPoseAction = vr::k_ulInvalidActionHandle;
+    vr::VRActionHandle_t rightSecondaryClickAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t leftHapticAction = vr::k_ulInvalidActionHandle;
     vr::VRActionHandle_t rightHapticAction = vr::k_ulInvalidActionHandle;
     const auto leftHandleError = vr::VRInput()->GetActionHandle(kLeftDragActionPath, &leftDragAction);
@@ -1257,6 +1285,12 @@ int main(int argc, char** argv) {
         kRightSurfaceGrabActionPath, &rightSurfaceGrabAction);
     const auto rightSurfaceScrollError = vr::VRInput()->GetActionHandle(
         kRightSurfaceScrollActionPath, &rightSurfaceScrollAction);
+    const auto leftPointerPoseError = vr::VRInput()->GetActionHandle(
+        kLeftPointerPoseActionPath, &leftPointerPoseAction);
+    const auto rightPointerPoseError = vr::VRInput()->GetActionHandle(
+        kRightPointerPoseActionPath, &rightPointerPoseAction);
+    const auto rightSecondaryClickError = vr::VRInput()->GetActionHandle(
+        kRightSecondaryClickActionPath, &rightSecondaryClickAction);
     const auto leftHapticError = vr::VRInput()->GetActionHandle(
         kLeftHapticActionPath, &leftHapticAction);
     const auto rightHapticError = vr::VRInput()->GetActionHandle(
@@ -1303,6 +1337,9 @@ int main(int argc, char** argv) {
                 && leftSurfaceGrabError == vr::VRInputError_None
                 && rightSurfaceGrabError == vr::VRInputError_None
                 && rightSurfaceScrollError == vr::VRInputError_None
+                && leftPointerPoseError == vr::VRInputError_None
+                && rightPointerPoseError == vr::VRInputError_None
+                && rightSecondaryClickError == vr::VRInputError_None
                 && leftHapticError == vr::VRInputError_None
                 && rightHapticError == vr::VRInputError_None
             ? 0
@@ -1532,6 +1569,7 @@ int main(int argc, char** argv) {
     int rigResetHoldSegment = 0;
     int shutdownHoldSegment = 0;
     std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
+    std::optional<interfayce::DesktopSurfaceHit> activeDesktopSecondaryPointer;
     std::optional<uint64_t> activeScrollSurface;
     double verticalScrollRemainder = 0.0;
     double horizontalScrollRemainder = 0.0;
@@ -1627,6 +1665,7 @@ int main(int argc, char** argv) {
         vr::InputDigitalActionData_t leftSurfaceGrab{};
         vr::InputDigitalActionData_t rightSurfaceGrab{};
         vr::InputAnalogActionData_t rightSurfaceScroll{};
+        vr::InputDigitalActionData_t rightSecondaryClick{};
         const auto leftDataError = vr::VRInput()->GetDigitalActionData(
             leftDragAction, &leftDrag, sizeof(leftDrag), vr::k_ulInvalidInputValueHandle);
         const auto rightDataError = vr::VRInput()->GetDigitalActionData(
@@ -1641,6 +1680,8 @@ int main(int argc, char** argv) {
             sizeof(rightSurfaceGrab), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetAnalogActionData(rightSurfaceScrollAction, &rightSurfaceScroll,
             sizeof(rightSurfaceScroll), vr::k_ulInvalidInputValueHandle);
+        vr::VRInput()->GetDigitalActionData(rightSecondaryClickAction, &rightSecondaryClick,
+            sizeof(rightSecondaryClick), vr::k_ulInvalidInputValueHandle);
         const auto& wristUiClick = ttsSettings.wristRight ? leftUiClick : rightUiClick;
         if (!printedInputDiagnostics) {
             std::array<vr::VRInputValueHandle_t, 16> leftOrigins{};
@@ -1706,8 +1747,9 @@ int main(int argc, char** argv) {
         bool panelHitFound = false;
         float panelX = 0.0F;
         float panelY = 0.0F;
-        const auto panelPointerRay = ReadPointerRay(
-            system, ttsSettings.wristRight ? DragHand::Left : DragHand::Right);
+        const auto panelPointerHand = ttsSettings.wristRight ? DragHand::Left : DragHand::Right;
+        const auto panelPointerRay = ReadPointerRay(system, panelPointerHand,
+            panelPointerHand == DragHand::Left ? leftPointerPoseAction : rightPointerPoseAction);
         if (panelPointerRay) {
             vr::VROverlayIntersectionParams_t ray{};
             ray.eOrigin = vr::TrackingUniverseStanding;
@@ -1799,7 +1841,8 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        const auto rightPointerRay = ReadPointerRay(system, DragHand::Right);
+        const auto rightPointerRay = ReadPointerRay(
+            system, DragHand::Right, rightPointerPoseAction);
         if (rightPointerRay && !panelHitFound) {
             vr::VROverlayIntersectionParams_t rightRay{};
             rightRay.eOrigin = vr::TrackingUniverseStanding;
@@ -1818,7 +1861,8 @@ int main(int argc, char** argv) {
             }
             desktopFrameHit = desktopSurfaces.FrameHitTest(rightRay);
         }
-        const auto leftPointerRay = ReadPointerRay(system, DragHand::Left);
+        const auto leftPointerRay = ReadPointerRay(
+            system, DragHand::Left, leftPointerPoseAction);
         if (leftPointerRay && !panelHitFound) {
             vr::VROverlayIntersectionParams_t leftRay{};
             leftRay.eOrigin = vr::TrackingUniverseStanding;
@@ -2021,7 +2065,15 @@ int main(int argc, char** argv) {
                     std::cerr << "Could not start selected desktop capture\n";
                 }
             }
-        } else if (wristUiClick.bChanged && wristUiClick.bState && panelHitFound && panelY <= 82.0F) {
+        }
+        if (rightSecondaryClick.bChanged && rightSecondaryClick.bState
+            && desktopSurfaceHit && desktopSurfaceHit->captured && !panelHitFound) {
+            if (desktopSurfaces.SendPointerEvent(*desktopSurfaceHit,
+                    interfayce::DesktopPointerEvent::SecondaryDown)) {
+                activeDesktopSecondaryPointer = desktopSurfaceHit;
+            }
+        }
+        if (wristUiClick.bChanged && wristUiClick.bState && panelHitFound && panelY <= 82.0F) {
             const int requestedDeck = panelX < 115.0F ? 0 : panelX < 209.0F ? 5
                 : panelX < 303.0F ? 6 : panelX < 397.0F ? 1
                 : panelX < 491.0F ? 2 : panelX < 585.0F ? 3 : 4;
@@ -2389,12 +2441,24 @@ int main(int argc, char** argv) {
                 interfayce::DesktopPointerEvent::PrimaryUp);
             activeDesktopPointer.reset();
         }
+        if (rightSecondaryClick.bState && activeDesktopSecondaryPointer && desktopSurfaceHit
+            && desktopSurfaceHit->captured
+            && desktopSurfaceHit->id == activeDesktopSecondaryPointer->id) {
+            activeDesktopSecondaryPointer = desktopSurfaceHit;
+        }
+        if (rightSecondaryClick.bChanged && !rightSecondaryClick.bState
+            && activeDesktopSecondaryPointer) {
+            desktopSurfaces.SendPointerEvent(*activeDesktopSecondaryPointer,
+                interfayce::DesktopPointerEvent::SecondaryUp);
+            activeDesktopSecondaryPointer.reset();
+        }
         const auto scrollNow = std::chrono::steady_clock::now();
         const auto scrollSeconds = (std::min)(
             std::chrono::duration<double>(scrollNow - lastScrollUpdate).count(), 0.05);
         lastScrollUpdate = scrollNow;
         if (desktopSurfaceHit && desktopSurfaceHit->captured && rightSurfaceScroll.bActive
-            && !leftSurfaceGrab.bState && !rightSurfaceGrab.bState && !rightUiClick.bState) {
+            && !leftSurfaceGrab.bState && !rightSurfaceGrab.bState && !rightUiClick.bState
+            && !rightSecondaryClick.bState) {
             if (!activeScrollSurface || *activeScrollSurface != desktopSurfaceHit->id) {
                 activeScrollSurface = desktopSurfaceHit->id;
                 verticalScrollRemainder = 0.0;

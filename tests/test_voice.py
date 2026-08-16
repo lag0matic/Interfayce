@@ -35,6 +35,14 @@ class FakeMedia:
         return None
 
 
+class FakeTranscriber:
+    def __init__(self) -> None:
+        self.warmed = False
+
+    def warm(self) -> None:
+        self.warmed = True
+
+
 class VoiceIntentTests(unittest.TestCase):
     def test_recognizes_bounded_transport_commands(self) -> None:
         cases = {
@@ -64,6 +72,17 @@ class VoiceIntentTests(unittest.TestCase):
             expected = Path(directory) / "voice.log"
             with patch.dict("os.environ", {"INTERFAYCE_VOICE_LOG": str(expected)}):
                 self.assertEqual(voice_log_path(), expected)
+
+    @patch("interfayce.voice_service.synthesize", return_value=b"warm audio")
+    def test_startup_warmup_primes_stt_and_tts_without_playback(self, synthesize) -> None:
+        runtime = object.__new__(VoiceRuntime)
+        runtime.transcriber = FakeTranscriber()
+        runtime._warm_lock = threading.Lock()
+
+        runtime.warm()
+
+        self.assertTrue(runtime.transcriber.warmed)
+        synthesize.assert_called_once_with("Ready.")
 
     def test_assistant_panel_state_is_bounded_to_one_wire_line(self) -> None:
         runtime = object.__new__(VoiceRuntime)

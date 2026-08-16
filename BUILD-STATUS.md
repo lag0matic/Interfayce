@@ -1,6 +1,6 @@
 # Interfayce — Build Status
 
-Updated: 2026-08-07
+Updated: 2026-08-16
 
 ## Current checkpoint
 
@@ -9,11 +9,11 @@ Updated: 2026-08-07
 - Checkpoint scope: Interfayce 1.2 personal release
 - Native host: `native/build/bin/InterfayceOverlay.exe`
 - Native audio engine: `native/build/bin/InterfayceAudioEngine.exe`
-- Python suite: 124 passing tests
+- Python suite: 128 passing tests
 - Previous release installer: `packaging/out/installer/Interfayce-Setup-1.1.0.exe` (498.6 MiB)
-- Current release installer: `packaging/out/installer/Interfayce-Setup-1.2.0.exe`
-  (498.7 MiB; SHA-256
-  `AF4D01103E00B1D0F70794F1236AC8AE18288C942CCDDDDF670FF7C742D2F864`).
+- Current release installer: `packaging/out/installer/Interfayce-Setup-1.2.2.exe`
+  (498.8 MiB; SHA-256
+  `EF5F24B36618C46410BFC42F21FB6D436BFD900EB9C62804266CA642A739EE5F`).
 
 Interfayce 1.0 is **feature-complete for personal daily use**. Desktop interaction, Spotify OAuth and conversational control, local STT, Kokoro acknowledgments, SlimeVR status, audio broadcast, and the Holo Glass wrist interface have passed live in-headset testing.
 
@@ -55,7 +55,7 @@ The independent keyboard:
 - A compact gear opens wrist settings. The first live controls are persistent Kokoro output volume and mute; they update the voice service immediately.
 - A compact ASK deck now connects the approved Dialogue Core glyph to the bounded conversational assistant. It shows transcript, answer, and live listening/thinking/searching/reading states; its cancel and clear controls remain separate, and all microphone entry points share the same capture lock.
 - The wrist Settings deck can open a single-instance desktop configuration window on demand. It selects the shared Music/Comms microphone, mirrors TTS volume and mute, and controls Interfayce haptic strength; the window never opens automatically.
-- Spotify OAuth uses Authorization Code with PKCE through the existing Covasify developer app and `http://127.0.0.1:8888/callback`. Live authorization, protected-token reload, account lookup, and Web API search all pass.
+- Spotify OAuth uses Authorization Code with PKCE through a user-configured Spotify developer app and `http://127.0.0.1:8888/callback`. Live authorization, protected-token reload, account lookup, and Web API search all pass.
 - Music keeps explicit transport commands on the local fast path and forwards only unrecognized requests to a constrained DeepInfra intent router. The provider key and Spotify tokens are protected with Windows DPAPI.
 - Music transport glyphs follow their actions: previous is `|<`, next is `>|`, and the center control shows pause while Windows reports playback and play while paused.
 - Conversational play requests canonicalize artist names through Spotify, then require confident title and artist matches before playback. Ambiguous or unrelated search results fail closed.
@@ -112,10 +112,10 @@ The independent keyboard:
 - Remote STT server URLs remain ordinary user settings while its generated API key is DPAPI-protected. A failed health check or transcription automatically falls back to the bundled local Parakeet model, and a blank server URL preserves local-only behavior.
 - The server benchmark sends the same WAV set through every configured engine and records latency plus transcripts as CSV/JSON.
 - Live server deployment is complete on the Ryzen 5600X/RTX 3070 host. Faster-Whisper Turbo averaged approximately 0.25 seconds warm on four 3.2-4.0 second command samples versus Moonshine Medium's approximately 0.43 seconds. Both understood all intents; Whisper was more textually stable and remains the default.
-- The portable server imports CUDA 12/cuDNN 9 redistributable DLLs from the existing CovasSTT environment into its private runtime directory, performs a discarded startup decode to prove the complete GPU path, and exposes authenticated self-shutdown so Windows privilege boundaries cannot strand the process.
+- The portable server can import CUDA 12/cuDNN 9 redistributable DLLs from an existing compatible Python environment into its private runtime directory, performs a discarded startup decode to prove the complete GPU path, and exposes authenticated self-shutdown so Windows privilege boundaries cannot strand the process.
 - Its Diagnostics tab refreshes bounded, network-free local health checks whenever Settings opens, separates required attention from optional offline integrations, and persists no credentials or device details beyond the small status report.
 - Update discovery is explicit rather than periodic: the user-requested check reads the latest GitHub release and can open the release page, but never downloads or executes software automatically.
-- `VERSION` drives native build metadata, the bundled service, and installer compilation. Settings, the tray, `--version`, Windows executable properties, and Add/Remove Programs expose `1.2.0` for the ASK/research update.
+- `VERSION` drives native build metadata, the bundled service, and installer compilation. Settings, the tray, `--version`, Windows executable properties, and Add/Remove Programs expose `1.2.2`.
 - LLM fallback has an enforced enable toggle. Fresh installs are disabled and blank; when disabled, the client does not read a key or contact a network endpoint.
 - Spotify tokens and the LLM key remain DPAPI-protected. No personal endpoint, client ID, device name, settings JSON, or credential blob is embedded in the source or installer payload.
 - Spotify song announcements now run inside the resident service lifecycle instead of depending on an orphanable `spotify-watch` process.
@@ -169,8 +169,8 @@ covered by deterministic tests and awaits a natural depleted-battery playtest.
 - Python proof-of-concept suite: 91 passing checks, including remote-STT request,
   fallback, settings, and backend-adapter coverage. The Flask HTTP contract also
   passed in a clean temporary Python 3.12 environment.
-- The 1.2.0 installer rebuilt successfully from native source, the frozen service
-  contains ASK, Brave research, the remote-STT adapter, and `VERSION=1.2.0`; the staged payload is
+- The 1.2.2 installer rebuilt successfully from native source, the frozen service
+  contains ASK, Brave research, the remote-STT adapter, and `VERSION=1.2.2`; the staged payload is
   free of personal endpoints, settings files, and credential blobs. The staged
   SolarXR production dependency set reports zero npm audit vulnerabilities; the
   build-time warning belongs only to unstaged development dependencies.

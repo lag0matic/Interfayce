@@ -45,7 +45,13 @@ struct KeyboardSurfaceHit {
     float v{};
 };
 
-enum class DesktopPointerEvent { Move, PrimaryDown, PrimaryUp };
+enum class DesktopPointerEvent {
+    Move,
+    PrimaryDown,
+    PrimaryUp,
+    SecondaryDown,
+    SecondaryUp,
+};
 enum class DesktopGrabHand { Left, Right };
 
 class DesktopPickerTexture {

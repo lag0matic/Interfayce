@@ -36,6 +36,21 @@
       "requirement": "optional"
     },
     {
+      "name": "/actions/interfayce/in/left_pointer_pose",
+      "type": "pose",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/in/right_pointer_pose",
+      "type": "pose",
+      "requirement": "optional"
+    },
+    {
+      "name": "/actions/interfayce/in/right_secondary_click",
+      "type": "boolean",
+      "requirement": "optional"
+    },
+    {
       "name": "/actions/interfayce/out/left_haptic",
       "type": "vibration",
       "requirement": "optional"
@@ -68,7 +83,10 @@
       "/actions/interfayce/in/right_ui_click": "Right wrist-panel click",
       "/actions/interfayce/in/left_surface_grab": "Grab desktop surface frame with left hand",
       "/actions/interfayce/in/right_surface_grab": "Grab desktop surface frame",
-      "/actions/interfayce/in/right_surface_scroll": "Scroll captured desktop surface"
+      "/actions/interfayce/in/right_surface_scroll": "Scroll captured desktop surface",
+      "/actions/interfayce/in/left_pointer_pose": "Left pointer pose",
+      "/actions/interfayce/in/right_pointer_pose": "Right pointer pose",
+      "/actions/interfayce/in/right_secondary_click": "Right-click captured desktop surface"
     }
   ]
 }
