@@ -10,21 +10,24 @@ import os
 from pathlib import Path
 import threading
 
+from .service_health import ServiceHealth
 from .comms import CommsDictation
+from .chatbox import ChatboxCoordinator
+from .capture_cue import play_capture_cue, play_result_cue, capture_with_cues
 from .assistant import AssistantSnapshot, AssistantState
 from .assistant_harness import AssistantHarness, tts_text
 from .battery_alerts import BatteryAlertMonitor
 from .kokoro import speak_in_background, synthesize
 from .local_service import get_or_create_token, request_is_authorized
 from .llm_client import LlmError, OpenAiCompatibleClient
-from .music_llm import (MusicConversationMemory, MusicLlmValidationError,
-                        execute_music_llm_intent, interpret_music_request)
+from .music_conversation import run_music_request
+from .music_llm import MusicConversationMemory, MusicLlmValidationError
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
 from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
                        desktop_favorites_wire_text, load_settings, record_desktop_recent,
-                       settings_wire_text, toggle_tts_mute)
+                       settings_wire_text, toggle_song_announce, toggle_tts_mute)
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
 from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
@@ -33,6 +36,38 @@ from .windows_media import WindowsSpotifyMedia
 
 DEFAULT_PORT = 43817
 LOGGER = logging.getLogger("interfayce.voice")
+
+
+class BoundedVoiceServer(ThreadingHTTPServer):
+    """Bound waiting clients without blocking the accept loop or voice commands."""
+
+    connection_timeout = 5.0
+    max_connections = 16
+
+    def __init__(self, *args, **kwargs):
+        self._connection_slots = threading.BoundedSemaphore(self.max_connections)
+        super().__init__(*args, **kwargs)
+
+    def get_request(self):
+        request, address = super().get_request()
+        request.settimeout(self.connection_timeout)
+        return request, address
+
+    def process_request(self, request, client_address):
+        if not self._connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._connection_slots.release()
 
 
 def voice_log_path() -> Path:
@@ -59,6 +94,13 @@ def _safe_field(value: str) -> str:
     return value.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
 
 
+def capture_microphone_with_cues():
+    """Bracket capture with local feedback without discarding opening audio."""
+
+    return capture_with_cues(
+        capture_microphone_once, ambient_seconds=0.0, cue=play_capture_cue)
+
+
 class VoiceRuntime:
     def __init__(self) -> None:
         local_transcriber = ParakeetTranscriber()
@@ -66,6 +108,7 @@ class VoiceRuntime:
         self.transcriber = (RemoteSttTranscriber(
             settings.stt_endpoint, settings.stt_model, fallback=local_transcriber
         ) if settings.stt_endpoint else local_transcriber)
+        self.health = ServiceHealth(self.transcriber)
         self.command_lock = threading.Lock()
         self._warm_lock = threading.Lock()
         self._assistant_lock = threading.Lock()
@@ -74,15 +117,19 @@ class VoiceRuntime:
         self._assistant_response = ""
         self.assistant = AssistantHarness(on_state=self._on_assistant_state)
         self.music_conversation = MusicConversationMemory()
-        self.comms = CommsDictation(self.transcriber, self.command_lock)
+        self.chatbox = ChatboxCoordinator(
+            song_enabled=lambda: load_settings().song_announce_enabled)
+        self.comms = CommsDictation(
+            self.transcriber, self.command_lock, cue=play_capture_cue,
+            result_cue=play_result_cue, osc=self.chatbox)
         self.battery_alerts = BatteryAlertMonitor()
         self._song_media = WindowsSpotifyMedia()
         self._song_read_failure_logged = False
-        osc = VrchatOscClient()
         self.song_announcer = ResidentSongAnnouncer(
             self._read_current_song,
             self._announce_song,
-            osc.clear_chatbox,
+            self.chatbox.clear_chatbox,
+            clear_seconds=None,
         )
         if isinstance(self.transcriber, RemoteSttTranscriber):
             LOGGER.info("STT configured: %s; local Parakeet fallback=%s",
@@ -132,7 +179,7 @@ class VoiceRuntime:
             self._set_assistant_status("LISTENING", transcript="", response="")
             try:
                 LOGGER.info("Assistant microphone capture started")
-                audio = capture_microphone_once()
+                audio = capture_microphone_with_cues()
                 transcript = self.transcriber.transcribe(audio)
             except Exception as error:
                 LOGGER.exception("Assistant capture or transcription failed")
@@ -165,17 +212,22 @@ class VoiceRuntime:
         self.assistant.assistant.cancel()
         return self.assistant_status()
 
-    @staticmethod
-    def _announce_song(message: str) -> None:
-        VrchatOscClient().send_chatbox_message(message)
-        LOGGER.info("Sent Spotify track announcement: chars=%s", len(message))
+    def _announce_song(self, message: str) -> None:
+        if not load_settings().song_announce_enabled:
+            LOGGER.info("Spotify track announcement suppressed by wrist setting")
+            return
+        self.chatbox.announce_song(message)
+        LOGGER.info("Queued Spotify track announcement: chars=%s", len(message))
 
     def _read_current_song(self):
         try:
             track = asyncio.run(self._song_media.current_track())
             self._song_read_failure_logged = False
+            self.health.set("SPOTIFY", "good" if track is not None else "offline",
+                            "Media session available" if track is not None else "No Spotify media session")
             return track
         except Exception:
+            self.health.set("SPOTIFY", "offline", "Media session unavailable")
             if not self._song_read_failure_logged:
                 LOGGER.exception("Spotify song announcement query failed")
                 self._song_read_failure_logged = True
@@ -207,7 +259,7 @@ class VoiceRuntime:
         try:
             try:
                 LOGGER.info("Music microphone capture started")
-                audio = capture_microphone_once()
+                audio = capture_microphone_with_cues()
                 LOGGER.info("Music microphone capture completed: rate=%s width=%s bytes=%s",
                     getattr(audio, "sample_rate", "?"), getattr(audio, "sample_width", "?"),
                     len(getattr(audio, "frame_data", b"")))
@@ -223,20 +275,14 @@ class VoiceRuntime:
             LOGGER.info("Music transcript classified: chars=%s intent=%s",
                         len(transcript), intent.kind.value)
             action = f"deterministic:{intent.kind.value}"
-            if intent.kind is MusicIntentKind.UNKNOWN and OpenAiCompatibleClient().configured:
+            if OpenAiCompatibleClient().configured:
                 try:
-                    llm_intent = interpret_music_request(
+                    action = "llm:conversation"
+                    result = run_music_request(
                         transcript, context=self.music_conversation.recent())
-                    detail = llm_intent.play_type or llm_intent.command or ""
-                    action = f"llm:{llm_intent.tool}:{detail}"
-                    LOGGER.info("Validated LLM music tool=%s play_type=%s query_chars=%s "
-                                "artist_chars=%s command=%s", llm_intent.tool,
-                                llm_intent.play_type, len(llm_intent.query or ""),
-                                len(llm_intent.artist or ""), llm_intent.command)
-                    result = execute_music_llm_intent(llm_intent)
                 except (LlmError, MusicLlmValidationError) as error:
                     LOGGER.warning("LLM music fallback rejected: %s", error)
-                    result = MusicCommandResult(False, "I could not safely interpret that request.")
+                    result = MusicCommandResult(False, "I couldn't understand that request. Could you phrase it another way?")
                 except SpotifyOAuthError as error:
                     LOGGER.warning("Spotify OAuth action failed: %s", error)
                     result = MusicCommandResult(False, "Spotify rejected that command.")
@@ -276,7 +322,9 @@ class VoiceRuntime:
         if action is None:
             return False
         try:
-            return bool(asyncio.run(action()))
+            accepted = bool(asyncio.run(action()))
+            LOGGER.info("Wrist music transport: operation=%s accepted=%s", operation, accepted)
+            return accepted
         except Exception:
             LOGGER.exception("Music control failed: %s", operation)
             return False
@@ -292,9 +340,13 @@ class VoiceRuntime:
         return self.comms.snapshot().wire_text()
 
     def toggle_comms(self) -> str:
-        self.comms.set_silence_auto_stop_seconds(
-            load_settings().comms_silence_timeout_seconds)
         return self.comms.toggle().wire_text()
+
+    def start_comms(self) -> str:
+        return self.comms.start().wire_text()
+
+    def stop_comms(self) -> str:
+        return self.comms.stop().wire_text()
 
     def clear_comms(self) -> str:
         try:
@@ -345,6 +397,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 return
             if self.path == "/health":
                 self._reply(200, "ready")
+            elif self.path == "/services/status":
+                self._reply(200, runtime.health.wire())
             elif self.path == "/music/current":
                 self._reply(200, runtime.current_music())
             elif self.path == "/music/art":
@@ -383,6 +437,10 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, "ok" if runtime.music_control(operation) else "unavailable")
             elif self.path == "/comms/toggle":
                 self._reply(200, runtime.toggle_comms())
+            elif self.path == "/comms/start":
+                self._reply(200, runtime.start_comms())
+            elif self.path == "/comms/stop":
+                self._reply(200, runtime.stop_comms())
             elif self.path == "/comms/clear":
                 self._reply(200, runtime.clear_comms())
             elif self.path.startswith("/comms/shortcut/"):
@@ -442,6 +500,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, settings_wire_text(adjust_tts_volume(-0.1)))
             elif self.path == "/settings/tts/mute/toggle":
                 self._reply(200, settings_wire_text(toggle_tts_mute()))
+            elif self.path == "/settings/song-announce/toggle":
+                self._reply(200, settings_wire_text(toggle_song_announce()))
             elif self.path == "/settings/broadcast/gain/up":
                 self._reply(200, settings_wire_text(adjust_broadcast_gain(3.0)))
             elif self.path == "/settings/broadcast/gain/down":
@@ -455,7 +515,9 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
         def log_message(self, _format: str, *args: object) -> None:
             return
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = BoundedVoiceServer(("127.0.0.1", port), Handler)
+    runtime.health.start()
+    runtime.chatbox.start()
     runtime.song_announcer.start()
     LOGGER.info("Spotify OSC song announcer started")
     if warm:
@@ -463,7 +525,9 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
     try:
         server.serve_forever()
     finally:
+        runtime.health.stop()
         runtime.song_announcer.stop()
+        runtime.chatbox.stop()
         LOGGER.info("Voice service stopping")
         server.server_close()
 

@@ -78,6 +78,9 @@ int main(int argc, char** argv) {
         && std::string_view(argv[1]) == "--probe-process";
     const bool spotifyBroadcast = argc > 1
         && std::string_view(argv[1]) == "--broadcast-spotify";
+    const bool chromeBroadcast = argc > 1
+        && std::string_view(argv[1]) == "--broadcast-chrome";
+    const bool applicationBroadcast = spotifyBroadcast || chromeBroadcast;
     const bool listRenderEndpoints = argc > 1
         && std::string_view(argv[1]) == "--list-render-endpoints";
     if (listRenderEndpoints) {
@@ -87,11 +90,12 @@ int main(int argc, char** argv) {
         uninitialize();
         return 0;
     }
-    if (!spotifyProbe && !processProbe && !spotifyBroadcast) {
+    if (!spotifyProbe && !processProbe && !applicationBroadcast) {
         std::cout << "Interfayce Audio Engine\n"
                   << "  --probe-spotify [seconds]\n"
                   << "  --probe-process <process-id> [seconds]\n"
-                  << "  --broadcast-spotify [seconds] [--gain-db 0-24]\n"
+                  << "  --broadcast-spotify [seconds] [--gain-db -24..24]\n"
+                  << "  --broadcast-chrome [seconds] [--gain-db -24..24]\n"
                   << "  --list-render-endpoints\n";
         uninitialize();
         return 0;
@@ -100,10 +104,13 @@ int main(int argc, char** argv) {
     std::optional<std::uint32_t> targetProcess;
     int durationArgument = 2;
     const char* heading = "PROCESS_LOOPBACK";
-    if (spotifyProbe || spotifyBroadcast) {
-        targetProcess = interfayce::FindProcessTreeRoot(L"Spotify.exe");
-        heading = spotifyBroadcast
-            ? "SPOTIFY_INTERFAYCE_BROADCAST" : "SPOTIFY_PROCESS_LOOPBACK";
+    if (spotifyProbe || applicationBroadcast) {
+        const bool chrome = chromeBroadcast;
+        targetProcess = interfayce::FindProcessTreeRoot(
+            chrome ? L"chrome.exe" : L"Spotify.exe");
+        heading = chrome ? "CHROME_INTERFAYCE_BROADCAST"
+            : spotifyBroadcast ? "SPOTIFY_INTERFAYCE_BROADCAST"
+            : "SPOTIFY_PROCESS_LOOPBACK";
     } else if (argc > 2) {
         try {
             targetProcess = static_cast<std::uint32_t>(std::stoul(argv[2]));
@@ -115,18 +122,20 @@ int main(int argc, char** argv) {
         }
     }
     if (!targetProcess) {
-        std::cerr << ((spotifyProbe || spotifyBroadcast)
-            ? "Spotify is not running; no audio process tree is available.\n"
+        std::cerr << ((spotifyProbe || applicationBroadcast)
+            ? (chromeBroadcast
+                ? "Chrome is not running; no audio process tree is available.\n"
+                : "Spotify is not running; no audio process tree is available.\n")
             : "Usage: --probe-process <process-id> [seconds]\n");
         uninitialize();
         return 1;
     }
 
-    double seconds = spotifyBroadcast ? 86400.0 : 5.0;
+    double seconds = applicationBroadcast ? 86400.0 : 5.0;
     if (argc > durationArgument) {
         try {
             seconds = std::clamp(std::stod(argv[durationArgument]), 0.25,
-                spotifyBroadcast ? 86400.0 : 30.0);
+                applicationBroadcast ? 86400.0 : 30.0);
         } catch (...) {
             std::cerr << "Capture duration must be a number of seconds.\n";
             uninitialize();
@@ -134,24 +143,24 @@ int main(int argc, char** argv) {
         }
     }
     double broadcastGainDb = 12.0;
-    if (spotifyBroadcast) {
+    if (applicationBroadcast) {
         for (int index = durationArgument + 1; index < argc; ++index) {
             if (std::string_view(argv[index]) != "--gain-db" || index + 1 >= argc) {
-                std::cerr << "Broadcast options must use --gain-db <0-24>.\n";
+                std::cerr << "Broadcast options must use --gain-db <-24..24>.\n";
                 uninitialize();
                 return 1;
             }
             try {
-                broadcastGainDb = std::clamp(std::stod(argv[++index]), 0.0, 24.0);
+                broadcastGainDb = std::clamp(std::stod(argv[++index]), -24.0, 24.0);
             } catch (...) {
-                std::cerr << "Broadcast gain must be a number from 0 through 24 dB.\n";
+                std::cerr << "Broadcast gain must be a number from -24 through +24 dB.\n";
                 uninitialize();
                 return 1;
             }
         }
     }
     int result = 0;
-    if (spotifyBroadcast) {
+    if (applicationBroadcast) {
         constexpr wchar_t kBroadcastStopEventName[] = L"Local\\InterfayceBroadcastStop";
         const HANDLE stopEvent = CreateEventW(nullptr, TRUE, FALSE, kBroadcastStopEventName);
         interfayce::AudioEndpointRenderer renderer;

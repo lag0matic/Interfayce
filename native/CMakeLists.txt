@@ -22,6 +22,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(openvr_sdk)
 
+add_executable(InterfaycePanelPreview EXCLUDE_FROM_ALL tests/panel_preview.cpp src/overlay_renderer.cpp)
+target_compile_features(InterfaycePanelPreview PRIVATE cxx_std_20)
+target_include_directories(InterfaycePanelPreview PRIVATE src "${openvr_sdk_SOURCE_DIR}/headers")
+target_link_libraries(InterfaycePanelPreview PRIVATE d3d11 dxgi d2d1 dwrite windowscodecs ole32 shlwapi)
+
 add_library(openvr_api SHARED IMPORTED GLOBAL)
 set_target_properties(openvr_api PROPERTIES
     IMPORTED_IMPLIB "${openvr_sdk_SOURCE_DIR}/lib/win64/openvr_api.lib"
@@ -32,6 +37,7 @@ set_target_properties(openvr_api PROPERTIES
 add_executable(InterfayceOverlay
     "${CMAKE_BINARY_DIR}/interfayce.rc"
     src/main.cpp
+    src/artwork_cache.cpp
     src/broadcast_controller.cpp
     src/desktop_capture.cpp
     src/desktop_surface_manager.cpp
@@ -42,17 +48,32 @@ add_executable(InterfayceOverlay
 add_library(interfayce_battery_estimator STATIC
     src/battery_estimator.cpp
 )
+add_library(interfayce_private_windows STATIC src/private_window_manager.cpp)
+target_compile_features(interfayce_private_windows PUBLIC cxx_std_20)
+target_include_directories(interfayce_private_windows PUBLIC src)
+target_link_libraries(interfayce_private_windows PUBLIC shell32 ole32 user32 advapi32 dwmapi setupapi)
+add_executable(InterfayceWindowRecovery WIN32 src/window_recovery_main.cpp)
+target_link_libraries(InterfayceWindowRecovery PRIVATE interfayce_private_windows)
+add_executable(InterfaycePrivateWindowTests tests/private_window_tests.cpp)
+target_include_directories(InterfaycePrivateWindowTests PRIVATE src)
+target_compile_features(InterfaycePrivateWindowTests PRIVATE cxx_std_20)
+target_link_libraries(InterfaycePrivateWindowTests PRIVATE shell32 ole32 user32 advapi32 dwmapi setupapi)
+target_link_libraries(InterfayceOverlay PRIVATE interfayce_private_windows)
 target_compile_features(interfayce_battery_estimator PRIVATE cxx_std_20)
 target_include_directories(interfayce_battery_estimator PUBLIC src)
 target_compile_features(InterfayceOverlay PRIVATE cxx_std_20)
 target_compile_definitions(InterfayceOverlay PRIVATE
     INTERFAYCE_VERSION="${PROJECT_VERSION}"
 )
-target_link_libraries(InterfayceOverlay PRIVATE interfayce_battery_estimator openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32 crypt32)
+target_link_libraries(InterfayceOverlay PRIVATE interfayce_battery_estimator openvr_api d3d11 dxgi d2d1 dwrite dwmapi shell32 windowsapp windowscodecs ws2_32 crypt32 shlwapi)
 
 add_executable(InterfayceBatteryEstimatorTests
     tests/battery_estimator_tests.cpp
 )
+add_executable(InterfayceDesktopCoordinatesTests tests/desktop_coordinates_tests.cpp)
+target_include_directories(InterfayceDesktopCoordinatesTests PRIVATE src)
+target_compile_features(InterfayceDesktopCoordinatesTests PRIVATE cxx_std_20)
+target_link_libraries(InterfayceDesktopCoordinatesTests PRIVATE user32)
 target_compile_features(InterfayceBatteryEstimatorTests PRIVATE cxx_std_20)
 target_link_libraries(InterfayceBatteryEstimatorTests PRIVATE interfayce_battery_estimator)
 # The installed overlay is a background VR utility, so a normal launch must not
@@ -76,7 +97,7 @@ target_compile_features(InterfayceAudioEngine PRIVATE cxx_std_20)
 target_link_libraries(InterfayceAudioEngine PRIVATE interfayce_process_audio)
 
 set(INTERFAYCE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-foreach(target InterfayceOverlay InterfayceAudioEngine)
+foreach(target InterfayceOverlay InterfayceAudioEngine InterfayceWindowRecovery InterfaycePrivateWindowTests)
     foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
         set_target_properties(${target} PROPERTIES
             "RUNTIME_OUTPUT_DIRECTORY_${config}" "${INTERFAYCE_OUTPUT_DIRECTORY}"
@@ -100,3 +121,14 @@ add_custom_command(TARGET InterfayceOverlay POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/../assets/ui"
         "$<TARGET_FILE_DIR:InterfayceOverlay>/assets/ui"
 )
+
+add_executable(InterfayceArtworkCacheTests
+    tests/artwork_cache_tests.cpp
+    src/artwork_cache.cpp
+)
+target_include_directories(InterfayceArtworkCacheTests PRIVATE src)
+target_compile_features(InterfayceArtworkCacheTests PRIVATE cxx_std_20)
+
+add_executable(InterfayceDesktopClickTests tests/desktop_click_filter_tests.cpp)
+target_include_directories(InterfayceDesktopClickTests PRIVATE src)
+target_compile_features(InterfayceDesktopClickTests PRIVATE cxx_std_20)

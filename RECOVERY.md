@@ -7,6 +7,23 @@ from source is only necessary when producing a new release.
 
 ## What to preserve before resetting Windows
 
+### Private VR windows (1.2.17)
+
+Use **Recover VR windows** in the Start menu or the Interfayce tray to bring parked
+apps back minimized on a physical monitor. This works without a headset. **Return
+to desktop** on a VR surface brings that window back visibly.
+
+The optional virtual monitor stays connected when Interfayce exits. Before
+disabling/uninstalling that display driver, run recovery and check that no other
+apps remain on it. Interfayce does not remove the driver during uninstall.
+Recovery records are under `%LOCALAPPDATA%\Interfayce\private-windows`; keep them
+until recovery succeeds. They contain window identities/placement, not contents.
+They are machine/session records, not useful backups for a fresh Windows install.
+A small `InterfayceWindowRecovery` entry in the current user's Windows Run key
+checks existing records at sign-in and exits; it does not start the VR overlay.
+If Discord reopens on the virtual monitor after reboot, use the explicit rescue
+shortcut. Quiet startup recovery deliberately does not match a new app by title.
+
 Back up these non-secret files if the old installation is still readable:
 
 - `%LOCALAPPDATA%\Interfayce\settings.json` — endpoints, models, device choices,
@@ -182,3 +199,12 @@ The script builds Release native binaries, freezes the resident service, fetches
 and pins SolarXR, stages Node and Parakeet, and creates the per-user installer.
 Verify the generated SHA-256 and update `BUILD-STATUS.md` before publishing.
 
+## Wrist service status (1.2.18)
+
+Point at TTS/STT/LLM/SPOTIFY/SLIME in the persistent strip for an explanation.
+Green: availability check passed. Yellow: remote STT unavailable, local backup
+initialized. Red: unavailable. Gray: checking, muted/disabled, stale or unsupported
+health check. Green does not guarantee audio audibility or every future request.
+Checks recover automatically, usually within 15-20 seconds. Spotify reflects its
+local media session, not the separate OAuth connection. Clock and battery estimate
+now live in the strip on every tab.

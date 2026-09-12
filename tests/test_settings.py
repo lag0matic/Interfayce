@@ -8,7 +8,7 @@ from interfayce.settings import (
     AppSettings, adjust_broadcast_gain, adjust_tts_volume, load_settings, save_settings,
     desktop_favorites_wire_text, load_desktop_history, record_desktop_recent,
     set_desktop_configuration, set_runtime_controls, set_spotify_client_id,
-    settings_wire_text, toggle_tts_mute,
+    settings_wire_text, toggle_song_announce, toggle_tts_mute,
 )
 
 
@@ -28,6 +28,7 @@ class SettingsTests(unittest.TestCase):
             set_spotify_client_id("client-id")
             self.assertAlmostEqual(adjust_tts_volume(0.1).tts_volume, 0.95)
             self.assertTrue(toggle_tts_mute().tts_muted)
+            self.assertFalse(toggle_song_announce().song_announce_enabled)
             self.assertEqual(adjust_broadcast_gain(3.0).broadcast_gain_db, 15.0)
             self.assertEqual(load_settings().spotify_client_id, "client-id")
 
@@ -52,7 +53,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(saved.stt_microphone, "Beyond Microphone")
             self.assertAlmostEqual(saved.haptic_strength, 0.37)
             self.assertEqual(settings_wire_text(saved),
-                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0\t10.0")
+                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0\t10.0\t1")
 
     def test_complete_desktop_configuration_round_trip(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -228,3 +229,15 @@ class SettingsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BroadcastAttenuationTests(unittest.TestCase):
+    def test_wrist_gain_crosses_zero_and_persists_negative_values(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            save_settings(AppSettings(broadcast_gain_db=0))
+            self.assertEqual(adjust_broadcast_gain(-3).broadcast_gain_db, -3)
+            self.assertEqual(load_settings().broadcast_gain_db, -3)
+            self.assertEqual(adjust_broadcast_gain(-100).broadcast_gain_db, -24)
+            self.assertEqual(adjust_broadcast_gain(100).broadcast_gain_db, 24)

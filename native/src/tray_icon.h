@@ -8,6 +8,7 @@ namespace interfayce {
 
 enum class TrayAction {
     OpenSettings,
+    RecoverWindows,
     Restart,
     Exit,
 };

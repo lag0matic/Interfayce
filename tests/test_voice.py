@@ -12,6 +12,7 @@ from interfayce.voice import (
 )
 from interfayce.assistant import AssistantSnapshot, AssistantState
 from interfayce.voice_service import VoiceRuntime, voice_log_path
+from interfayce.voice_service import capture_microphone_with_cues
 
 
 class FakeMedia:
@@ -72,6 +73,14 @@ class VoiceIntentTests(unittest.TestCase):
             expected = Path(directory) / "voice.log"
             with patch.dict("os.environ", {"INTERFAYCE_VOICE_LOG": str(expected)}):
                 self.assertEqual(voice_log_path(), expected)
+
+    @patch("interfayce.voice_service.capture_microphone_once", return_value="audio")
+    @patch("interfayce.voice_service.play_capture_cue")
+    def test_bounded_capture_is_cued_without_ambient_discard(self, cue, capture) -> None:
+        self.assertEqual(capture_microphone_with_cues(), "audio")
+        self.assertEqual(capture.call_args.kwargs["ambient_seconds"], 0.0)
+        self.assertTrue(callable(capture.call_args.kwargs["on_ready"]))
+        cue.assert_not_called()
 
     @patch("interfayce.voice_service.synthesize", return_value=b"warm audio")
     def test_startup_warmup_primes_stt_and_tts_without_playback(self, synthesize) -> None:

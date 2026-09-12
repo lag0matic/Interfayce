@@ -67,8 +67,10 @@ bool BroadcastController::Start(std::wstring& error) {
         return false;
     }
 
-    std::wstring command = L"\"" + enginePath_.wstring()
-        + L"\" --broadcast-spotify 86400 --gain-db " + std::to_wstring(gainDb_);
+    const wchar_t* mode = source_ == BroadcastSource::Chrome
+        ? L"--broadcast-chrome" : L"--broadcast-spotify";
+    std::wstring command = L"\"" + enginePath_.wstring() + L"\" " + mode
+        + L" 86400 --gain-db " + std::to_wstring(gainDb_);
     std::vector<wchar_t> mutableCommand(command.begin(), command.end());
     mutableCommand.push_back(L'\0');
     STARTUPINFOW startup{};
@@ -96,7 +98,8 @@ bool BroadcastController::Start(std::wstring& error) {
     ResumeThread(process.hThread);
     CloseHandle(process.hThread);
     startedAt_ = std::chrono::steady_clock::now();
-    SetState(BroadcastState::Starting, L"BROADCAST STARTING");
+    SetState(BroadcastState::Starting,
+        source_ == BroadcastSource::Chrome ? L"CHROME STARTING" : L"SPOTIFY STARTING");
     return true;
 }
 
@@ -121,14 +124,25 @@ bool BroadcastController::Poll() {
     }
     if (state_ == BroadcastState::Starting
         && std::chrono::steady_clock::now() - startedAt_ >= std::chrono::milliseconds(350)) {
-        SetState(BroadcastState::Active, L"BROADCAST LIVE");
+        SetState(BroadcastState::Active,
+            source_ == BroadcastSource::Chrome ? L"CHROME LIVE" : L"SPOTIFY LIVE");
         return true;
     }
     return false;
 }
 
 void BroadcastController::SetGainDb(float gainDb) {
-    gainDb_ = (std::max)(0.0F, (std::min)(24.0F, gainDb));
+    gainDb_ = (std::max)(-24.0F, (std::min)(24.0F, gainDb));
+}
+
+void BroadcastController::SetSource(BroadcastSource source) {
+    if (!Enabled()) source_ = source;
+}
+
+BroadcastSource BroadcastController::Source() const { return source_; }
+
+const wchar_t* BroadcastController::SourceProcessName() const {
+    return source_ == BroadcastSource::Chrome ? L"chrome.exe" : L"Spotify.exe";
 }
 
 BroadcastState BroadcastController::State() const { return state_; }

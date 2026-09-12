@@ -1,6 +1,6 @@
 #define AppName "Interfayce"
 #ifndef AppVersion
-#define AppVersion "1.2.0"
+#define AppVersion "1.2.19"
 #endif
 #define AppPublisher "Lag0Matic"
 
@@ -37,10 +37,15 @@ Source: "out\stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cre
 
 [Icons]
 Name: "{group}\Interfayce"; Filename: "{app}\InterfayceOverlay.exe"; WorkingDir: "{app}"
+Name: "{group}\Recover VR windows"; Filename: "{app}\InterfayceWindowRecovery.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\Interfayce"; Filename: "{app}\InterfayceOverlay.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\InterfayceOverlay.exe"; Description: "Launch Interfayce"; Flags: nowait postinstall skipifsilent unchecked
 
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "InterfayceWindowRecovery"; ValueData: """{app}\InterfayceWindowRecovery.exe"" --quiet"; Flags: uninsdeletevalue
+
 [UninstallRun]
 Filename: "{app}\InterfayceOverlay.exe"; Parameters: "--shutdown"; RunOnceId: "StopInterfayce"; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{app}\InterfayceWindowRecovery.exe"; Parameters: "--quiet"; RunOnceId: "RecoverInterfayceWindows"; Flags: runhidden waituntilterminated skipifdoesntexist

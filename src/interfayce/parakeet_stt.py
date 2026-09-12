@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import threading
+import time
 from pathlib import Path
 import sys
-import threading
 from typing import Any
 
 from .settings import load_settings
@@ -98,38 +99,83 @@ class ParakeetTranscriber:
         return stream.result.text.strip()
 
 
+def _configured_microphone_index(sr) -> int | None:
+    configured = (os.environ.get("INTERFAYCE_MICROPHONE", "").strip()
+                  or load_settings().stt_microphone)
+    if not configured:
+        return None
+    if configured.isdigit():
+        return int(configured)
+    wanted = configured.casefold()
+    microphone_names = sr.Microphone.list_microphone_names()
+    device_index = next((index for index, name in enumerate(microphone_names)
+        if wanted == name.casefold()), None)
+    if device_index is None:
+        device_index = next((index for index, name in enumerate(
+            microphone_names) if wanted in name.casefold()), None)
+    if device_index is None:
+        raise ValueError(f"Configured microphone was not found: {configured}")
+    return device_index
+
+
+def capture_microphone_until(
+    stop_event: threading.Event,
+    *,
+    max_seconds: float = 30.0,
+    on_ready=None,
+    on_chunk=None,
+):
+    """Capture every microphone frame until the caller releases push-to-talk."""
+
+    import speech_recognition as sr  # type: ignore[import-not-found]
+
+    device_index = _configured_microphone_index(sr)
+    frames: list[bytes] = []
+    # No ambient calibration or VAD happens here: nothing spoken after the
+    # button goes down is intentionally consumed or discarded.
+    with sr.Microphone(device_index=device_index, sample_rate=None) as source:
+        if on_ready is not None:
+            on_ready()
+        deadline = time.monotonic() + max(1.0, float(max_seconds))
+        while not stop_event.is_set() and time.monotonic() < deadline:
+            chunk = source.stream.read(source.CHUNK)
+            frames.append(chunk)
+            if on_chunk is not None:
+                on_chunk(chunk, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+        return sr.AudioData(b"".join(frames), source.SAMPLE_RATE, source.SAMPLE_WIDTH)
+
+
 def capture_microphone_once(
     *,
     timeout_seconds: float = 5.0,
     phrase_seconds: float = 8.0,
     ambient_seconds: float = 0.25,
+    pause_seconds: float = 0.8,
+    phrase_start_seconds: float = 0.3,
+    pre_speech_seconds: float = 0.5,
+    on_ready=None,
 ):
     """Capture one bounded utterance from the configured Windows default microphone."""
 
     import speech_recognition as sr  # type: ignore[import-not-found]
 
     recognizer = sr.Recognizer()
-    configured = (os.environ.get("INTERFAYCE_MICROPHONE", "").strip()
-                  or load_settings().stt_microphone)
-    device_index: int | None = None
-    if configured:
-        if configured.isdigit():
-            device_index = int(configured)
-        else:
-            wanted = configured.casefold()
-            microphone_names = sr.Microphone.list_microphone_names()
-            device_index = next((index for index, name in enumerate(microphone_names)
-                if wanted == name.casefold()), None)
-            if device_index is None:
-                device_index = next((index for index, name in enumerate(
-                    microphone_names) if wanted in name.casefold()), None)
-            if device_index is None:
-                raise ValueError(f"Configured microphone was not found: {configured}")
+    recognizer.pause_threshold = max(0.3, float(pause_seconds))
+    recognizer.phrase_threshold = max(0.05, float(phrase_start_seconds))
+    recognizer.non_speaking_duration = max(0.1, min(
+        recognizer.pause_threshold, float(pre_speech_seconds)))
+    device_index = _configured_microphone_index(sr)
     # Use the device's native sample rate while recording. AudioData resamples to
     # Parakeet's required 16 kHz in transcribe(); Beyond reports 44.1/48 kHz and
     # rejects a forced 16 kHz stream.
     with sr.Microphone(device_index=device_index, sample_rate=None) as source:
-        recognizer.adjust_for_ambient_noise(source, duration=ambient_seconds)
+        # Calibration consumes rather than preserves its input. Callers that arm
+        # immediately-visible listening controls can pass zero so opening words
+        # are captured instead of being mistaken for room noise.
+        if ambient_seconds > 0.0:
+            recognizer.adjust_for_ambient_noise(source, duration=ambient_seconds)
+        if on_ready is not None:
+            on_ready()
         return recognizer.listen(
             source,
             timeout=timeout_seconds,

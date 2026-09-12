@@ -276,11 +276,11 @@ class SettingsWindow:
                   command=lambda _value: self._update_labels()).grid(
                       row=row, column=0, columnspan=2, sticky="ew", pady=(5, 8))
         row += 1
-        ttk.Label(panel, text="Broadcast boost", style="Panel.TLabel").grid(row=row, column=0, sticky="w")
+        ttk.Label(panel, text="Broadcast gain", style="Panel.TLabel").grid(row=row, column=0, sticky="w")
         ttk.Label(panel, textvariable=self.broadcast_label, style="Muted.Panel.TLabel").grid(
             row=row, column=1, sticky="e")
         row += 1
-        ttk.Scale(panel, from_=0, to=24, variable=self.broadcast_gain,
+        ttk.Scale(panel, from_=-24, to=24, variable=self.broadcast_gain,
                   command=lambda _value: self._update_labels()).grid(
                       row=row, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         row += 1
@@ -401,14 +401,10 @@ class SettingsWindow:
 
     def _build_comms(self, panel: ttk.Frame) -> None:
         row = self._section(panel, 0, "VOICE PRIVACY")
-        ttk.Label(panel, text="Stop listening after silence", style="Panel.TLabel").grid(
-            row=row, column=0, sticky="w")
-        timeout_row = ttk.Frame(panel, style="Panel.TFrame")
-        timeout_row.grid(row=row, column=1, sticky="e")
-        ttk.Spinbox(timeout_row, from_=1, to=30, increment=1,
-                    textvariable=self.comms_silence_timeout, width=6).pack(side="left")
-        ttk.Label(timeout_row, text="seconds", style="Muted.Panel.TLabel").pack(
-            side="left", padx=(8, 0))
+        ttk.Label(panel,
+                  text="Comms records only while you hold the wrist mic. Release to transcribe and send one complete message.",
+                  style="Muted.Panel.TLabel", wraplength=690).grid(
+                      row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
         row = self._section(panel, row + 1, "OSC CHATBOX SHORTCUTS")
         ttk.Label(panel, text="Short labels appear on the wrist. Messages are sent immediately to VRChat.",
                   style="Muted.Panel.TLabel").grid(
@@ -595,7 +591,7 @@ class SettingsWindow:
     def _update_labels(self) -> None:
         self.volume_label.set(f"{round(self.volume.get())}%")
         self.haptic_label.set(f"{round(self.haptic.get())}%")
-        self.broadcast_label.set(f"+{round(self.broadcast_gain.get())} dB")
+        self.broadcast_label.set(f"{round(self.broadcast_gain.get()):+d} dB")
         for label, variable in zip(self.wrist_position_labels,
                                    (self.wrist_offset_x, self.wrist_offset_y,
                                     self.wrist_offset_z)):

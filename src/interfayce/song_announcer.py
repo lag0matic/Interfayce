@@ -99,7 +99,7 @@ class ResidentSongAnnouncer:
 
     def __init__(self, read_track: Callable[[], MediaTrack | None],
                  send_message: Callable[[str], None], clear_message: Callable[[], None],
-                 *, poll_seconds: float = 1.0, clear_seconds: float = 7.0,
+                 *, poll_seconds: float = 1.0, clear_seconds: float | None = 7.0,
                  stability_seconds: float = 3.0) -> None:
         self._read_track = read_track
         self._send_message = send_message
@@ -141,5 +141,6 @@ class ResidentSongAnnouncer:
             announcement = self._watcher.observe(track)
             if announcement is not None:
                 self._send_message(announcement.chatbox_text())
-                self._schedule_clear()
+                if self._clear_seconds is not None:
+                    self._schedule_clear()
             self._stop.wait(self._poll_seconds)

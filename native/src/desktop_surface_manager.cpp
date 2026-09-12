@@ -1,4 +1,5 @@
 #include "desktop_surface_manager.h"
+#include "private_window_manager.h"
 
 #include <algorithm>
 #include <appmodel.h>
@@ -157,6 +158,12 @@ std::vector<DesktopSource> DesktopSurfaceManager::EnumerateDisplays() const {
         }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&displays));
+    const auto privateDisplays = PrivateDisplays();
+    std::erase_if(displays, [&](const auto& source) {
+        return std::any_of(privateDisplays.begin(), privateDisplays.end(), [&](const auto& d) {
+            return d.candidate && d.monitor == source.monitor;
+        });
+    });
     return displays;
 }
 

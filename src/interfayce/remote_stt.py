@@ -154,6 +154,10 @@ class RemoteSttTranscriber:
             LOGGER.warning("Remote STT warm-up failed; warming local fallback", exc_info=True)
             self.fallback.warm()
 
+    def start_stream(self, on_partial):
+        from .live_stt import RemoteLiveSession
+        return RemoteLiveSession(self.endpoint, self._headers(), on_partial)
+
     def transcribe(self, audio: object) -> str:
         try:
             wav_data = audio.get_wav_data(convert_rate=16_000, convert_width=2)
@@ -164,8 +168,6 @@ class RemoteSttTranscriber:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 payload = json.load(response)
             text = str(payload.get("text", "")).strip()
-            if not text:
-                raise RuntimeError("Remote STT returned an empty transcript.")
             return text
         except Exception:
             if self.fallback is None:

@@ -109,6 +109,39 @@ class MoonshineBackend(Backend):
         ).strip()
 
 
+
+class MoonshineStream:
+    """One bounded utterance; share model weights, keep per-stream state."""
+    def __init__(self, backend):
+        self.backend = backend
+        self.lines = {}
+        with backend._lock:
+            self.stream = backend._model.create_stream(update_interval=60.0)
+            try:
+                self.stream.start()
+            except Exception:
+                self.stream.close()
+                raise
+
+    def push(self, pcm: bytes, final=False):
+        import numpy as np
+        with self.backend._lock:
+            if pcm:
+                samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+                self.stream.add_audio(samples.tolist(), sample_rate=16000)
+            transcript = self.stream.stop() if final else self.stream.update_transcription()
+            if transcript is None:
+                raise RuntimeError("Streaming recognizer did not return a transcript.")
+            for line in transcript.lines:
+                self.lines[line.line_id] = line
+            return " ".join(line.text.strip() for line in sorted(
+                self.lines.values(), key=lambda line: line.start_time) if line.text.strip())
+
+    def close(self):
+        with self.backend._lock:
+            self.stream.close()
+
+
 def create_backend(options: dict[str, Any], model_root: Path) -> Backend:
     backend_name = options.get("backend")
     if backend_name == "faster-whisper":

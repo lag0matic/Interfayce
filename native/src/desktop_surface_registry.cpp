@@ -1,3 +1,4 @@
+#include "desktop_coordinates.h"
 #include "desktop_surface_registry.h"
 
 #include <d2d1helper.h>
@@ -144,7 +145,10 @@ vr::HmdVector3_t Midpoint(const vr::HmdVector3_t& left, const vr::HmdVector3_t& 
         (left.v[2] + right.v[2]) * 0.5F}};
 }
 
+using interfayce::PhysicalDesktopCoordinates;
+
 std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source, float u, float v) {
+    PhysicalDesktopCoordinates physicalCoordinates;
     RECT bounds{};
     if (source.kind == interfayce::DesktopSource::Kind::Display) {
         MONITORINFO info{};
@@ -159,12 +163,13 @@ std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source,
     const auto width = (std::max)(bounds.right - bounds.left, 1L);
     const auto height = (std::max)(bounds.bottom - bounds.top, 1L);
     return POINT{
-        bounds.left + static_cast<LONG>(std::lround(std::clamp(u, 0.0F, 1.0F) * width)),
-        bounds.top + static_cast<LONG>(std::lround((1.0F - std::clamp(v, 0.0F, 1.0F)) * height)),
+        bounds.left + static_cast<LONG>(std::lround(std::clamp(u, 0.0F, 1.0F) * (width - 1))),
+        bounds.top + static_cast<LONG>(std::lround((1.0F - std::clamp(v, 0.0F, 1.0F)) * (height - 1))),
     };
 }
 
 void PrepareWindowForInput(HWND window) {
+    PhysicalDesktopCoordinates physicalCoordinates;
     if (window == nullptr || !IsWindow(window)) return;
     if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
     SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
@@ -173,7 +178,28 @@ void PrepareWindowForInput(HWND window) {
     SetForegroundWindow(window);
 }
 
+HWND CapturedChildAtPoint(HWND rootWindow, const POINT screenPoint) {
+    PhysicalDesktopCoordinates physicalCoordinates;
+    if (rootWindow == nullptr || !IsWindow(rootWindow)) return nullptr;
+
+    // Deliberately walk from the captured root rather than using WindowFromPoint.
+    // WindowFromPoint follows the real desktop Z-order, so an unrelated window
+    // covering this coordinate can steal hit-testing from an otherwise valid
+    // captured surface.
+    HWND target = rootWindow;
+    while (true) {
+        POINT clientPoint = screenPoint;
+        if (!ScreenToClient(target, &clientPoint)) break;
+        const auto child = ChildWindowFromPointEx(target, clientPoint,
+            CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT);
+        if (child == nullptr || child == target) break;
+        target = child;
+    }
+    return target;
+}
+
 bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent event) {
+    PhysicalDesktopCoordinates physicalCoordinates;
     const auto virtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
     const auto virtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
     const auto virtualWidth = (std::max)(GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1, 1);
@@ -214,17 +240,16 @@ bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent eve
 
 bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
                          interfayce::DesktopPointerEvent event) {
+    PhysicalDesktopCoordinates physicalCoordinates;
     if (rootWindow == nullptr || !IsWindow(rootWindow)) return false;
     // Some retained-mode/web UI frameworks validate posted client messages
     // against the global cursor position. Keep both coordinate spaces aligned.
     SetCursorPos(screenPoint.x, screenPoint.y);
-    HWND target = WindowFromPoint(screenPoint);
-    if (target == nullptr
-        || (target != rootWindow && !IsChild(rootWindow, target))) {
-        target = rootWindow;
-    }
-    POINT clientPoint = screenPoint;
-    if (!ScreenToClient(target, &clientPoint)) return false;
+    const HWND target = CapturedChildAtPoint(rootWindow, screenPoint);
+    if (target == nullptr) return false;
+    const auto mappedPoint = interfayce::PhysicalClientPoint(target, screenPoint);
+    if (!mappedPoint) return false;
+    const POINT clientPoint = *mappedPoint;
     const LPARAM coordinates = MAKELPARAM(
         static_cast<short>(clientPoint.x), static_cast<short>(clientPoint.y));
     const bool primary = event == interfayce::DesktopPointerEvent::PrimaryDown
@@ -616,6 +641,7 @@ vr::Texture_t DesktopPickerTexture::Texture() const {
 }
 
 bool DesktopSurfaceRegistry::Initialize(vr::IVRSystem* system, ID3D11Device* device) {
+    RecoverPrivateWindows();
     system_ = system;
     device_ = device;
     return system_ != nullptr && device_ != nullptr;
@@ -1049,6 +1075,26 @@ bool DesktopSurfaceRegistry::AssignSource(uint64_t id, const DesktopSource& sour
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end() || found->capture || found->keyboard) return false;
+
+    // A native window should own at most one VR surface. Selecting it again is
+    // a recall action: bring the existing surface forward and discard the new
+    // picker instead of creating a stack of duplicate capture sessions.
+    if (source.kind == DesktopSource::Kind::Window) {
+        const auto existing = std::find_if(surfaces_.begin(), surfaces_.end(),
+            [id, &source](const auto& candidate) {
+                if (candidate.id == id || !candidate.capture || !candidate.assignedSource
+                    || *candidate.assignedSource >= candidate.sources.size()) return false;
+                const auto& assigned = candidate.sources[*candidate.assignedSource];
+                return assigned.kind == DesktopSource::Kind::Window
+                    && assigned.id == source.id;
+            });
+        if (existing != surfaces_.end()) {
+            const auto existingId = existing->id;
+            if (!BringToMe(existingId)) return false;
+            RememberFocusedSurface(existingId);
+            return Close(id);
+        }
+    }
     auto sourceIndex = std::find_if(found->sources.begin(), found->sources.end(),
         [&source](const auto& candidate) {
             return candidate.kind == source.kind && candidate.id == source.id;
@@ -1069,6 +1115,13 @@ bool DesktopSurfaceRegistry::AssignSource(uint64_t id, const DesktopSource& sour
     found->hoveredSource.reset();
     found->aspectRatio = capture->AspectRatio();
     found->capture = std::move(capture);
+    // The capture now owns the submitted texture. Rebuild picker pages only
+    // when returning to source selection, not throughout the capture lifetime.
+    found->additionalPickerPages.clear();
+    found->texture.reset();
+    const auto selectedSource = *sourceIndex;
+    found->sources = {selectedSource};
+    found->assignedSource = 0;
     UpdateFrameOverlays(*found);
     return true;
 }
@@ -1079,6 +1132,10 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         [&hit](const auto& surface) { return surface.id == hit.id; });
     if (found == surfaces_.end() || !found->capture || !found->assignedSource
         || *found->assignedSource >= found->sources.size()) return false;
+    if (found->privateMode) {
+        const auto window = found->sources[*found->assignedSource].window;
+        if (!privateWindows_.Contains(window) || !privateWindows_.AllowInput(window)) return false;
+    }
     if (event == DesktopPointerEvent::PrimaryDown
         || event == DesktopPointerEvent::SecondaryDown) {
         RememberFocusedSurface(found->id);
@@ -1096,10 +1153,30 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
     }
     const auto& source = found->sources[*found->assignedSource];
     const auto point = DesktopPointForHit(source, hit.u, hit.v);
-    const bool injected = point && (source.kind == DesktopSource::Kind::Window
-        ? InjectWindowPointer(source.window, *point, event)
-        : InjectDesktopPointer(*point, event));
-    return injected;
+    if (!point) return false;
+    POINT stable = *point;
+    switch (event) {
+    case DesktopPointerEvent::PrimaryDown:
+        desktopPrimaryClick_.Begin(stable);
+        break;
+    case DesktopPointerEvent::SecondaryDown:
+        desktopSecondaryClick_.Begin(stable);
+        break;
+    case DesktopPointerEvent::Move:
+        stable = desktopPrimaryClick_.Move(stable);
+        break;
+    case DesktopPointerEvent::PrimaryUp:
+        stable = desktopPrimaryClick_.End(stable);
+        break;
+    case DesktopPointerEvent::SecondaryUp:
+        // Right clicks stay at the press location; no right-drag path is sent.
+        stable = desktopSecondaryClick_.End(stable);
+        break;
+    }
+    if (source.kind == DesktopSource::Kind::Window) {
+        return InjectWindowPointer(source.window, stable, event);
+    }
+    return InjectDesktopPointer(stable, event);
 }
 
 void DesktopSurfaceRegistry::RememberFocusedSurface(uint64_t id) {
@@ -1143,6 +1220,10 @@ bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
         [&hit](const auto& surface) { return surface.id == hit.id; });
     if (found == surfaces_.end() || !found->capture || !found->assignedSource
         || *found->assignedSource >= found->sources.size()) return false;
+    if (found->privateMode) {
+        const auto window = found->sources[*found->assignedSource].window;
+        if (!privateWindows_.Contains(window) || !privateWindows_.AllowInput(window)) return false;
+    }
     const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
     return point && InjectDesktopScroll(*point, verticalDelta, horizontalDelta);
 }
@@ -1170,6 +1251,8 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
         if (target == surfaces_.end() || !target->capture || !target->assignedSource
             || *target->assignedSource >= target->sources.size()) return false;
         const auto& source = target->sources[*target->assignedSource];
+        if (target->privateMode && (!privateWindows_.Contains(source.window)
+            || !privateWindows_.AllowInput(source.window))) return false;
         if (source.kind == DesktopSource::Kind::Window && source.window != nullptr) {
             PrepareWindowForInput(source.window);
         }
@@ -1286,6 +1369,7 @@ void DesktopSurfaceRegistry::SetDeckVisible(bool visible) {
 }
 
 void DesktopSurfaceRegistry::Update() {
+    privateWindows_.Tick();
     // Keep Windows capture sessions alive for instant restoration, but do not
     // copy frames or update OpenVR textures while the Desk deck is parked.
     if (!deckVisible_) return;
@@ -1425,6 +1509,31 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end() || found->keyboard) return false;
+    if (found->privateMode && found->assignedSource) {
+        if (!privateWindows_.Return(found->sources[*found->assignedSource].window, false)) return false;
+        found->privateMode = false;
+    }
+    // Prepare the replacement before releasing the capture. Allocation failure
+    // must leave a usable surface, not a null picker or a stale submitted handle.
+    auto picker = std::make_unique<DesktopPickerTexture>();
+    if (!picker->Initialize(device_) || !picker->Render(sources)) return false;
+    std::vector<std::unique_ptr<DesktopPickerTexture>> pages;
+    const auto applicationCount = static_cast<size_t>(std::count_if(
+        sources.begin(), sources.end(), [](const auto& source) {
+            return source.kind == DesktopSource::Kind::Window;
+        }));
+    const auto pageCount = (std::max<size_t>)(1, (applicationCount + 4) / 5);
+    for (size_t page = 1; page < pageCount; ++page) {
+        auto pageTexture = std::make_unique<DesktopPickerTexture>();
+        if (!pageTexture->Initialize(device_)
+            || !pageTexture->Render(sources, std::nullopt, page)) return false;
+        pages.push_back(std::move(pageTexture));
+    }
+    const auto texture = picker->Texture();
+    if (vr::VROverlay()->SetOverlayTexture(found->overlay, &texture)
+        != vr::VROverlayError_None) return false;
+    found->texture = std::move(picker);
+    found->additionalPickerPages = std::move(pages);
     for (auto& grab : activeGrabs_) {
         if (grab && grab->id == id) grab.reset();
     }
@@ -1438,22 +1547,6 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
     found->label = L"Choose source";
     found->aspectRatio = static_cast<float>(kPickerWidth) / kPickerHeight;
     ForgetFocusedSurface(id);
-    if (!found->texture->Render(found->sources)) return false;
-    found->additionalPickerPages.clear();
-    const auto applicationCount = static_cast<size_t>(std::count_if(
-        found->sources.begin(), found->sources.end(), [](const auto& source) {
-            return source.kind == DesktopSource::Kind::Window;
-        }));
-    const auto pageCount = (std::max<size_t>)(1, (applicationCount + 4) / 5);
-    for (size_t page = 1; page < pageCount; ++page) {
-        auto pageTexture = std::make_unique<DesktopPickerTexture>();
-        if (!pageTexture->Initialize(device_)
-            || !pageTexture->Render(found->sources, std::nullopt, page)) return false;
-        found->additionalPickerPages.push_back(std::move(pageTexture));
-    }
-    const auto texture = found->texture->Texture();
-    if (vr::VROverlay()->SetOverlayTexture(found->overlay, &texture)
-        != vr::VROverlayError_None) return false;
     return UpdateFrameOverlays(*found);
 }
 
@@ -1461,6 +1554,8 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end()) return false;
+    if (found->privateMode && found->assignedSource
+        && !privateWindows_.Return(found->sources[*found->assignedSource].window, false)) return false;
     for (auto& grab : activeGrabs_) {
         if (grab && grab->id == id) grab.reset();
     }
@@ -1469,6 +1564,31 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
     DestroySurfaceOverlays(*found);
     surfaces_.erase(found);
     return true;
+}
+
+bool DesktopSurfaceRegistry::TogglePrivate(uint64_t id, std::wstring& message) {
+    auto found = std::find_if(surfaces_.begin(), surfaces_.end(), [id](const auto& s) { return s.id == id; });
+    if (found == surfaces_.end() || !found->assignedSource) return false;
+    const auto& source = found->sources[*found->assignedSource];
+    if (source.kind != DesktopSource::Kind::Window) return false;
+    if (found->privateMode) {
+        const bool tracked = privateWindows_.Contains(source.window);
+        if (!privateWindows_.Return(source.window, true)) { message = L"Recovery pending; try again"; return false; }
+        if (!tracked && IsWindow(source.window)) ShowWindowAsync(source.window, SW_RESTORE);
+        found->privateMode = false;
+        message = L"Window returned to desktop";
+        return true;
+    }
+    message = L"Could not keep this window in VR";
+    const bool parked = privateWindows_.Park(source.window, message);
+    found->privateMode = parked || privateWindows_.Contains(source.window);
+    return parked;
+}
+
+void DesktopSurfaceRegistry::RecoverPrivate() {
+    privateWindows_.RecoverAll();
+    RecoverPrivateWindows(true);
+    // Keep privateMode set so later input cannot automatically reopen recovered windows.
 }
 
 bool DesktopSurfaceRegistry::BeginGrab(uint64_t id, DesktopGrabHand hand,
@@ -1559,12 +1679,15 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
     summaries.reserve(surfaces_.size());
     for (const auto& surface : surfaces_) {
         summaries.push_back({surface.id, surface.label, surface.visible,
-            !surface.keyboard && surface.capture != nullptr, surface.locked});
+            !surface.keyboard && surface.capture != nullptr, surface.locked,
+            surface.assignedSource && surface.sources[*surface.assignedSource].kind == DesktopSource::Kind::Window,
+            surface.privateMode});
     }
     return summaries;
 }
 
 void DesktopSurfaceRegistry::Shutdown() {
+    privateWindows_.RecoverAll();
     for (auto& grab : activeGrabs_) grab.reset();
     activeScale_.reset();
     focusedSurfaceId_.reset();
