@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import threading
 
+from .osc import fit_chatbox_text
+
 DEFAULT_COMMS_SHORTCUTS: tuple[tuple[str, str], ...] = (("", ""),) * 4
 DEFAULT_DESKTOP_FAVORITES: tuple[tuple[str, str], ...] = (("", ""),) * 3
 MAX_DESKTOP_HISTORY = 8
@@ -35,6 +37,7 @@ class AppSettings:
     broadcast_gain_db: float = 12.0
     playspace_travel_limit_meters: float = 10.0
     spotify_client_id: str = ""
+    song_announce_enabled: bool = True
     llm_enabled: bool = False
     llm_endpoint: str = ""
     llm_model: str = ""
@@ -120,7 +123,7 @@ def _clamp(settings: AppSettings) -> AppSettings:
         except (TypeError, ValueError):
             continue
         clean_label = " ".join(str(label).split())[:12]
-        clean_message = " ".join(str(message).split())[:144]
+        clean_message = fit_chatbox_text(message)
         shortcuts.append((clean_label, clean_message))
     shortcuts.extend((("", ""),) * (4 - len(shortcuts)))
     favorites: list[tuple[str, str]] = []
@@ -146,10 +149,11 @@ def _clamp(settings: AppSettings) -> AppSettings:
         comms_silence_timeout_seconds=max(
             1.0, min(30.0, float(settings.comms_silence_timeout_seconds))),
         haptic_strength=max(0.0, min(1.0, float(settings.haptic_strength))),
-        broadcast_gain_db=max(0.0, min(24.0, float(settings.broadcast_gain_db))),
+        broadcast_gain_db=max(-24.0, min(24.0, float(settings.broadcast_gain_db))),
         playspace_travel_limit_meters=max(
             1.0, min(50.0, float(settings.playspace_travel_limit_meters))),
         spotify_client_id=str(settings.spotify_client_id).strip(),
+        song_announce_enabled=bool(settings.song_announce_enabled),
         llm_enabled=bool(settings.llm_enabled),
         llm_endpoint=str(settings.llm_endpoint).strip().rstrip("/"),
         llm_model=str(settings.llm_model).strip(),
@@ -189,6 +193,7 @@ def load_settings() -> AppSettings:
                 playspace_travel_limit_meters=data.get(
                     "playspace_travel_limit_meters", 10.0),
                 spotify_client_id=data.get("spotify_client_id", ""),
+                song_announce_enabled=data.get("song_announce_enabled", True),
                 llm_enabled=data.get("llm_enabled", False),
                 llm_endpoint=data.get("llm_endpoint", ""),
                 llm_model=data.get("llm_model", ""),
@@ -271,6 +276,13 @@ def adjust_tts_volume(delta: float) -> AppSettings:
 def toggle_tts_mute() -> AppSettings:
     current = load_settings()
     return save_settings(replace(current, tts_muted=not current.tts_muted))
+
+
+def toggle_song_announce() -> AppSettings:
+    current = load_settings()
+    return save_settings(replace(
+        current, song_announce_enabled=not current.song_announce_enabled
+    ))
 
 
 def adjust_broadcast_gain(delta_db: float) -> AppSettings:
@@ -405,4 +417,5 @@ def settings_wire_text(settings: AppSettings | None = None) -> str:
             f"{current.wrist_offset_x:.3f}\t{current.wrist_offset_y:.3f}\t"
             f"{current.wrist_offset_z:.3f}\t{current.wrist_pitch:.1f}\t"
             f"{current.wrist_yaw:.1f}\t{current.wrist_roll:.1f}\t"
-            f"{current.playspace_travel_limit_meters:.1f}")
+            f"{current.playspace_travel_limit_meters:.1f}\t"
+            f"{int(current.song_announce_enabled)}")

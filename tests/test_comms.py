@@ -9,6 +9,10 @@ class FakeAudio:
     pass
 
 
+class EmptyAudio:
+    frame_data = b""
+
+
 class FakeTranscriber:
     def __init__(self, transcript="hello from vr"):
         self.transcript = transcript
@@ -21,6 +25,7 @@ class FakeOsc:
     def __init__(self):
         self.messages = []
         self.clears = 0
+        self.typing = []
 
     def send_chatbox_message(self, text):
         self.messages.append(text)
@@ -28,31 +33,54 @@ class FakeOsc:
     def clear_chatbox(self):
         self.clears += 1
 
+    def set_typing(self, is_typing):
+        self.typing.append(is_typing)
+
 
 class CommsDictationTests(unittest.TestCase):
-    def test_continuously_sends_completed_utterances_until_stopped(self):
-        release = threading.Event()
-        calls = 0
+    def test_records_until_release_then_sends_one_complete_message(self):
+        capture_started = threading.Event()
+        capture_finished = threading.Event()
 
-        def capture(**_kwargs):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return FakeAudio()
-            release.wait(0.2)
-            raise type("WaitTimeoutError", (Exception,), {})()
+        def capture(stop_event, **_kwargs):
+            capture_started.set()
+            stop_event.wait(1.0)
+            capture_finished.set()
+            return FakeAudio()
 
         osc = FakeOsc()
         comms = CommsDictation(FakeTranscriber(), threading.Lock(), capture=capture, osc=osc)
-        self.assertEqual(comms.toggle().state, "LISTENING")
+        self.assertEqual(comms.start().state, "LISTENING")
+        self.assertTrue(capture_started.wait(1.0))
+        self.assertEqual(osc.typing, [True])
+        self.assertEqual(osc.messages, [])
+        self.assertEqual(comms.stop().state, "TRANSCRIBING")
+        self.assertFalse(osc.typing[-1])
+        self.assertTrue(capture_finished.wait(1.0))
         deadline = time.monotonic() + 1.0
-        while (not osc.messages or comms.snapshot().state != "SENT") \
-                and time.monotonic() < deadline:
+        while not osc.messages and time.monotonic() < deadline:
             time.sleep(0.005)
         self.assertEqual(osc.messages, ["hello from vr"])
         self.assertEqual(comms.snapshot().state, "SENT")
-        self.assertEqual(comms.toggle().state, "STOPPING")
-        release.set()
+        self.assertFalse(osc.typing[-1])
+
+    def test_start_is_idempotent_while_button_is_held(self):
+        captures = 0
+
+        def capture(stop_event, **_kwargs):
+            nonlocal captures
+            captures += 1
+            stop_event.wait(1.0)
+            return FakeAudio()
+
+        comms = CommsDictation(FakeTranscriber(), threading.Lock(), capture=capture, osc=FakeOsc())
+        self.assertEqual(comms.start().state, "LISTENING")
+        self.assertEqual(comms.start().state, "LISTENING")
+        comms.stop()
+        deadline = time.monotonic() + 1.0
+        while comms.snapshot().state not in {"SENT", "ERROR"} and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(captures, 1)
 
     def test_clear_uses_dedicated_empty_message_operation(self):
         osc = FakeOsc()
@@ -73,7 +101,7 @@ class CommsDictationTests(unittest.TestCase):
         lock = threading.Lock()
         lock.acquire()
         comms = CommsDictation(FakeTranscriber(), lock, osc=FakeOsc())
-        comms.toggle()
+        comms.start()
         deadline = time.monotonic() + 1.0
         while comms.snapshot().state == "LISTENING" and time.monotonic() < deadline:
             time.sleep(0.005)
@@ -82,17 +110,11 @@ class CommsDictationTests(unittest.TestCase):
         lock.release()
 
     def test_transcript_is_bounded_to_vrchat_limit(self):
-        release = threading.Event()
         sent = threading.Event()
-        calls = 0
 
-        def capture(**_kwargs):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return FakeAudio()
-            release.wait(0.2)
-            raise type("WaitTimeoutError", (Exception,), {})()
+        def capture(stop_event, **_kwargs):
+            stop_event.wait(1.0)
+            return FakeAudio()
 
         osc = FakeOsc()
         original_send = osc.send_chatbox_message
@@ -100,25 +122,101 @@ class CommsDictationTests(unittest.TestCase):
             original_send(text)
             sent.set()
         osc.send_chatbox_message = send
-        comms = CommsDictation(FakeTranscriber("x" * 200), threading.Lock(), capture=capture, osc=osc)
-        comms.toggle()
+        comms = CommsDictation(FakeTranscriber("x" * 200), threading.Lock(),
+                               capture=capture, osc=osc)
+        comms.start()
+        comms.stop()
         self.assertTrue(sent.wait(1.0))
         self.assertEqual(len(osc.messages[0]), 144)
-        comms.toggle()
-        release.set()
+        self.assertTrue(osc.messages[0].endswith("…"))
 
-    def test_auto_stops_after_three_seconds_of_silence(self):
-        def capture(**_kwargs):
-            time.sleep(0.01)
-            raise type("WaitTimeoutError", (Exception,), {})()
+    def test_long_transcript_ends_at_a_word_boundary(self):
+        def capture(stop_event, **_kwargs):
+            stop_event.wait(1.0)
+            return FakeAudio()
+
+        text = " ".join(["ordinary"] * 30)
+        osc = FakeOsc()
+        comms = CommsDictation(FakeTranscriber(text), threading.Lock(),
+                               capture=capture, osc=osc)
+        comms.start()
+        comms.stop()
+        deadline = time.monotonic() + 1.0
+        while not osc.messages and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertLessEqual(len(osc.messages[0]), 144)
+        self.assertTrue(osc.messages[0].endswith("ordinary…"))
+
+    def test_capture_has_no_vad_and_uses_release_event(self):
+        observed = {}
+
+        def capture(stop_event, **kwargs):
+            observed.update(kwargs)
+            observed["stop_event"] = stop_event
+            stop_event.wait(1.0)
+            return FakeAudio()
 
         comms = CommsDictation(FakeTranscriber(), threading.Lock(), capture=capture,
-                               osc=FakeOsc(), silence_auto_stop_seconds=0.04)
-        self.assertEqual(comms.toggle().state, "LISTENING")
+                               osc=FakeOsc())
+        comms.start()
         deadline = time.monotonic() + 1.0
-        while comms.snapshot().state != "IDLE" and time.monotonic() < deadline:
+        while not observed and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(observed["max_seconds"], 30.0)
+        self.assertFalse(observed["stop_event"].is_set())
+        comms.stop()
+
+    def test_capture_cues_bracket_the_recorded_interval(self):
+        order = []
+
+        def cue(starting):
+            order.append("start-cue" if starting else "stop-cue")
+
+        def capture(_stop_event, **_kwargs):
+            order.append("capture")
+            _kwargs["on_ready"]()
+            return EmptyAudio()
+
+        comms = CommsDictation(FakeTranscriber(), threading.Lock(), capture=capture,
+                               osc=FakeOsc(), cue=cue)
+        comms.start()
+        deadline = time.monotonic() + 1.0
+        while comms.snapshot().state == "LISTENING" and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(order, ["capture", "start-cue", "stop-cue"])
+
+    def test_empty_tap_does_not_call_stt_or_send_osc(self):
+        class UnexpectedTranscriber:
+            def transcribe(self, _audio):
+                raise AssertionError("empty audio must not reach STT")
+
+        def capture(_stop_event, **_kwargs):
+            return EmptyAudio()
+
+        osc = FakeOsc()
+        comms = CommsDictation(UnexpectedTranscriber(), threading.Lock(),
+                               capture=capture, osc=osc)
+        comms.start()
+        deadline = time.monotonic() + 1.0
+        while comms.snapshot().state == "LISTENING" and time.monotonic() < deadline:
             time.sleep(0.005)
         self.assertEqual(comms.snapshot().state, "IDLE")
+        self.assertEqual(osc.messages, [])
+        self.assertFalse(osc.typing[-1])
+
+    def test_capture_failure_always_clears_typing_presence(self):
+        def capture(_stop_event, **_kwargs):
+            raise RuntimeError("microphone disappeared")
+
+        osc = FakeOsc()
+        comms = CommsDictation(FakeTranscriber(), threading.Lock(),
+                               capture=capture, osc=osc)
+        comms.start()
+        deadline = time.monotonic() + 1.0
+        while comms.snapshot().state == "LISTENING" and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertEqual(comms.snapshot().state, "ERROR")
+        self.assertEqual(osc.typing, [True, False])
 
 
 if __name__ == "__main__":

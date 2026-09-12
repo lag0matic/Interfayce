@@ -170,6 +170,9 @@ def create_app(config: dict[str, Any], root: Path) -> Flask:
             payload.update(model=model_name, processing_seconds=round(elapsed, 4))
         return jsonify(payload)
 
+    from .streaming import install_streaming
+    install_streaming(app, registry, config)
+
     @app.post("/admin/shutdown")
     def shutdown():
         # Authentication is enforced by before_request. Terminating from inside
@@ -202,6 +205,9 @@ def main() -> None:
     app = create_app(config, root)
     registry: ModelRegistry = app.extensions["stt_registry"]
     warm_models = args.model or ([config["default_model"]] if args.warm or args.warm_only else [])
+    streaming_model = config.get("streaming_model", "moonshine")
+    if (args.warm or args.warm_only) and streaming_model in registry.names and streaming_model not in warm_models:
+        warm_models.append(streaming_model)
     if args.warm_only:
         for name in warm_models:
             LOGGER.info("Warming model %s", name)

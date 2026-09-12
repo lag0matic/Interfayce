@@ -31,7 +31,10 @@ build/
 dist/
 packaging/.cache/
 packaging/.work/
+packaging/.hotfix/
 packaging/out/
 *.egg-info/
 .vscode/
 .idea/
+
+CURRENT-HANDOFF.md

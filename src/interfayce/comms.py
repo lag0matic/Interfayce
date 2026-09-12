@@ -8,8 +8,10 @@ import threading
 import time
 from typing import Callable, Protocol
 
-from .osc import VrchatOscClient
-from .parakeet_stt import capture_microphone_once
+from .capture_cue import capture_with_cues
+from .live_stt import clean_transcript, LiveCaptionPublisher
+from .osc import VrchatOscClient, fit_chatbox_text
+from .parakeet_stt import capture_microphone_until
 
 
 LOGGER = logging.getLogger("interfayce.voice")
@@ -26,7 +28,7 @@ class CommsSnapshot:
 
     @property
     def listening(self) -> bool:
-        return self.state in {"LISTENING", "SENT", "STOPPING"}
+        return self.state in {"LISTENING", "TRANSCRIBING", "STOPPING"}
 
     def wire_text(self) -> str:
         safe = self.transcript.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
@@ -34,22 +36,31 @@ class CommsSnapshot:
 
 
 class CommsDictation:
-    """Runs bounded utterance capture until stopped or safely idle."""
+    """Records one complete push-to-talk message and sends it on release."""
 
     def __init__(
         self,
         transcriber: Transcriber,
         command_lock: threading.Lock,
         *,
-        capture: Callable[..., object] = capture_microphone_once,
+        capture: Callable[..., object] = capture_microphone_until,
         osc: VrchatOscClient | None = None,
+        cue: Callable[[bool], None] | None = None,
+        result_cue: Callable[[bool], None] | None = None,
         silence_auto_stop_seconds: float = 3.0,
+        merge_window_seconds: float = 0.9,
     ) -> None:
         self._transcriber = transcriber
         self._command_lock = command_lock
         self._capture = capture
         self._osc = osc or VrchatOscClient()
-        self._silence_auto_stop_seconds = max(0.1, silence_auto_stop_seconds)
+        self._cue = cue or (lambda _starting: None)
+        self._result_cue = result_cue
+        self._publish_lock = threading.RLock()
+        self._suppress_live = False
+        # Accepted for settings/backward compatibility. Push-to-talk is bounded
+        # by button release and a hard safety maximum, not silence detection.
+        del silence_auto_stop_seconds, merge_window_seconds
         self._state_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -60,22 +71,19 @@ class CommsDictation:
             return self._snapshot
 
     def set_silence_auto_stop_seconds(self, seconds: float) -> None:
-        self._silence_auto_stop_seconds = max(1.0, min(30.0, float(seconds)))
+        del seconds
 
     def _set_snapshot(self, state: str, transcript: str = "") -> None:
         with self._state_lock:
             self._snapshot = CommsSnapshot(state, transcript)
 
-    def toggle(self) -> CommsSnapshot:
+    def start(self) -> CommsSnapshot:
         with self._state_lock:
             thread = self._thread
-            current = self._snapshot
             if thread is not None and thread.is_alive():
-                if not self._stop.is_set():
-                    self._stop.set()
-                    self._snapshot = CommsSnapshot("STOPPING", current.transcript)
                 return self._snapshot
 
+            self._suppress_live = False
             self._stop.clear()
             self._snapshot = CommsSnapshot("LISTENING")
             self._thread = threading.Thread(
@@ -83,22 +91,44 @@ class CommsDictation:
             self._thread.start()
             return self._snapshot
 
+    def stop(self) -> CommsSnapshot:
+        with self._state_lock:
+            thread = self._thread
+            if thread is None or not thread.is_alive():
+                return self._snapshot
+            self._stop.set()
+            self._snapshot = CommsSnapshot("TRANSCRIBING", self._snapshot.transcript)
+            snapshot = self._snapshot
+        # Clear presence at button-up rather than leaving the typing bubble on
+        # throughout remote transcription latency.
+        self._set_typing(False)
+        return snapshot
+
+    def toggle(self) -> CommsSnapshot:
+        """Compatibility wrapper for older overlay builds."""
+        thread = self._thread
+        return self.stop() if thread is not None and thread.is_alive() else self.start()
+
     def clear(self) -> CommsSnapshot:
-        self._osc.clear_chatbox()
+        with self._publish_lock:
+            self._suppress_live = True
+            self._osc.clear_chatbox()
         current = self.snapshot()
-        state = "LISTENING" if current.listening and current.state != "STOPPING" else "CLEARED"
+        state = current.state if current.listening else "CLEARED"
         self._set_snapshot(state)
         LOGGER.info("Comms chatbox clear pulse sent")
         return self.snapshot()
 
     def send_shortcut(self, message: str) -> CommsSnapshot:
-        text = " ".join(message.split())[:144]
+        text = fit_chatbox_text(message)
         if not text:
             raise ValueError("Comms shortcut is empty.")
-        self._osc.send_chatbox_message(text)
+        with self._publish_lock:
+            self._suppress_live = True
+            self._osc.send_chatbox_message(text)
         thread = self._thread
         listening = thread is not None and thread.is_alive() and not self._stop.is_set()
-        self._set_snapshot("SENT" if listening else "SHORTCUT", text)
+        self._set_snapshot("LISTENING" if listening else "SHORTCUT", text)
         LOGGER.info("Comms shortcut sent: chars=%s", len(text))
         return self.snapshot()
 
@@ -106,52 +136,80 @@ class CommsDictation:
         if not self._command_lock.acquire(blocking=False):
             self._set_snapshot("ERROR", "Voice capture is already active.")
             return
-        LOGGER.info("Comms dictation started")
+        LOGGER.info("Comms push-to-talk capture started")
+        live = None
+        publisher = None
+
+        def publish(text):
+            with self._publish_lock:
+                if not self._suppress_live:
+                    self._osc.send_chatbox_message(text)
+                    self._set_snapshot("TRANSCRIBING" if self._stop.is_set() else "LISTENING", text)
+
         try:
-            first_capture = True
-            last_utterance = time.monotonic()
-            while not self._stop.is_set():
+            if hasattr(self._osc, "set_busy"):
+                self._osc.set_busy(True)
+            self._set_typing(True)
+            if hasattr(self._transcriber, "start_stream"):
+                publisher = LiveCaptionPublisher(publish)
                 try:
-                    audio = self._capture(
-                        timeout_seconds=1.0,
-                        phrase_seconds=6.0,
-                        ambient_seconds=0.2 if first_capture else 0.05,
-                    )
-                    first_capture = False
-                except Exception as error:
-                    # Silence is expected while armed; SpeechRecognition reports it
-                    # as WaitTimeoutError after the short listening window.
-                    if error.__class__.__name__ == "WaitTimeoutError":
-                        if time.monotonic() - last_utterance >= self._silence_auto_stop_seconds:
-                            LOGGER.info("Comms dictation auto-stopped after %.1fs of silence",
-                                        self._silence_auto_stop_seconds)
-                            break
-                        continue
-                    LOGGER.exception("Comms microphone capture failed")
-                    self._set_snapshot("ERROR", str(error))
-                    return
-                if self._stop.is_set():
-                    break
+                    live = self._transcriber.start_stream(publisher.update)
+                except Exception:
+                    LOGGER.warning("Could not start live STT; using complete recording", exc_info=True)
+            capture_options = {"on_chunk": live.push} if live is not None else {}
+            audio = capture_with_cues(
+                self._capture, self._stop, max_seconds=30.0, cue=self._cue,
+                end_async=self._result_cue is not None, **capture_options)
+            released = time.monotonic()
+            self._set_snapshot("TRANSCRIBING")
+            if hasattr(audio, "frame_data") and not audio.frame_data:
+                self._set_snapshot("IDLE")
+                return
+            if live is not None:
                 try:
-                    transcript = self._transcriber.transcribe(audio).strip()
-                except Exception as error:
-                    LOGGER.exception("Comms transcription failed")
-                    self._set_snapshot("ERROR", str(error))
+                    transcript = live.finish()
+                except Exception:
+                    live.close()
+                    LOGGER.warning("Finishing chat through whole-recording fallback")
+                    transcript = self._transcriber.transcribe(audio)
+            else:
+                transcript = self._transcriber.transcribe(audio)
+            transcript = clean_transcript(transcript)
+            with self._publish_lock:
+                if self._suppress_live:
+                    self._set_snapshot("CLEARED")
                     return
-                if not transcript:
-                    continue
-                transcript = transcript[:144]
-                try:
-                    self._osc.send_chatbox_message(transcript)
-                except Exception as error:
-                    LOGGER.exception("Comms OSC send failed")
-                    self._set_snapshot("ERROR", str(error))
-                    return
-                LOGGER.info("Comms transcript sent: chars=%s", len(transcript))
-                self._set_snapshot("SENT", transcript)
-                last_utterance = time.monotonic()
+                if transcript:
+                    if publisher is not None:
+                        transcript = publisher.update(transcript, final=True)
+                    else:
+                        transcript = fit_chatbox_text(transcript)
+                        self._osc.send_chatbox_message(transcript)
+                    LOGGER.info("Comms transcript sent: chars=%s release_to_send=%.3fs live=%s",
+                                len(transcript), time.monotonic() - released, live is not None)
+                    self._set_snapshot("SENT", transcript)
+                else:
+                    if publisher is not None and publisher.last:
+                        self._osc.clear_chatbox()
+                    self._set_snapshot("IDLE")
+            if self._result_cue is not None:
+                threading.Thread(target=self._result_cue, args=(bool(transcript),),
+                                 daemon=True, name="InterfayceCommsResultCue").start()
+        except Exception as error:
+            LOGGER.exception("Comms push-to-talk failed")
+            self._set_snapshot("ERROR", str(error))
         finally:
+            if live is not None:
+                live.close()
+            self._set_typing(False)
+            if hasattr(self._osc, "set_busy"):
+                self._osc.set_busy(False)
             self._command_lock.release()
-            if self.snapshot().state != "ERROR":
-                self._set_snapshot("IDLE", self.snapshot().transcript)
-            LOGGER.info("Comms dictation stopped")
+            LOGGER.info("Comms push-to-talk stopped")
+
+    def _set_typing(self, is_typing: bool) -> None:
+        try:
+            self._osc.set_typing(is_typing)
+        except Exception:
+            # Typing presence is useful feedback, never a reason to lose speech.
+            LOGGER.warning("Could not update VRChat typing indicator", exc_info=True)

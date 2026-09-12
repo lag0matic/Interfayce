@@ -1,7 +1,9 @@
 #pragma once
 
 #include "desktop_capture.h"
+#include "desktop_click_filter.h"
 #include "desktop_surface_manager.h"
+#include "private_window_manager.h"
 
 #include <openvr.h>
 #include <d2d1_1.h>
@@ -25,6 +27,8 @@ struct DesktopSurfaceSummary {
     bool visible{};
     bool reusable{};
     bool locked{};
+    bool privateEligible{};
+    bool privateMode{};
 };
 
 struct DesktopSurfaceHit {
@@ -118,6 +122,8 @@ public:
     bool ToggleLocked(uint64_t id);
     bool ReturnToPicker(uint64_t id, const std::vector<DesktopSource>& sources);
     bool Close(uint64_t id);
+    bool TogglePrivate(uint64_t id, std::wstring& message);
+    void RecoverPrivate();
     bool BeginGrab(uint64_t id, DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
     bool UpdateGrab(DesktopGrabHand hand, const vr::HmdMatrix34_t& handTransform);
     void EndGrab(DesktopGrabHand hand);
@@ -155,6 +161,7 @@ private:
         vr::HmdMatrix34_t transform{};
         bool visible{true};
         bool locked{};
+        bool privateMode{};
     };
 
     struct GrabState {
@@ -188,6 +195,9 @@ private:
     std::optional<uint64_t> focusedSurfaceId_;
     std::vector<uint64_t> focusHistory_;
     bool deckVisible_{true};
+    DesktopClickFilter desktopPrimaryClick_;
+    DesktopClickFilter desktopSecondaryClick_;
+    PrivateWindowManager privateWindows_;
 };
 
 }  // namespace interfayce

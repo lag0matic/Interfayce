@@ -1,3 +1,4 @@
+#include "panel_layout.h"
 #include "overlay_renderer.h"
 
 #include <d2d1_1.h>
@@ -6,6 +7,11 @@
 #include <dwrite.h>
 #include <dxgi1_2.h>
 #include <wincodec.h>
+#include <shlwapi.h>
+#include <fstream>
+#include <sstream>
+#include <iterator>
+#include <vector>
 
 #include <algorithm>
 #include <cmath>
@@ -38,7 +44,7 @@ bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wst
     constexpr UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     D3D_FEATURE_LEVEL featureLevel{};
     uint64_t compositorAdapterLuid = 0;
-    system->GetOutputDevice(&compositorAdapterLuid, vr::TextureType_DirectX);
+    if (system) system->GetOutputDevice(&compositorAdapterLuid, vr::TextureType_DirectX);
 
     Microsoft::WRL::ComPtr<IDXGIFactory1> dxgiFactory;
     Microsoft::WRL::ComPtr<IDXGIAdapter1> compositorAdapter;
@@ -56,7 +62,7 @@ bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wst
                                            description.AdapterLuid.HighPart))
                                         << 32U)
                 | description.AdapterLuid.LowPart;
-            if (candidateLuid != compositorAdapterLuid) {
+            if (system ? candidateLuid != compositorAdapterLuid : (description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0) {
                 continue;
             }
             compositorAdapter = candidate;
@@ -79,8 +85,8 @@ bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wst
     }
 
     D3D11_TEXTURE2D_DESC description{};
-    description.Width = 768;
-    description.Height = 384;
+    description.Width = panel::Width;
+    description.Height = panel::Height;
     description.MipLevels = 1;
     description.ArraySize = 1;
     description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -178,6 +184,7 @@ bool OverlayRenderer::Initialize(vr::IVRSystem* system, int deck, const std::wst
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.035F, 0.055F, 0.105F, 0.96F), &buttonBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(1.0F, 0.64F, 0.16F, 1.0F), &warningBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(1.0F, 0.20F, 0.32F, 1.0F), &criticalBrush_);
+    d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.25F, 0.95F, 0.45F, 1.0F), &chargingBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.34F, 0.18F, 0.78F, 0.34F), &bodyFillBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.12F, 0.82F, 0.94F, 0.14F), &scanFillBrush_);
     d2dContext_->CreateSolidColorBrush(D2D1::ColorF(0.88F, 0.91F, 1.0F, 0.72F),
@@ -368,23 +375,47 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         return true;
     };
 
-    Microsoft::WRL::ComPtr<ID2D1Bitmap> albumArt;
-    if (deck == 0 && !musicArtPath.empty()) {
+    WIN32_FILE_ATTRIBUTE_DATA artInfo{};
+    const bool artExists = deck == 0 && !musicArtPath.empty()
+        && GetFileAttributesExW(musicArtPath.c_str(), GetFileExInfoStandard, &artInfo);
+    if (deck == 0 && (musicArtPath != albumArtPath_
+        || CompareFileTime(&artInfo.ftLastWriteTime, &albumArtWriteTime_) != 0)) {
+        albumArt_.Reset();
+        albumArtPath_ = musicArtPath;
+        albumArtWriteTime_ = artInfo.ftLastWriteTime;
+    }
+    if (artExists && !albumArt_) {
+        // WIC/Direct2D may retain their decoder stream with the bitmap. Give
+        // them an owning memory stream so cached art never locks the source file.
+        std::vector<char> encoded;
+        {
+            std::ifstream input(musicArtPath, std::ios::binary);
+            encoded.assign(std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>());
+        }
+        Microsoft::WRL::ComPtr<IStream> artStream;
+        if (!encoded.empty()) {
+            artStream.Attach(SHCreateMemStream(
+                reinterpret_cast<const BYTE*>(encoded.data()),
+                static_cast<UINT>(encoded.size())));
+        }
         Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory;
         Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
         Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
         Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
         if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                 IID_PPV_ARGS(&wicFactory)))
-            && SUCCEEDED(wicFactory->CreateDecoderFromFilename(musicArtPath.c_str(), nullptr, GENERIC_READ,
+            && artStream
+            && SUCCEEDED(wicFactory->CreateDecoderFromStream(artStream.Get(), nullptr,
                 WICDecodeMetadataCacheOnLoad, &decoder))
             && SUCCEEDED(decoder->GetFrame(0, &frame))
             && SUCCEEDED(wicFactory->CreateFormatConverter(&converter))
             && SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
                 WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
-            d2dContext_->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &albumArt);
+            d2dContext_->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &albumArt_);
         }
     }
+    const auto& albumArt = albumArt_;
     if (deck == 3 && !rigBodyArt_ && !rigBodyArtPath_.empty()) {
         Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory;
         Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
@@ -435,8 +466,9 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     }
 
     d2dContext_->BeginDraw();
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     d2dContext_->Clear(D2D1::ColorF(0.0F, 0.0F, 0.0F, 0.0F));
-    const auto panelBounds = D2D1::RectF(6.0F, 6.0F, 762.0F, 378.0F);
+    const auto panelBounds = D2D1::RectF(6.0F, 6.0F, 762.0F, 418.0F);
     d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(panelBounds, 16.0F, 16.0F), glassBrush_.Get());
     d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(panelBounds, 16.0F, 16.0F),
         structureDimBrush_.Get(), 1.0F);
@@ -445,9 +477,9 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         D2D1::RoundedRect(D2D1::RectF(16.0F, 16.0F, 752.0F, 82.0F), 10.0F, 10.0F), stripBrush_.Get());
 
     const std::array<D2D1_RECT_F, 6> tabs{
-        D2D1::RectF(24, 22, 112, 76), D2D1::RectF(118, 22, 206, 76),
-        D2D1::RectF(212, 22, 300, 76), D2D1::RectF(306, 22, 394, 76),
-        D2D1::RectF(400, 22, 488, 76), D2D1::RectF(494, 22, 582, 76)};
+        D2D1::RectF(24, 22, 132, 76), D2D1::RectF(138, 22, 246, 76),
+        D2D1::RectF(252, 22, 360, 76), D2D1::RectF(366, 22, 474, 76),
+        D2D1::RectF(480, 22, 588, 76), D2D1::RectF(594, 22, 702, 76)};
     const std::array<const wchar_t*, 6> tabLabels{
         L"MUSIC", L"COMMS", L"ASK", L"DESK", L"SPACE", L"RIG"};
     const std::array<HoloGlyph, 6> tabGlyphs{
@@ -481,15 +513,6 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
 
     // Compact orbital gear; it opens settings without spending another text tab.
     const auto gearBrush = deck == 4 ? accentBrush_.Get() : mutedTextBrush_.Get();
-    if (lowestBatteryPercent_ >= 0) {
-        auto* batteryBrush = lowestBatteryPercent_ <= 10 ? criticalBrush_.Get()
-            : lowestBatteryPercent_ <= 20 ? warningBrush_.Get() : structureBrush_.Get();
-        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(600, 49), 4, 4), batteryBrush);
-        drawText(batteryEstimateText_.empty()
-                ? std::to_wstring(lowestBatteryPercent_) + L"%" : batteryEstimateText_,
-            labelFormat_.Get(),
-            D2D1::RectF(609, 36, 664, 66), batteryBrush);
-    }
     const auto gearCenter = D2D1::Point2F(730, 49);
     if (holoGlyphAtlas_) {
         drawHoloAsset(HoloGlyph::Settings, gearCenter, 20, 20, deck == 4);
@@ -506,18 +529,21 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     }
     }
 
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Translation(0, panel::ContentOffset));
     if (deck == 0) {
         drawText(musicLine.empty() ? L"No active track" : musicLine,
             titleFormat_.Get(), D2D1::RectF(42.0F, 116.0F,
                 500.0F, 170.0F), textBrush_.Get());
     }
-    if (albumArt) d2dContext_->DrawBitmap(albumArt.Get(), D2D1::RectF(570.0F, 108.0F, 720.0F, 258.0F));
+    if (deck == 0 && albumArt) d2dContext_->DrawBitmap(albumArt.Get(), D2D1::RectF(570.0F, 108.0F, 720.0F, 258.0F));
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Translation(0, panel::ContentOffset));
     if (deck == 0) {
         // Orbital transport controls: no text boxes, only clear geometric controls.
         const std::array<D2D1_POINT_2F, 3> centers{
             D2D1::Point2F(140, 287), D2D1::Point2F(384, 287), D2D1::Point2F(628, 287)};
         const auto broadcastCenter = D2D1::Point2F(520, 145);
         const auto micCenter = D2D1::Point2F(520, 225);
+        const auto sourceRect = D2D1::RectF(365, 181, 482, 213);
         if (holoGlyphAtlas_) {
             drawHoloAsset(HoloGlyph::Previous, centers[0], 39, 39);
             drawHoloAsset(musicPlaying_ ? HoloGlyph::Pause : HoloGlyph::Play,
@@ -581,6 +607,13 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         d2dContext_->DrawLine(D2D1::Point2F(520, 234), D2D1::Point2F(520, 240),
             voiceGlyphBrush, 2.5F);
         }
+        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(sourceRect, 8, 8),
+            buttonBrush_.Get());
+        d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(sourceRect, 8, 8),
+            musicBroadcastActive_ ? accentBrush_.Get() : structureDimBrush_.Get(), 1.4F);
+        drawText(musicBroadcastChrome_ ? L"CHROME" : L"SPOTIFY", labelFormat_.Get(),
+            D2D1::RectF(378, 185, 472, 210),
+            musicBroadcastActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
         drawText(musicVoiceStatus_, labelFormat_.Get(), D2D1::RectF(48, 350, 430, 374),
@@ -609,13 +642,29 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             d2dContext_->DrawLine(D2D1::Point2F(711, 128), D2D1::Point2F(703, 122), accentBrush_.Get(), 2.0F);
             d2dContext_->DrawLine(D2D1::Point2F(711, 128), D2D1::Point2F(703, 134), accentBrush_.Get(), 2.0F);
             }
-            const auto count = std::min<size_t>(desktop.surfaces.size(), 3);
+            const auto first = (std::min)(desktop.firstSurface, desktop.surfaces.size() > 3 ? desktop.surfaces.size() - 3 : size_t{0});
+            const auto count = std::min<size_t>(desktop.surfaces.size() - first, 3);
+            if (!desktop.surfaces.empty()) {
+                drawText(std::to_wstring(first + 1) + L"-" + std::to_wstring(first + count)
+                    + L" / " + std::to_wstring(desktop.surfaces.size()) + (desktop.surfaces.size() > 3 ? L"   Thumbstick to scroll" : L""),
+                    labelFormat_.Get(), D2D1::RectF(115, 117, 640, 146), mutedTextBrush_.Get());
+            }
+            if (desktop.surfaces.size() > 3) {
+                const float thumb = 174.0F * 3 / static_cast<float>(desktop.surfaces.size());
+                const float top = 166 + (174 - thumb) * static_cast<float>(first) / (desktop.surfaces.size() - 3);
+                d2dContext_->FillRectangle(D2D1::RectF(733, 166, 737, 340), structureDimBrush_.Get());
+                d2dContext_->FillRectangle(D2D1::RectF(733, top, 737, top + thumb), accentBrush_.Get());
+            }
             for (size_t index = 0; index < count; ++index) {
                 const float top = 166.0F + static_cast<float>(index) * 62.0F;
                 d2dContext_->FillRoundedRectangle(
                     D2D1::RoundedRect(D2D1::RectF(42, top, 722, top + 50), 10, 10), buttonBrush_.Get());
-                drawText(desktop.surfaces[index].label, bodyFormat_.Get(),
-                    D2D1::RectF(58, top + 12, 410, top + 42), textBrush_.Get());
+                drawText(desktop.surfaces[first + index].label, bodyFormat_.Get(),
+                    D2D1::RectF(58, top + 2, 410, top + 27), textBrush_.Get());
+                if (desktop.surfaces[first + index].privateEligible) {
+                    drawText(desktop.surfaces[first + index].privateMode ? L"Return to desktop" : L"Keep in VR",
+                        labelFormat_.Get(), D2D1::RectF(58, top + 27, 400, top + 49), accentBrush_.Get());
+                }
                 for (float centerX : {450.0F, 520.0F, 590.0F, 674.0F}) {
                     if (!holoGlyphAtlas_) {
                         drawHoloButton(D2D1::Point2F(centerX, top + 25), 21, 21);
@@ -623,14 +672,14 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 }
                 if (holoGlyphAtlas_) {
                     drawHoloAsset(HoloGlyph::ReturnPicker, D2D1::Point2F(450, top + 25),
-                        22, 22, false, desktop.surfaces[index].reusable);
-                    drawHoloAsset(desktop.surfaces[index].locked ? HoloGlyph::Lock : HoloGlyph::Unlock,
-                        D2D1::Point2F(520, top + 25), 22, 22, desktop.surfaces[index].locked);
+                        22, 22, false, desktop.surfaces[first + index].reusable);
+                    drawHoloAsset(desktop.surfaces[first + index].locked ? HoloGlyph::Lock : HoloGlyph::Unlock,
+                        D2D1::Point2F(520, top + 25), 22, 22, desktop.surfaces[first + index].locked);
                     drawHoloAsset(HoloGlyph::BringView, D2D1::Point2F(590, top + 25), 22, 22);
                     drawHoloAsset(HoloGlyph::Close, D2D1::Point2F(674, top + 25), 22, 22);
                 } else {
                 // A solid window slab ejecting left reads as "return to picker" even in grayscale.
-                const auto reuseBrush = desktop.surfaces[index].reusable
+                const auto reuseBrush = desktop.surfaces[first + index].reusable
                     ? structureBrush_.Get() : structureDimBrush_.Get();
                 d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(
                     D2D1::RectF(442, top + 13, 462, top + 37), 3, 3), reuseBrush);
@@ -641,12 +690,12 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 // A closed/open padlock gates only movement and two-hand scaling.
                 const float lockX = 520.0F;
                 const float lockY = top + 25.0F;
-                auto* lockBrush = desktop.surfaces[index].locked
+                auto* lockBrush = desktop.surfaces[first + index].locked
                     ? accentBrush_.Get() : structureBrush_.Get();
                 d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(
                     D2D1::RectF(lockX - 12, lockY - 2, lockX + 12, lockY + 14), 3, 3),
                     lockBrush);
-                if (desktop.surfaces[index].locked) {
+                if (desktop.surfaces[first + index].locked) {
                     drawArc(D2D1::Point2F(lockX, lockY - 2), 8.0F, 3.14159265F,
                         6.2831853F, lockBrush, 5.0F);
                 } else {
@@ -916,7 +965,8 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             d2dContext_->DrawEllipse(D2D1::Ellipse(hands[index], 9.5F, 9.5F), brush, 1.0F);
             const float textLeft = index == 0 ? hands[index].x - 50.0F : hands[index].x + 12.0F;
             drawText(value.empty() ? L"--" : value, labelFormat_.Get(),
-                D2D1::RectF(textLeft, hands[index].y - 12, textLeft + 45, hands[index].y + 15), brush);
+                D2D1::RectF(textLeft, hands[index].y - 12, textLeft + 45, hands[index].y + 15),
+                !value.empty() && controllerCharging_[index] ? chargingBrush_.Get() : brush);
         }
         const auto drawRigHoldControl = [&](D2D1_POINT_2F center, wchar_t glyph,
                                              HoloGlyph holoGlyph, float progress, bool enabled) {
@@ -1079,6 +1129,21 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             titleFormat_.Get(), D2D1::RectF(42, 150, 280, 202),
             ttsMuted_ ? mutedTextBrush_.Get() : textBrush_.Get());
 
+        drawText(L"SONG ANNOUNCE", labelFormat_.Get(), D2D1::RectF(330, 108, 510, 140),
+            mutedTextBrush_.Get());
+        drawText(songAnnounceEnabled_ ? L"ON" : L"OFF", labelFormat_.Get(),
+            D2D1::RectF(500, 108, 548, 140),
+            songAnnounceEnabled_ ? accentBrush_.Get() : mutedTextBrush_.Get());
+        const auto songAnnounceCenter = D2D1::Point2F(590, 132);
+        if (holoGlyphAtlas_) {
+            drawHoloAsset(HoloGlyph::Music, songAnnounceCenter, 31, 31,
+                songAnnounceEnabled_);
+        } else {
+            drawHoloButton(songAnnounceCenter, 29, 29, songAnnounceEnabled_);
+            d2dContext_->DrawEllipse(D2D1::Ellipse(songAnnounceCenter, 10, 10),
+                songAnnounceEnabled_ ? accentBrush_.Get() : structureBrush_.Get(), 2.5F);
+        }
+
         // Desktop settings launcher: monitor frame with an outward utility arrow.
         const auto desktopSettingsCenter = D2D1::Point2F(690, 132);
         if (holoGlyphAtlas_) {
@@ -1107,9 +1172,9 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                     ? accentBrush_.Get() : structureDimBrush_.Get());
         }
 
-        drawText(L"BROADCAST BOOST", labelFormat_.Get(), D2D1::RectF(42, 210, 280, 242),
+        drawText(L"BROADCAST GAIN", labelFormat_.Get(), D2D1::RectF(42, 210, 280, 242),
             mutedTextBrush_.Get());
-        drawText(L"+" + std::to_wstring(broadcastGainDb_) + L" dB",
+        drawText(std::wstring(broadcastGainDb_ > 0 ? L"+" : L"") + std::to_wstring(broadcastGainDb_) + L" dB",
             titleFormat_.Get(), D2D1::RectF(278, 201, 470, 248), textBrush_.Get());
         const std::array<D2D1_POINT_2F, 2> gainCenters{
             D2D1::Point2F(540, 220), D2D1::Point2F(650, 220)};
@@ -1206,19 +1271,40 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 criticalBrush_.Get(), 3.5F);
         }
     }
-    // The clock owns one predictable footer cell on every deck. Keeping it
-    // outside the header prevents battery and Settings from squeezing it.
-    if (!clockText_.empty()) {
-        d2dContext_->DrawLine(D2D1::Point2F(618, 348), D2D1::Point2F(618, 371),
-            structureDimBrush_.Get(), 1.0F);
-        d2dContext_->DrawLine(D2D1::Point2F(628, 343), D2D1::Point2F(726, 343),
-            structureDimBrush_.Get(), 1.0F);
-        labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        drawText(clockText_, labelFormat_.Get(), D2D1::RectF(626, 344, 724, 374),
-            textBrush_.Get());
-        labelFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        labelFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+    const auto statusBounds = D2D1::RectF(20, 85, 748, 120);
+    d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(statusBounds, 5, 5), stripBrush_.Get());
+    d2dContext_->DrawLine(D2D1::Point2F(24, 120), D2D1::Point2F(744, 120), structureDimBrush_.Get(), 1);
+    auto* batteryBrush = lowestBatteryPercent_ >= 0 && lowestBatteryPercent_ <= 10 ? criticalBrush_.Get()
+        : lowestBatteryPercent_ >= 0 && lowestBatteryPercent_ <= 20 ? warningBrush_.Get() : structureBrush_.Get();
+    d2dContext_->DrawRectangle(D2D1::RectF(29, 96, 43, 108), batteryBrush, 1.5F);
+    d2dContext_->FillRectangle(D2D1::RectF(43, 99, 46, 105), batteryBrush);
+    drawText(batteryEstimateText_.empty() ? L"BAT --" : batteryEstimateText_, labelFormat_.Get(),
+             D2D1::RectF(52, 93, 134, 118), batteryBrush);
+    std::array<std::wstring, 5> labels{L"TTS", L"STT", L"LLM", L"SPOTIFY", L"SLIME"};
+    std::array<std::wstring, 5> states{L"unknown", L"unknown", L"unknown", L"unknown", slimeAvailable_ ? L"good" : L"offline"};
+    std::array<std::wstring, 5> details{L"Checking", L"Checking", L"Checking", L"Checking", slimeAvailable_ ? L"Tracker service connected" : L"Tracker service unavailable"};
+    std::wistringstream rows(serviceStatus_);
+    std::wstring row;
+    while (std::getline(rows, row)) {
+        auto first = row.find(L'\t'), second = row.find(L'\t', first == std::wstring::npos ? 0 : first + 1);
+        if (first == std::wstring::npos || second == std::wstring::npos) continue;
+        for (size_t i = 0; i < 4; ++i) if (row.substr(0, first) == labels[i]) {
+            states[i] = row.substr(first + 1, second - first - 1); details[i] = row.substr(second + 1);
+        }
+    }
+    for (size_t i = 0; i < labels.size(); ++i) {
+        const float left = 140 + static_cast<float>(i) * 94;
+        auto* brush = states[i] == L"good" ? chargingBrush_.Get() : states[i] == L"backup" ? warningBrush_.Get()
+            : states[i] == L"offline" ? criticalBrush_.Get() : mutedTextBrush_.Get();
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(left + 6, 102), 4, 4), brush);
+        drawText(labels[i], labelFormat_.Get(), D2D1::RectF(left + 17, 93, left + 92, 118), mutedTextBrush_.Get());
+    }
+    drawText(clockText_, labelFormat_.Get(), D2D1::RectF(640, 93, 740, 118), textBrush_.Get());
+    if (statusHover_ >= 0 && statusHover_ < 5) {
+        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(140, 122, 740, 158), 5, 5), glassBrush_.Get());
+        drawText(labels[statusHover_] + L": " + details[statusHover_], labelFormat_.Get(),
+                 D2D1::RectF(152, 128, 732, 156), textBrush_.Get());
     }
     if (pressFeedbackActive_) {
         d2dContext_->FillEllipse(D2D1::Ellipse(pressFeedbackCenter_, 15, 15), scanFillBrush_.Get());
@@ -1295,7 +1381,7 @@ void OverlayRenderer::SetTtsSettings(int volumePercent, bool muted) {
 }
 
 void OverlayRenderer::SetBroadcastGainDb(int gainDb) {
-    broadcastGainDb_ = (std::max)(0, (std::min)(24, gainDb));
+    broadcastGainDb_ = (std::max)(-24, (std::min)(24, gainDb));
 }
 
 void OverlayRenderer::SetShutdownHoldProgress(float progress) {
@@ -1311,9 +1397,21 @@ void OverlayRenderer::SetClockText(const std::wstring& text) {
     clockText_ = text;
 }
 
+void OverlayRenderer::SetControllerCharging(const std::array<bool, 2>& charging) {
+    controllerCharging_ = charging;
+}
+
 void OverlayRenderer::SetBatteryEstimate(const std::wstring& text, int lowestPercent) {
     batteryEstimateText_ = text;
     lowestBatteryPercent_ = lowestPercent < 0 ? -1 : (std::min)(100, lowestPercent);
+}
+
+void OverlayRenderer::SetMusicBroadcastSource(bool chrome) {
+    musicBroadcastChrome_ = chrome;
+}
+
+void OverlayRenderer::SetSongAnnounceEnabled(bool enabled) {
+    songAnnounceEnabled_ = enabled;
 }
 
 void OverlayRenderer::SetPressFeedback(float x, float y, bool active) {

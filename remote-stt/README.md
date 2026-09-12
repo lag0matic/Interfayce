@@ -127,3 +127,30 @@ latency number measures name accuracy.
 Faster-Whisper alternatives are `large-v3` (more compute, accuracy-oriented)
 and `distil-large-v3` (faster). After editing the file, stop and start the
 server. Never commit or share the generated API key.
+
+## Live Interfayce chatbox captions (1.2.15)
+
+The chatbox streams mono PCM16 audio at 16 kHz in half-second chunks over the
+existing authenticated HTTP port. Whisper remains the whole-utterance command
+backend. Moonshine handles live chat using the existing English model (arch 5).
+The tested runtime is moonshine-voice 0.1.0.
+
+POST /v1/audio/streams opens a session; ordered
+POST /v1/audio/streams/<session>?sequence=N&final=0 sends raw PCM and returns
+the current transcript. Send the last chunk with final=1; DELETE cancels.
+The same bearer key protects all routes. Sessions are bounded to 31 seconds,
+at most two active streams, and abandoned sessions expire on subsequent requests.
+Do not replay a chunk after an ambiguous network failure: the client falls back
+to its saved whole recording instead.
+
+streaming_model optionally names the Moonshine entry (default moonshine).
+start.ps1 warms both the default command model and streaming model.
+For an existing installation, copy the updated Python source and scripts into
+the server folder, preserving config.json, .venv, models, and cuda-runtime.
+Run **Restart STT.cmd on the server PC** to load the changes. No firewall or
+credential changes are required. The restart script does not upgrade packages.
+
+Interfayce sends settled captions at most once per second, then a final caption
+on release. Long text rolls forward at word boundaries. Clearing or sending a
+shortcut suppresses further captions from that utterance. Stream failures use
+the complete local recording for the existing STT fallback.

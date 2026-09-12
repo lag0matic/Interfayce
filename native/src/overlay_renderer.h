@@ -16,6 +16,7 @@ namespace interfayce {
 
 struct DesktopPanelState {
     bool showSurfaceList{};
+    size_t firstSurface{};
     std::vector<DesktopSurfaceSummary> surfaces;
     std::array<std::wstring, 3> favorites;
 };
@@ -32,15 +33,20 @@ public:
     void SetMusicVoiceStatus(const std::wstring& status, bool active);
     void SetMusicPlaying(bool playing);
     void SetMusicBroadcastState(bool active, const std::wstring& status);
+    void SetMusicBroadcastSource(bool chrome);
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetAssistantStatus(const std::wstring& status, const std::wstring& transcript,
                             const std::wstring& response, bool active);
     void SetCommsShortcuts(const std::array<std::wstring, 4>& labels);
     void SetTtsSettings(int volumePercent, bool muted);
+    void SetSongAnnounceEnabled(bool enabled);
     void SetBroadcastGainDb(int gainDb);
     void SetShutdownHoldProgress(float progress);
     void SetRigHoldProgress(float resetProgress, float mountProgress);
+    void SetServiceStatus(const std::wstring& wire) { serviceStatus_ = wire; }
+    bool SetStatusHover(int index) { if (statusHover_ == index) return false; statusHover_ = index; return true; }
     void SetClockText(const std::wstring& text);
+    void SetControllerCharging(const std::array<bool, 2>& charging);
     void SetBatteryEstimate(const std::wstring& text, int lowestPercent);
     void SetPressFeedback(float x, float y, bool active);
     void SetRigBodyArtPath(const std::wstring& path);
@@ -77,23 +83,30 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> buttonBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> warningBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> criticalBrush_;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> chargingBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bodyFillBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> scanFillBrush_;
     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> holoGlassBrush_;
     Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> holoGlyphBrush_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> holoSpecularBrush_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> rigBodyArt_;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> albumArt_;
+    std::wstring albumArtPath_;
+    FILETIME albumArtWriteTime_{};
     Microsoft::WRL::ComPtr<ID2D1Bitmap> playspaceResetArt_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> holoGlyphAtlas_;
     HANDLE sharedTextureHandle_{};
     bool playspaceAdjusted_{};
     float playspaceHoldProgress_{};
     bool slimeAvailable_{};
+    std::wstring serviceStatus_;
+    int statusHover_{-1};
     std::wstring musicVoiceStatus_{L"VOICE READY"};
     bool musicVoiceActive_{};
     bool musicPlaying_{};
     bool musicBroadcastActive_{};
     std::wstring musicBroadcastStatus_{L"BROADCAST OFF"};
+    bool musicBroadcastChrome_{};
     std::wstring commsStatus_{L"IDLE"};
     std::wstring commsTranscript_;
     bool commsActive_{};
@@ -104,6 +117,7 @@ private:
     std::array<std::wstring, 4> commsShortcutLabels_{};
     int ttsVolumePercent_{85};
     bool ttsMuted_{};
+    bool songAnnounceEnabled_{true};
     int broadcastGainDb_{12};
     float shutdownHoldProgress_{};
     float rigResetHoldProgress_{};
@@ -111,6 +125,7 @@ private:
     std::wstring clockText_;
     std::wstring batteryEstimateText_;
     int lowestBatteryPercent_{-1};
+    std::array<bool, 2> controllerCharging_{};
     D2D1_POINT_2F pressFeedbackCenter_{};
     bool pressFeedbackActive_{};
     std::wstring rigBodyArtPath_;

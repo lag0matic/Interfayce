@@ -69,6 +69,9 @@ class MusicLlmTests(unittest.TestCase):
         self.assertIn('\\n', client.user)
         self.assertIn("Do not invent tools", client.system)
         self.assertIn("default 10-point step", client.system)
+        self.assertIn("deliberately presses the microphone", client.system)
+        self.assertIn("meaning rather than exact keywords", client.system)
+        self.assertIn("Drop the volume a bit", client.system)
 
     def test_interpreter_supplies_bounded_recent_music_context(self) -> None:
         client = _Client('{"tool":"control","command":"volume_down","value":null}')

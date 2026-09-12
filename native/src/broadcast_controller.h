@@ -9,6 +9,7 @@
 namespace interfayce {
 
 enum class BroadcastState { Off, Starting, Active, Faulted };
+enum class BroadcastSource { Spotify, Chrome };
 
 class BroadcastController {
 public:
@@ -21,6 +22,9 @@ public:
     void Stop();
     bool Poll();
     void SetGainDb(float gainDb);
+    void SetSource(BroadcastSource source);
+    BroadcastSource Source() const;
+    const wchar_t* SourceProcessName() const;
     BroadcastState State() const;
     bool Enabled() const;
     const std::wstring& StatusText() const;
@@ -37,6 +41,7 @@ private:
     std::wstring status_{L"BROADCAST OFF"};
     std::chrono::steady_clock::time_point startedAt_{};
     float gainDb_{12.0F};
+    BroadcastSource source_{BroadcastSource::Spotify};
 };
 
 } // namespace interfayce

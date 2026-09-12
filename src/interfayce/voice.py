@@ -34,8 +34,7 @@ def _normalized_words(transcript: str) -> str:
 
 
 def _contains_phrase(words: str, phrases: tuple[str, ...]) -> bool:
-    padded = f" {words} "
-    return any(f" {phrase} " in padded for phrase in phrases)
+    return words in phrases
 
 
 def parse_music_intent(transcript: str) -> MusicIntent:

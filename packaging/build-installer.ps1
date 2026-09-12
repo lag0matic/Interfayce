@@ -77,6 +77,7 @@ try {
     Reset-GeneratedDirectory $stage
     Copy-Item native\build\bin\InterfayceOverlay.exe $stage
     Copy-Item native\build\bin\InterfayceAudioEngine.exe $stage
+    Copy-Item native\build\bin\InterfayceWindowRecovery.exe $stage
     Copy-Item native\build\bin\openvr_api.dll $stage
     Copy-Item native\build\bin\interfayce.vrmanifest $stage
     Copy-Item native\build\bin\assets $stage -Recurse

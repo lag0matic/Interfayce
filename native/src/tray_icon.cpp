@@ -16,6 +16,7 @@ constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kOpenSettings = 1001;
 constexpr UINT kRestart = 1002;
 constexpr UINT kExit = 1003;
+constexpr UINT kRecoverWindows = 1004;
 
 }  // namespace
 
@@ -135,6 +136,7 @@ void TrayIcon::ShowMenu() {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kOpenSettings, L"Open Settings");
     AppendMenuW(menu, MF_STRING, kRestart, L"Restart Interfayce");
+    AppendMenuW(menu, MF_STRING, kRecoverWindows, L"Recover VR windows (minimized)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kExit, L"Exit");
 
@@ -149,6 +151,7 @@ void TrayIcon::ShowMenu() {
 
     if (command == kOpenSettings) pendingAction_ = TrayAction::OpenSettings;
     else if (command == kRestart) pendingAction_ = TrayAction::Restart;
+    else if (command == kRecoverWindows) pendingAction_ = TrayAction::RecoverWindows;
     else if (command == kExit) pendingAction_ = TrayAction::Exit;
 }
 

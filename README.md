@@ -19,7 +19,7 @@ Interfayce is developed with substantial AI assistance. Lag0Matic supplies the o
 - Compact Holo Glass interface that fades when the wrist is turned away.
 - Music, Comms, ASK, Desk, Space, Rig, and Settings panels.
 - Configurable left- or right-wrist placement.
-- Local clock, lowest-tracker battery status, and concise service indicators.
+- Persistent battery-runtime, service-health and local-clock strip with hover explanations.
 - System-tray controls for Settings, restart, and clean shutdown.
 
 ### Interactive desktop surfaces
@@ -31,15 +31,18 @@ Interfayce is developed with substantial AI assistance. Lag0Matic supplies the o
 - Lock, close, return to source selection, or bring a lost surface back into view.
 - Configure three application favorites; unused slots are filled by a bounded, deduplicated recent-app history.
 - Desk surfaces hide when leaving the Desk panel and return when it is selected again.
+- Scroll the wrist window list with the thumbstick while pointing at its rows.
+- Keep captured windows in VR on an optional virtual monitor, with minimized recovery.
+- Mixed-DPI input mapping supports applications on monitors with different scaling.
 - Closing an overlay surface does **not** close its underlying application.
 
 ### Music and Spotify
 
 - Play/pause, previous, next, current-track status, and local media-session control.
 - Optional Spotify OAuth with PKCE for search, volume, and natural-language requests.
-- Optional OpenAI-compatible LLM routing for flexible commands such as song requests and relative volume changes.
+- Optional OpenAI-compatible LLM control with playback context, conversational follow-ups, Spotify search-result selection, and relative volume changes.
 - Optional spoken responses through an OpenAI-compatible Kokoro TTS server.
-- Current-track announcements through the VRChat OSC chatbox.
+- Current-track announcements through the VRChat OSC chatbox. Announcements wait behind Interfayce chat messages for their 30-second lifetime, then display for seven seconds; your next message takes priority. Only the latest queued track is announced.
 - Optional Spotify-only broadcast to VRChat through VB-CABLE, with an independent gain control.
 
 Basic transport and track status use the Windows media session and do not require Spotify OAuth. Search, direct playback requests, and Spotify volume control do.
@@ -47,7 +50,7 @@ Basic transport and track status use the Windows media session and do not requir
 ### Speech and communication
 
 - Push-to-listen speech transcription into the VRChat OSC chatbox.
-- Configurable automatic stop after a period of silence.
+- Push-to-talk records until release, with a 30-second maximum. The ready cue plays after the microphone opens.
 - Clear-chat control and four configurable canned OSC shortcuts.
 - Bundled local Parakeet speech recognition for an immediately available local engine and fallback.
 - Optional remote Faster-Whisper service, recommended for the best overall speed, efficiency, and recognition of difficult artist and song names.
@@ -173,7 +176,7 @@ Keep the remote server on a trusted LAN; do not expose its port directly to the 
 1. Install the production VB-CABLE driver and reboot if requested.
 2. Select `CABLE Output (VB-Audio Virtual Cable)` as VRChat's microphone.
 3. Use the broadcast control on the Music panel.
-4. Adjust broadcast boost in Settings if needed.
+4. Adjust broadcast gain in Settings from -24 dB to +24 dB. Negative values reduce the broadcast; 0 dB is the unboosted level.
 
 `CABLE Input` is the playback endpoint used by Interfayce. Broadcast gain changes only the cable feed and does not raise normal Spotify listening volume. No WDK, custom audio driver, test certificate, or Windows test mode is required.
 
