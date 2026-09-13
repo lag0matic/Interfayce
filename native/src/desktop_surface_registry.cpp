@@ -239,13 +239,16 @@ bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent eve
 }
 
 bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
-                         interfayce::DesktopPointerEvent event) {
+                         interfayce::DesktopPointerEvent event, HWND& primaryTarget, HWND& secondaryTarget) {
     PhysicalDesktopCoordinates physicalCoordinates;
     if (rootWindow == nullptr || !IsWindow(rootWindow)) return false;
     // Some retained-mode/web UI frameworks validate posted client messages
     // against the global cursor position. Keep both coordinate spaces aligned.
     SetCursorPos(screenPoint.x, screenPoint.y);
-    const HWND target = CapturedChildAtPoint(rootWindow, screenPoint);
+    const bool rightEvent = event == interfayce::DesktopPointerEvent::SecondaryDown || event == interfayce::DesktopPointerEvent::SecondaryUp;
+    HWND target = rightEvent ? secondaryTarget : primaryTarget;
+    if (!target) target = CapturedChildAtPoint(rootWindow, screenPoint);
+    if (!IsWindow(target) || (target != rootWindow && !IsChild(rootWindow, target))) return false;
     if (target == nullptr) return false;
     const auto mappedPoint = interfayce::PhysicalClientPoint(target, screenPoint);
     if (!mappedPoint) return false;
@@ -258,7 +261,9 @@ bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
         || event == interfayce::DesktopPointerEvent::SecondaryUp;
     const bool released = event == interfayce::DesktopPointerEvent::PrimaryUp
         || event == interfayce::DesktopPointerEvent::SecondaryUp;
-    const WPARAM buttons = released ? 0 : primary ? MK_LBUTTON : secondary ? MK_RBUTTON : 0;
+    WPARAM buttons = (primaryTarget ? MK_LBUTTON : 0) | (secondaryTarget ? MK_RBUTTON : 0);
+    if (primary) buttons = released ? (buttons & ~MK_LBUTTON) : (buttons | MK_LBUTTON);
+    if (secondary) buttons = released ? (buttons & ~MK_RBUTTON) : (buttons | MK_RBUTTON);
     if (!PostMessageW(target, WM_MOUSEMOVE,
             event == interfayce::DesktopPointerEvent::Move ? buttons : 0, coordinates)) {
         return false;
@@ -268,7 +273,10 @@ bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
             ? WM_LBUTTONUP : event == interfayce::DesktopPointerEvent::SecondaryDown
                 ? WM_RBUTTONDOWN : event == interfayce::DesktopPointerEvent::SecondaryUp
                     ? WM_RBUTTONUP : 0;
-    return message == 0 || PostMessageW(target, message, buttons, coordinates) != FALSE;
+    const bool sent = message == 0 || PostMessageW(target, message, buttons, coordinates) != FALSE;
+    if (sent && primary) primaryTarget = released ? nullptr : target;
+    if (sent && secondary) secondaryTarget = released ? nullptr : target;
+    return sent;
 }
 
 bool InjectDesktopScroll(const POINT point, int32_t verticalDelta, int32_t horizontalDelta) {
@@ -1173,10 +1181,18 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         stable = desktopSecondaryClick_.End(stable);
         break;
     }
+    found->lastPointerPoint = stable;
     if (source.kind == DesktopSource::Kind::Window) {
-        return InjectWindowPointer(source.window, stable, event);
+        return InjectWindowPointer(source.window, stable, event, found->primaryTarget, found->secondaryTarget);
     }
-    return InjectDesktopPointer(stable, event);
+    const bool sent = InjectDesktopPointer(stable, event);
+    if (sent) {
+        if (event == DesktopPointerEvent::PrimaryDown) found->primaryInjected = true;
+        if (event == DesktopPointerEvent::SecondaryDown) found->secondaryInjected = true;
+        if (event == DesktopPointerEvent::PrimaryUp) found->primaryInjected = false;
+        if (event == DesktopPointerEvent::SecondaryUp) found->secondaryInjected = false;
+    }
+    return sent;
 }
 
 void DesktopSurfaceRegistry::RememberFocusedSurface(uint64_t id) {
@@ -1225,7 +1241,18 @@ bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
         if (!privateWindows_.Contains(window) || !privateWindows_.AllowInput(window)) return false;
     }
     const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
-    return point && InjectDesktopScroll(*point, verticalDelta, horizontalDelta);
+    if (!point) return false;
+    const auto& source = found->sources[*found->assignedSource];
+    if (source.kind == DesktopSource::Kind::Window) {
+        const HWND target = CapturedChildAtPoint(source.window, *point);
+        if (!IsWindow(target)) return false;
+        const auto coordinates = MAKELPARAM(static_cast<short>(point->x), static_cast<short>(point->y));
+        const WPARAM buttons = (found->primaryTarget ? MK_LBUTTON : 0) | (found->secondaryTarget ? MK_RBUTTON : 0);
+        const bool vertical = !verticalDelta || PostMessageW(target, WM_MOUSEWHEEL, MAKEWPARAM(buttons, static_cast<short>(verticalDelta)), coordinates);
+        const bool horizontal = !horizontalDelta || PostMessageW(target, WM_MOUSEHWHEEL, MAKEWPARAM(buttons, static_cast<short>(horizontalDelta)), coordinates);
+        return vertical && horizontal;
+    }
+    return InjectDesktopScroll(*point, verticalDelta, horizontalDelta);
 }
 
 bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) {
@@ -1538,6 +1565,7 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
         if (grab && grab->id == id) grab.reset();
     }
     if (activeScale_ && activeScale_->id == id) activeScale_.reset();
+    ReleasePointerInput(*found);
     if (found->capture) found->capture->Stop();
     found->capture.reset();
     found->sources = sources;
@@ -1561,6 +1589,7 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
     }
     if (activeScale_ && activeScale_->id == id) activeScale_.reset();
     ForgetFocusedSurface(id);
+    ReleasePointerInput(*found);
     DestroySurfaceOverlays(*found);
     surfaces_.erase(found);
     return true;
@@ -1686,7 +1715,23 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
     return summaries;
 }
 
+void DesktopSurfaceRegistry::ReleasePointerInput(Surface& surface) {
+    if (surface.assignedSource && *surface.assignedSource < surface.sources.size()) {
+        const auto& source = surface.sources[*surface.assignedSource];
+        if (source.kind == DesktopSource::Kind::Window) {
+            if (surface.primaryTarget) InjectWindowPointer(source.window, surface.lastPointerPoint, DesktopPointerEvent::PrimaryUp, surface.primaryTarget, surface.secondaryTarget);
+            if (surface.secondaryTarget) InjectWindowPointer(source.window, surface.lastPointerPoint, DesktopPointerEvent::SecondaryUp, surface.primaryTarget, surface.secondaryTarget);
+        }
+    }
+    INPUT release{}; release.type = INPUT_MOUSE;
+    release.mi.dwFlags = (surface.primaryInjected ? MOUSEEVENTF_LEFTUP : 0) | (surface.secondaryInjected ? MOUSEEVENTF_RIGHTUP : 0);
+    if (release.mi.dwFlags) SendInput(1, &release, sizeof(release));
+    surface.primaryTarget = surface.secondaryTarget = nullptr;
+    surface.primaryInjected = surface.secondaryInjected = false;
+}
+
 void DesktopSurfaceRegistry::Shutdown() {
+    for (auto& surface : surfaces_) ReleasePointerInput(surface);
     privateWindows_.RecoverAll();
     for (auto& grab : activeGrabs_) grab.reset();
     activeScale_.reset();

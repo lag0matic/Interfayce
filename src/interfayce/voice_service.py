@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import logging
 from logging.handlers import RotatingFileHandler
@@ -11,11 +12,13 @@ from pathlib import Path
 import threading
 
 from .service_health import ServiceHealth
+from .configured_stt import ConfiguredTranscriber
 from .comms import CommsDictation
 from .chatbox import ChatboxCoordinator
 from .capture_cue import play_capture_cue, play_result_cue, capture_with_cues
 from .assistant import AssistantSnapshot, AssistantState
 from .assistant_harness import AssistantHarness, tts_text
+from .assistant_session import AssistantSession
 from .battery_alerts import BatteryAlertMonitor
 from .kokoro import speak_in_background, synthesize
 from .local_service import get_or_create_token, request_is_authorized
@@ -105,9 +108,7 @@ class VoiceRuntime:
     def __init__(self) -> None:
         local_transcriber = ParakeetTranscriber()
         settings = load_settings()
-        self.transcriber = (RemoteSttTranscriber(
-            settings.stt_endpoint, settings.stt_model, fallback=local_transcriber
-        ) if settings.stt_endpoint else local_transcriber)
+        self.transcriber = ConfiguredTranscriber(local_transcriber)
         self.health = ServiceHealth(self.transcriber)
         self.command_lock = threading.Lock()
         self._warm_lock = threading.Lock()
@@ -116,6 +117,11 @@ class VoiceRuntime:
         self._assistant_transcript = ""
         self._assistant_response = ""
         self.assistant = AssistantHarness(on_state=self._on_assistant_state)
+        self.assistant_session = AssistantSession(self.assistant)
+        self.health.assistant_health = lambda: (self.assistant_session.codex.health()
+            if self.assistant_session.backend == "codex" else None)
+        self._assistant_speech_cancel = threading.Event()
+        self._answer_capture_lock = threading.Lock()
         self.music_conversation = MusicConversationMemory()
         self.chatbox = ChatboxCoordinator(
             song_enabled=lambda: load_settings().song_announce_enabled)
@@ -131,13 +137,7 @@ class VoiceRuntime:
             self.chatbox.clear_chatbox,
             clear_seconds=None,
         )
-        if isinstance(self.transcriber, RemoteSttTranscriber):
-            LOGGER.info("STT configured: %s; local Parakeet fallback=%s",
-                        self.transcriber.description, local_transcriber.files.directory)
-        else:
-            LOGGER.info("Parakeet model directory: %s; feature_dim=%s; threads=%s",
-                local_transcriber.files.directory, local_transcriber.feature_dim,
-                local_transcriber.threads)
+        LOGGER.info("STT configured: %s", self.transcriber.description)
 
     def _set_assistant_status(self, status: str, *, transcript: str | None = None,
                               response: str | None = None) -> None:
@@ -171,11 +171,68 @@ class VoiceRuntime:
                 _safe_field(self._assistant_response),
             ))
 
+    def assistant_snapshot(self) -> str:
+        with self._assistant_lock:
+            snapshot = {"version": 1, "backend": self.assistant_session.backend,
+                        "status": self._assistant_status, "transcript": self._assistant_transcript,
+                        "response": self._assistant_response, "active": self.command_lock.locked(),
+                        "pending": None}
+        if self.assistant_session.backend == "codex":
+            snapshot["pending"] = self.assistant_session.codex.snapshot()["pending"]
+        return json.dumps(snapshot)
+
+    def select_assistant(self) -> str:
+        if not self.command_lock.acquire(blocking=False):
+            return self.assistant_snapshot()
+        try:
+            self._assistant_speech_cancel.set()
+            self.assistant_session.select()
+            self._set_assistant_status("READY", transcript="", response="")
+            return self.assistant_snapshot()
+        finally:
+            self.command_lock.release()
+
+    def dictate_assistant_answer(self, token):
+        if not self._answer_capture_lock.acquire(blocking=False):
+            return
+        try:
+            card = self.assistant_session.codex.snapshot()['pending']
+            if not card or card['token'] != token or not card.get('canDictate'):
+                return
+            audio = capture_microphone_with_cues()
+            answer = self.transcriber.transcribe(audio).strip()
+            if answer:
+                self.assistant_session.codex.dictate_answer(token, answer)
+        except Exception:
+            LOGGER.exception('Assistant answer capture failed')
+        finally:
+            self._answer_capture_lock.release()
+
+    def _codex_update(self):
+        snapshot = self.assistant_session.codex.snapshot()
+        self._set_assistant_status(snapshot["status"], response=snapshot["response"])
+
+    def restore_assistant(self):
+        if self.assistant_session.backend != 'codex' or not self.command_lock.acquire(blocking=False):
+            return
+        try:
+            self.assistant_session.codex.restore()
+            self._codex_update()
+        except Exception as error:
+            self._set_assistant_status('ERROR', response=str(error))
+        finally:
+            self.command_lock.release()
+
     def assistant_command(self) -> str:
         if not self.command_lock.acquire(blocking=False):
             self._set_assistant_status("BUSY", response="Voice capture is already active.")
             return self.assistant_status()
         try:
+            session = self.assistant_session
+            generation = session.generation
+            self._assistant_speech_cancel.set()
+            speech_cancel = threading.Event()
+            self._assistant_speech_cancel = speech_cancel
             self._set_assistant_status("LISTENING", transcript="", response="")
             try:
                 LOGGER.info("Assistant microphone capture started")
@@ -186,11 +243,23 @@ class VoiceRuntime:
                 self._set_assistant_status("ERROR", response=_safe_field(str(error)))
                 return self.assistant_status()
             transcript = _safe_field(transcript)
+            if session.generation != generation:
+                self._set_assistant_status("CANCELLED")
+                return self.assistant_status()
             self._set_assistant_status("THINKING", transcript=transcript, response="")
+            if session.backend == "codex":
+                try:
+                    answer = session.codex.ask(transcript, self._codex_update, cancel=speech_cancel)
+                    if answer and not speech_cancel.is_set():
+                        speak_in_background(tts_text(answer), cancel=speech_cancel)
+                except Exception as error:
+                    previous = session.codex.snapshot()['response']
+                    self._set_assistant_status("ERROR", response=previous + '\n\n' + str(error))
+                return self.assistant_status()
             result = self.assistant.ask(transcript)
             spoken = tts_text(result.answer)
-            if spoken:
-                speak_in_background(spoken)
+            if spoken and not speech_cancel.is_set():
+                speak_in_background(spoken, cancel=speech_cancel)
             self._set_assistant_status(
                 "ANSWER" if result.succeeded else "ERROR",
                 response=result.answer,
@@ -200,16 +269,28 @@ class VoiceRuntime:
                         len(result.answer), ",".join(result.tools_used) or "none")
             return self.assistant_status()
         finally:
-            self.command_lock.release()
+            # A cancelled turn may still have a bounded dictation capture winding
+            # down. Keep the shared microphone slot until that capture finishes.
+            with self._answer_capture_lock:
+                self.command_lock.release()
 
     def clear_assistant(self) -> str:
-        self.assistant.assistant.clear()
-        self._set_assistant_status("READY", transcript="", response="")
-        return self.assistant_status()
+        if not self.command_lock.acquire(blocking=False):
+            return self.assistant_status()
+        try:
+            self._assistant_speech_cancel.set()
+            self.assistant_session.clear()
+            self._set_assistant_status("READY", transcript="", response="")
+            return self.assistant_status()
+        finally:
+            self.command_lock.release()
 
     def cancel_assistant(self) -> str:
         self._set_assistant_status("STOPPING")
-        self.assistant.assistant.cancel()
+        self._assistant_speech_cancel.set()
+        self.assistant_session.cancel()
+        if not self.command_lock.locked():
+            self._set_assistant_status("CANCELLED")
         return self.assistant_status()
 
     def _announce_song(self, message: str) -> None:
@@ -409,6 +490,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, runtime.comms_status())
             elif self.path == "/assistant/status":
                 self._reply(200, runtime.assistant_status())
+            elif self.path == "/assistant/snapshot":
+                self._reply_bytes(200, runtime.assistant_snapshot().encode("utf-8"), "application/json")
             elif self.path == "/comms/shortcuts":
                 self._reply(200, comms_shortcut_labels())
             elif self.path == "/desktop/favorites":
@@ -432,6 +515,20 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, runtime.clear_assistant())
             elif self.path == "/assistant/cancel":
                 self._reply(200, runtime.cancel_assistant())
+            elif self.path == "/assistant/select":
+                self._reply(200, runtime.select_assistant())
+            elif self.path.startswith("/assistant/choice/"):
+                try:
+                    token, choice = self.path.rsplit("/", 2)[-2:]
+                    runtime.assistant_session.codex.choose(token, int(choice))
+                except (ValueError, RuntimeError) as error:
+                    self._reply(409, str(error))
+                else:
+                    self._reply(200, runtime.assistant_snapshot())
+            elif self.path.startswith("/assistant/answer/"):
+                token = self.path.rsplit("/", 1)[-1]
+                threading.Thread(target=runtime.dictate_assistant_answer, args=(token,), daemon=True).start()
+                self._reply(200, "listening")
             elif self.path.startswith("/music/control/"):
                 operation = self.path.rsplit("/", 1)[-1]
                 self._reply(200, "ok" if runtime.music_control(operation) else "unavailable")
@@ -517,6 +614,7 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
 
     server = BoundedVoiceServer(("127.0.0.1", port), Handler)
     runtime.health.start()
+    threading.Thread(target=runtime.restore_assistant, name='AssistantRestore', daemon=True).start()
     runtime.chatbox.start()
     runtime.song_announcer.start()
     LOGGER.info("Spotify OSC song announcer started")
@@ -525,6 +623,7 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
     try:
         server.serve_forever()
     finally:
+        runtime.assistant_session.close()
         runtime.health.stop()
         runtime.song_announcer.stop()
         runtime.chatbox.stop()

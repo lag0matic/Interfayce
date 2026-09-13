@@ -12,12 +12,14 @@ import urllib.request
 import wave
 
 from .settings import load_settings
+from .playback_controls import PlaybackControls
 
 
 LOGGER = logging.getLogger("interfayce.voice")
 _CONDITION = threading.Condition()
 _pending_text: str | None = None
 _worker_started = False
+_pending_cancel: threading.Event | None = None
 
 
 def synthesize(text: str, *, timeout_seconds: float = 30.0) -> bytes:
@@ -74,8 +76,9 @@ def configured_output_device_index(audio: object) -> int | None:
     return min(matches)[2] if matches else None
 
 
-def play_wav(wav_bytes: bytes) -> None:
-    settings = load_settings()
+def play_wav(wav_bytes: bytes, *, cancel: threading.Event | None = None) -> None:
+    controls = PlaybackControls(source=load_settings)
+    settings = controls.current()
     if settings.tts_muted or settings.tts_volume <= 0.0:
         LOGGER.info("Kokoro acknowledgment muted")
         return
@@ -100,6 +103,11 @@ def play_wav(wav_bytes: bytes) -> None:
             )
             try:
                 while frames := wav.readframes(4096):
+                    if cancel is not None and cancel.is_set():
+                        break
+                    settings = controls.current()
+                    if settings.tts_muted or settings.tts_volume <= 0:
+                        break
                     if settings.tts_volume < 1.0:
                         frames = audioop.mul(frames, wav.getsampwidth(), settings.tts_volume)
                     stream.write(frames)
@@ -113,21 +121,26 @@ def play_wav(wav_bytes: bytes) -> None:
 
 
 def _speech_worker() -> None:
-    global _pending_text
+    global _pending_text, _pending_cancel
     while True:
         with _CONDITION:
             while _pending_text is None:
                 _CONDITION.wait()
             text = _pending_text
+            cancel = _pending_cancel
             _pending_text = None
+            _pending_cancel = None
         try:
             wav = synthesize(text)
             with _CONDITION:
                 superseded = _pending_text is not None
-            if superseded:
+            if superseded or (cancel is not None and cancel.is_set()):
                 LOGGER.info("Discarding stale Kokoro acknowledgment")
                 continue
-            play_wav(wav)
+            if cancel is None:
+                play_wav(wav)
+            else:
+                play_wav(wav, cancel=cancel)
             LOGGER.info("Kokoro acknowledgment played")
         except Exception:
             # Spoken feedback is optional and must never invalidate a completed command.
@@ -137,12 +150,13 @@ def _speech_worker() -> None:
             wav = None
 
 
-def speak_in_background(text: str) -> None:
-    global _pending_text, _worker_started
+def speak_in_background(text: str, *, cancel: threading.Event | None = None) -> None:
+    global _pending_text, _worker_started, _pending_cancel
     if os.environ.get("INTERFAYCE_TTS", "on").casefold() in {"0", "false", "off", "no"}:
         return
     with _CONDITION:
         _pending_text = text
+        _pending_cancel = cancel
         if not _worker_started:
             threading.Thread(
                 target=_speech_worker, name="InterfayceKokoro", daemon=True

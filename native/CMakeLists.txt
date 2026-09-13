@@ -23,6 +23,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(openvr_sdk)
 
 add_executable(InterfaycePanelPreview EXCLUDE_FROM_ALL tests/panel_preview.cpp src/overlay_renderer.cpp)
+add_executable(InterfayceAssistantLayoutTests tests/assistant_layout_tests.cpp)
+target_include_directories(InterfayceAssistantLayoutTests PRIVATE src)
+target_compile_features(InterfayceAssistantLayoutTests PRIVATE cxx_std_20)
 target_compile_features(InterfaycePanelPreview PRIVATE cxx_std_20)
 target_include_directories(InterfaycePanelPreview PRIVATE src "${openvr_sdk_SOURCE_DIR}/headers")
 target_link_libraries(InterfaycePanelPreview PRIVATE d3d11 dxgi d2d1 dwrite windowscodecs ole32 shlwapi)

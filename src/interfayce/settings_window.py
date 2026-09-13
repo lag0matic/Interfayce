@@ -87,6 +87,7 @@ class SettingsWindow:
         self._configure_style()
 
         current = load_settings()
+        self._applied_settings = current
         self.volume = tk.DoubleVar(value=round(current.tts_volume * 100))
         self.muted = tk.BooleanVar(value=current.tts_muted)
         self.speed = tk.DoubleVar(value=current.tts_speed)
@@ -108,6 +109,13 @@ class SettingsWindow:
         self.llm_enabled = tk.BooleanVar(value=current.llm_enabled)
         self.llm_endpoint = tk.StringVar(value=current.llm_endpoint)
         self.llm_model = tk.StringVar(value=current.llm_model)
+        self._codex_models = {
+            'GPT-5.6 Luna': 'gpt-5.6-luna', 'GPT-5.6 Terra': 'gpt-5.6-terra',
+            'GPT-5.6 Sol': 'gpt-5.6-sol', 'GPT-6 Astra': 'gpt-6-astra',
+            'GPT-5.5': 'gpt-5.5', 'GPT-5.3 Codex Spark': 'gpt-5.3-codex-spark'}
+        self.codex_model = tk.StringVar(value=next(
+            (name for name, model in self._codex_models.items() if model == current.codex_model), current.codex_model))
+        self.codex_status = tk.StringVar(value='Luna is the default for lower usage. Changes apply to your next question.')
         self.llm_reasoning = tk.StringVar(value=current.llm_reasoning_effort)
         self.llm_temperature = tk.DoubleVar(value=current.llm_temperature)
         self.llm_key = tk.StringVar()
@@ -182,7 +190,7 @@ class SettingsWindow:
         style.configure("TCheckbutton", background=self.PANEL, foreground=self.TEXT)
         style.configure("TNotebook", background=self.BG, borderwidth=0)
         style.configure("TNotebook.Tab", background="#151e31", foreground=self.MUTED,
-                        padding=(18, 9), borderwidth=0)
+                        padding=(10, 9), borderwidth=0)
         style.map("TNotebook.Tab", background=[("selected", self.PANEL)],
                   foreground=[("selected", self.TEXT)])
 
@@ -208,6 +216,7 @@ class SettingsWindow:
         general = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         voice = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         integrations = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
+        ask = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         comms = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         desktop = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
         wrist = ttk.Frame(notebook, style="Panel.TFrame", padding=20)
@@ -215,6 +224,7 @@ class SettingsWindow:
         notebook.add(general, text="GENERAL")
         notebook.add(voice, text="VOICE")
         notebook.add(integrations, text="INTEGRATIONS")
+        notebook.add(ask, text="ASK")
         notebook.add(comms, text="COMMS")
         notebook.add(desktop, text="DESKTOP")
         notebook.add(wrist, text="WRIST")
@@ -222,6 +232,7 @@ class SettingsWindow:
         self._build_general(general)
         self._build_voice(voice)
         self._build_integrations(integrations)
+        self._build_ask(ask)
         self._build_comms(comms)
         self._build_desktop(desktop)
         self._build_wrist(wrist)
@@ -348,6 +359,54 @@ class SettingsWindow:
             row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
         panel.columnconfigure(0, weight=1)
         panel.columnconfigure(1, weight=2)
+
+    def _build_ask(self, panel: ttk.Frame) -> None:
+        row = self._section(panel, 0, 'CODEX ASSISTANT')
+        ttk.Label(panel, text='Uses your Codex / ChatGPT subscription sign-in.',
+                  style='Muted.Panel.TLabel').grid(row=row, column=0, columnspan=2, sticky='w', pady=(0, 16))
+        row += 1
+        ttk.Label(panel, text='Model', style='Panel.TLabel').grid(row=row, column=0, sticky='w')
+        self.codex_model_box = ttk.Combobox(panel, textvariable=self.codex_model,
+                                           values=list(self._codex_models), state='readonly')
+        self.codex_model_box.grid(row=row, column=1, sticky='ew', pady=8)
+        row += 1
+        ttk.Label(panel, textvariable=self.codex_status, style='Muted.Panel.TLabel', wraplength=640).grid(
+            row=row, column=0, columnspan=2, sticky='w', pady=12)
+        row += 1
+        ttk.Button(panel, text='Refresh available models', command=self.refresh_codex_models).grid(
+            row=row, column=0, columnspan=2, sticky='w')
+        row += 1
+        ttk.Label(panel, text='Low reasoning and standard speed keep everyday questions economical.\n'
+                  'Choose a larger model when you need more depth.\n\n'
+                  'This changes ASK only. Your Music command model stays under Integrations.',
+                  style='Muted.Panel.TLabel', wraplength=640).grid(row=row, column=0, columnspan=2, sticky='w', pady=20)
+        panel.columnconfigure(1, weight=1)
+
+    def refresh_codex_models(self):
+        self.codex_status.set('Checking the installed Codex models...')
+        def work():
+            try:
+                import os
+                from .codex_transport import CodexTransport
+                connection = CodexTransport(Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'Interfayce/assistant')
+                try:
+                    models = connection.request('model/list', {})['data']
+                finally:
+                    connection.close()
+                available = {str(m.get('displayName') or m['id']): m['id'] for m in models}
+                def update():
+                    selected = self._codex_models.get(self.codex_model.get(), self.codex_model.get())
+                    self._codex_models = available
+                    self.codex_model_box.configure(values=list(available))
+                    self.codex_model.set(next((n for n, v in available.items() if v == selected), selected))
+                    self.codex_status.set('Available models refreshed. Click Apply to save your selection.')
+                self.root.after(0, update)
+            except Exception:
+                try:
+                    self.root.after(0, lambda: self.codex_status.set('Could not refresh. Open Codex and check your sign-in.'))
+                except RuntimeError:
+                    pass
+        threading.Thread(target=work, name='CodexModels', daemon=True).start()
 
     def _build_integrations(self, panel: ttk.Frame) -> None:
         row = self._section(panel, 0, "SPOTIFY OAUTH")
@@ -684,7 +743,8 @@ class SettingsWindow:
             return False
         selected_input = self.microphone.get()
         selected_output = self.tts_output.get()
-        set_desktop_configuration(
+        self._applied_settings = set_desktop_configuration(
+            baseline=self._applied_settings,
             tts_volume=self.volume.get() / 100.0,
             tts_muted=self.muted.get(),
             tts_speed=self.speed.get(),
@@ -703,6 +763,7 @@ class SettingsWindow:
             llm_enabled=self.llm_enabled.get(),
             llm_endpoint=llm_endpoint,
             llm_model=self.llm_model.get(),
+            codex_model=self._codex_models.get(self.codex_model.get(), self.codex_model.get()),
             llm_reasoning_effort=self.llm_reasoning.get(),
             llm_temperature=self.llm_temperature.get(),
             comms_shortcuts=tuple(zip(
@@ -721,6 +782,10 @@ class SettingsWindow:
             wrist_yaw=self.wrist_yaw.get(),
             wrist_roll=self.wrist_roll.get(),
         )
+        self.volume.set(round(self._applied_settings.tts_volume * 100))
+        self.muted.set(self._applied_settings.tts_muted)
+        self.broadcast_gain.set(self._applied_settings.broadcast_gain_db)
+        self._update_labels()
         return True
 
     def apply(self) -> None:

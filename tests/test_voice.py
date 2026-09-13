@@ -47,8 +47,10 @@ class FakeTranscriber:
 class VoiceIntentTests(unittest.TestCase):
     def test_recognizes_bounded_transport_commands(self) -> None:
         cases = {
-            "pause music": MusicIntentKind.TOGGLE_PLAYBACK,
-            "pause the music": MusicIntentKind.TOGGLE_PLAYBACK,
+            "pause music": MusicIntentKind.PAUSE,
+            "pause the music": MusicIntentKind.PAUSE,
+            "resume music": MusicIntentKind.PLAY,
+            "toggle playback": MusicIntentKind.TOGGLE_PLAYBACK,
             "skip this": MusicIntentKind.NEXT_TRACK,
             "go back": MusicIntentKind.PREVIOUS_TRACK,
             "what song is this?": MusicIntentKind.NOW_PLAYING,

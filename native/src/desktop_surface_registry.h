@@ -162,6 +162,11 @@ private:
         bool visible{true};
         bool locked{};
         bool privateMode{};
+        HWND primaryTarget{};
+        HWND secondaryTarget{};
+        bool primaryInjected{};
+        bool secondaryInjected{};
+        POINT lastPointerPoint{};
     };
 
     struct GrabState {
@@ -185,6 +190,7 @@ private:
     void DestroySurfaceOverlays(Surface& surface) const;
     void RememberFocusedSurface(uint64_t id);
     void ForgetFocusedSurface(uint64_t id);
+    void ReleasePointerInput(Surface& surface);
 
     vr::IVRSystem* system_{};
     ID3D11Device* device_{};

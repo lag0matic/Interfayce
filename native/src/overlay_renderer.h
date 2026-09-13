@@ -8,6 +8,7 @@
 #include <d3d11.h>
 #include <dwrite.h>
 #include <array>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <wrl/client.h>
@@ -37,6 +38,8 @@ public:
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetAssistantStatus(const std::wstring& status, const std::wstring& transcript,
                             const std::wstring& response, bool active);
+    void SetAssistantChoices(const std::vector<std::wstring>& choices, bool dictate = false, const std::string& token = {});
+    void ScrollAssistant(float amount) { assistantScroll_ = (std::max)(0.0F, (std::min)(assistantMaximum_, assistantScroll_ + amount)); assistantFollow_ = assistantScroll_ >= assistantMaximum_; }
     void SetCommsShortcuts(const std::array<std::wstring, 4>& labels);
     void SetTtsSettings(int volumePercent, bool muted);
     void SetSongAnnounceEnabled(bool enabled);
@@ -114,6 +117,15 @@ private:
     std::wstring assistantTranscript_;
     std::wstring assistantResponse_;
     bool assistantActive_{};
+    std::vector<std::wstring> assistantChoices_;
+    float assistantScroll_{};
+    Microsoft::WRL::ComPtr<IDWriteFactory> assistantWriteFactory_;
+    float assistantMaximum_{};
+    bool assistantFollow_{true};
+    bool assistantDictate_{};
+    std::string assistantDecisionToken_;
+    float assistantChatScroll_{};
+    bool assistantChatFollow_{true};
     std::array<std::wstring, 4> commsShortcutLabels_{};
     int ttsVolumePercent_{85};
     bool ttsMuted_{};

@@ -5,7 +5,7 @@
 
 // Render the actual production panel without a headset or running overlay.
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 3) return 2;
+    if (argc < 3 || argc > 4) return 2;
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     interfayce::OverlayRenderer renderer;
     const std::filesystem::path root(argv[1]), output(argv[2]);
@@ -16,6 +16,9 @@ int wmain(int argc, wchar_t** argv) {
     renderer.SetClockText(L"8:42 PM");
     renderer.SetSlimeAvailable(true);
     renderer.SetMusicPlaying(true);
+    renderer.SetAssistantStatus(L"CODEX / ANSWER", L"What should we try next?",
+        L"We could find a quiet world, put on some music, and see where the evening goes.\n\n"
+        L"I can keep our conversation going while you are in VR. Scroll here with the thumbstick to read longer replies.", false);
     renderer.SetServiceStatus(L"TTS\toffline\tSpeech server unreachable\nSTT\tbackup\tRemote unavailable; local recognition ready\nLLM\tgood\tAPI reachable\nSPOTIFY\tgood\tMedia session available");
     std::filesystem::create_directories(output);
     for (int deck = 0; deck < 7; ++deck) {
@@ -29,6 +32,12 @@ int wmain(int argc, wchar_t** argv) {
                 surface.privateEligible = true; surface.reusable = true;
                 desktop.surfaces.push_back(surface);
             }
+        }
+        if (deck == 6 && argc == 4) {
+            renderer.SetAssistantChoices({L"Allow once", L"Decline"}, false, "preview-decision");
+            renderer.SetAssistantStatus(L"CODEX / AWAITING INPUT", L"Review this change",
+                L"Review this file change:\n\nnotes.txt\n-old line\n+new line\n\n"
+                L"This long decision must begin at the top, even when the previous conversation followed the bottom.", true);
         }
         if (!renderer.Initialize(nullptr, deck, L"Persevere / Gang of Youths", L"", L"", {}, false, desktop)) return 3;
         auto* device = renderer.Device();
