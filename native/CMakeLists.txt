@@ -22,7 +22,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(openvr_sdk)
 
-add_executable(InterfaycePanelPreview EXCLUDE_FROM_ALL tests/panel_preview.cpp src/overlay_renderer.cpp)
+add_executable(InterfaycePanelPreview EXCLUDE_FROM_ALL tests/panel_preview.cpp src/overlay_renderer.cpp src/overlay_renderer_assistant.cpp)
 add_executable(InterfayceAssistantLayoutTests tests/assistant_layout_tests.cpp)
 target_include_directories(InterfayceAssistantLayoutTests PRIVATE src)
 target_compile_features(InterfayceAssistantLayoutTests PRIVATE cxx_std_20)
@@ -40,12 +40,15 @@ set_target_properties(openvr_api PROPERTIES
 add_executable(InterfayceOverlay
     "${CMAKE_BINARY_DIR}/interfayce.rc"
     src/main.cpp
+    src/local_service_client.cpp
     src/artwork_cache.cpp
     src/broadcast_controller.cpp
     src/desktop_capture.cpp
     src/desktop_surface_manager.cpp
     src/desktop_surface_registry.cpp
+    src/desktop_input_router.cpp
     src/overlay_renderer.cpp
+    src/overlay_renderer_assistant.cpp
     src/tray_icon.cpp
 )
 add_library(interfayce_battery_estimator STATIC
@@ -74,6 +77,10 @@ add_executable(InterfayceBatteryEstimatorTests
     tests/battery_estimator_tests.cpp
 )
 add_executable(InterfayceDesktopCoordinatesTests tests/desktop_coordinates_tests.cpp)
+add_executable(InterfayceDesktopInputTests tests/desktop_input_tests.cpp src/desktop_input_router.cpp)
+target_include_directories(InterfayceDesktopInputTests PRIVATE src "${openvr_sdk_SOURCE_DIR}/headers")
+target_compile_features(InterfayceDesktopInputTests PRIVATE cxx_std_20)
+target_link_libraries(InterfayceDesktopInputTests PRIVATE user32 dwmapi)
 target_include_directories(InterfayceDesktopCoordinatesTests PRIVATE src)
 target_compile_features(InterfayceDesktopCoordinatesTests PRIVATE cxx_std_20)
 target_link_libraries(InterfayceDesktopCoordinatesTests PRIVATE user32)

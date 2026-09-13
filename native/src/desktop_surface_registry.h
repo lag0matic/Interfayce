@@ -1,6 +1,7 @@
 #pragma once
 
 #include "desktop_capture.h"
+#include "desktop_input_router.h"
 #include "desktop_click_filter.h"
 #include "desktop_surface_manager.h"
 #include "private_window_manager.h"
@@ -49,13 +50,6 @@ struct KeyboardSurfaceHit {
     float v{};
 };
 
-enum class DesktopPointerEvent {
-    Move,
-    PrimaryDown,
-    PrimaryUp,
-    SecondaryDown,
-    SecondaryUp,
-};
 enum class DesktopGrabHand { Left, Right };
 
 class DesktopPickerTexture {
@@ -162,11 +156,7 @@ private:
         bool visible{true};
         bool locked{};
         bool privateMode{};
-        HWND primaryTarget{};
-        HWND secondaryTarget{};
-        bool primaryInjected{};
-        bool secondaryInjected{};
-        POINT lastPointerPoint{};
+        DesktopInputRouter input;
     };
 
     struct GrabState {

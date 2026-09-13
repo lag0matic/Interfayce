@@ -89,3 +89,23 @@ shared configurable STT routing; live playback controls; and explicit Music
 play/pause. Python checks: 192 passed, one skipped. Native Release build passed.
 The following phase extracts these boundaries without changing their behavior.
 Installation and in-headset validation of this revision follow the structural pass.
+
+
+## Structural checkpoint: 1.2.21
+
+The first structural pass separates authenticated native service transport
+(`local_service_client`), physical desktop pointer/wheel routing and held-button
+ownership (`DesktopInputRouter`), cross-process settings persistence
+(`SettingsStore`), and ASK rendering (`overlay_renderer_assistant`). Shared glyph
+identifiers live in `holo_glyph.h`; decision geometry remains shared with input.
+Configured STT routing and live playback controls were separated with the fixes.
+
+Validation: 192 Python tests passed, one skipped. Native Release and panel preview
+builds passed. Native regressions passed for click filtering, real mixed-DPI
+coordinates, captured child drag ownership, teardown release, targeted wheel
+messages, decision geometry, artwork, battery estimation and private-window
+recovery. The ASK decision preview was visually checked after extraction.
+
+This is a bounded first pass, not a wholesale rewrite: main.cpp still coordinates
+VR state and completed service work; other wrist decks remain in the renderer.
+Further division can follow these boundaries when those areas need changes.

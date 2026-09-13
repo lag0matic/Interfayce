@@ -1,4 +1,6 @@
 #pragma once
+#include <functional>
+#include "holo_glyph.h"
 
 #include "desktop_surface_registry.h"
 
@@ -59,6 +61,8 @@ public:
     vr::Texture_t Texture() const;
 
 private:
+    using GlyphPainter = std::function<bool(HoloGlyph, D2D1_POINT_2F, float, float, bool, bool)>;
+    void DrawAssistantPanel(const GlyphPainter& drawHoloAsset);
     bool Render(int deck, const std::wstring& musicLine, const std::wstring& musicArtPath,
                 const std::wstring& rigLine, const std::array<std::wstring, 8>& rigSlots,
                 bool mountReady, const DesktopPanelState& desktop);

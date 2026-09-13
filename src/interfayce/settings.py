@@ -11,12 +11,9 @@ import json
 import os
 from pathlib import Path
 import re
-import threading
-import functools
-import uuid
-from contextlib import contextmanager
 
 from .osc import fit_chatbox_text
+from .settings_store import SettingsStore
 
 DEFAULT_COMMS_SHORTCUTS: tuple[tuple[str, str], ...] = (("", ""),) * 4
 DEFAULT_DESKTOP_FAVORITES: tuple[tuple[str, str], ...] = (("", ""),) * 3
@@ -58,48 +55,10 @@ class AppSettings:
     wrist_roll: float = 0.0
 
 
-_LOCK = threading.RLock()
-_TRANSACTION = threading.local()
-
-
-@contextmanager
-def settings_transaction():
-    """Serialize read/modify/write across threads and desktop/service processes."""
-    with _LOCK:
-        if getattr(_TRANSACTION, 'active', False):
-            yield
-            return
-        lock_path = settings_path().with_suffix('.lock')
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open('a+b') as handle:
-            if handle.tell() == 0:
-                handle.write(b'0')
-                handle.flush()
-            handle.seek(0)
-            if os.name == 'nt':
-                import msvcrt
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle, fcntl.LOCK_EX)
-            _TRANSACTION.active = True
-            try:
-                yield
-            finally:
-                _TRANSACTION.active = False
-                handle.seek(0)
-                if os.name == 'nt':
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    fcntl.flock(handle, fcntl.LOCK_UN)
-
-
-def transactional(function):
-    @functools.wraps(function)
-    def wrapped(*args, **kwargs):
-        with settings_transaction():
-            return function(*args, **kwargs)
-    return wrapped
+_STORE = SettingsStore(lambda: settings_path())
+_LOCK = _STORE.lock
+settings_transaction = _STORE.transaction
+transactional = _STORE.transactional
 
 
 def settings_path() -> Path:
@@ -266,11 +225,7 @@ def load_settings() -> AppSettings:
 def save_settings(settings: AppSettings) -> AppSettings:
     cleaned = _clamp(settings)
     with _LOCK:
-        path = settings_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + "." + uuid.uuid4().hex + ".tmp")
-        temporary.write_text(json.dumps(asdict(cleaned), indent=2) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        _STORE.write_json(settings_path(), asdict(cleaned))
     return cleaned
 
 
@@ -309,11 +264,7 @@ def record_desktop_recent(label: str, executable: str) -> tuple[tuple[str, str],
                    if _desktop_target_identity(item[1]) != identity]
         history.insert(0, cleaned)
         history = history[:MAX_DESKTOP_HISTORY]
-        path = desktop_history_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + "." + uuid.uuid4().hex + ".tmp")
-        temporary.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        _STORE.write_json(desktop_history_path(), history)
     return tuple(history)
 
 
