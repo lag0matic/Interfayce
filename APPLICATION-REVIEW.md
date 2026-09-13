@@ -109,3 +109,9 @@ recovery. The ASK decision preview was visually checked after extraction.
 This is a bounded first pass, not a wholesale rewrite: main.cpp still coordinates
 VR state and completed service work; other wrist decks remain in the renderer.
 Further division can follow these boundaries when those areas need changes.
+
+
+Deployment: 1.2.21 installed successfully September 13, 2026. Installed binaries
+match staging, settings were preserved, overlay/service are running, authenticated
+health is ready and ASK reports Codex / READY. In-headset confirmation is pending.
+Earlier source-only notes above describe the review sequence, not current deployment.

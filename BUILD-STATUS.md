@@ -1,22 +1,27 @@
 # Interfayce build status
 
-## Installed candidate: 1.2.20
+## Installed candidate: 1.2.21
 
-Built and installed September 13, 2026; overlay and resident service are running.
-Codex subscription ASK integration adds streamed replies, conversation resumption,
-scrolling, cancellation, decision cards and cancellable speech. Settings -> ASK
-selects the Codex model; default is GPT-5.6 Luna, low reasoning, standard tier.
-Music's API model is unchanged. See CODEX-USAGE.md for controls and limitations.
+Built and installed September 13, 2026. Overlay and resident service are running;
+authenticated health returns 200 ready and ASK reports Codex / READY. Installed
+native, service and recovery binaries match staging. Settings were preserved.
+Installer completed successfully without requiring a Windows restart.
 
-182 Python tests passed, one skipped. Native regressions and Release build passed;
-live Codex streaming, recall after reconnect, interruption and Luna selection passed.
-Installed binaries match staging and settings were preserved. The maintainer confirmed the integration works perfectly in VR.
-Independent ASK and full-application reviews are complete; see APPLICATION-REVIEW.md.
-ASK review fixes pass 188 Python tests and native build/layout checks in the working
-tree. Those fixes are not installed yet; code division has not started.
+Includes the ASK and full-application review fixes, then a separate structural
+pass for native service transport, desktop input ownership, settings persistence
+and ASK rendering. See APPLICATION-REVIEW.md for findings and scope. Codex ASK
+retains the economical Luna default and Settings -> ASK model selection.
 
-Installer: packaging/out/installer/Interfayce-Setup-1.2.20.exe. SHA-256:
-4311B61F6F822EFD1E7C4A13BE9DE4942FCA3CC2331568A3ABD712DA48C4C4BF
+Validation: 192 Python tests passed, one skipped. Release and production-preview
+builds passed. Native checks passed for input ownership/release/scroll targeting,
+click filtering, real mixed-DPI coordinates, decision geometry, artwork, battery
+estimation and private-window recovery. ASK preview visually checked. The prior
+1.2.20 integration was confirmed in VR by the maintainer; this revision still
+needs their in-headset confirmation. No new model turn was needed for this pass.
+
+Local checkpoints: d7efea8 (feature and review fixes), c26e109 (structural pass).
+Installer: packaging/out/installer/Interfayce-Setup-1.2.21.exe. SHA-256:
+88482CAF9101C5F39283FC525F7C171DB6AEC103A6C9118FC58B5F0404EF3EA4
 
 ## Current checkpoint: 1.2.19
 
