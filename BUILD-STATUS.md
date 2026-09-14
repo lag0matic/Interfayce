@@ -1,6 +1,6 @@
 # Interfayce build status
 
-## Candidate: 1.2.22
+## Installed candidate: 1.2.22
 
 Adds approximately 200 ms of microphone capture after releasing chatbox
 push-to-talk, so releasing while finishing a word does not immediately end the
@@ -9,8 +9,12 @@ recording. The original maximum recording duration still applies. This is an
 experiment for final-word errors, not a confirmed fix for recognition accuracy.
 
 193 Python tests passed, one skipped. The new capture test verifies tail delivery
-and the hard duration limit. Native Release build passed. Packaging/install
-validation is in progress; the 1.2.21 checkpoint remains the last VR-validated build.
+and the hard duration limit. Native Release build passed. Installed September 14, 2026; overlay and service
+are running, authenticated health is ready, installed binaries match staging,
+and settings were preserved. The 1.2.21 checkpoint remains the last VR-validated
+build. Awaiting practical confirmation of the release buffer.
+
+Installer SHA256: 827095F2C6967A55E38CE6D665B0E023702061C11C7C6C82A96B591C6E91034A.
 
 ## Validated checkpoint: 1.2.21
 
