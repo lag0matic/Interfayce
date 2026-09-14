@@ -113,5 +113,5 @@ Further division can follow these boundaries when those areas need changes.
 
 Deployment: 1.2.21 installed successfully September 13, 2026. Installed binaries
 match staging, settings were preserved, overlay/service are running, authenticated
-health is ready and ASK reports Codex / READY. In-headset confirmation is pending.
+health is ready and ASK reports Codex / READY. The maintainer confirmed a successful in-headset test and approved the GitHub checkpoint. Occasional STT word substitutions remain under observation; diagnostic logging is deferred.
 Earlier source-only notes above describe the review sequence, not current deployment.
