@@ -11,9 +11,9 @@ import json
 import os
 from pathlib import Path
 import re
-import threading
 
 from .osc import fit_chatbox_text
+from .settings_store import SettingsStore
 
 DEFAULT_COMMS_SHORTCUTS: tuple[tuple[str, str], ...] = (("", ""),) * 4
 DEFAULT_DESKTOP_FAVORITES: tuple[tuple[str, str], ...] = (("", ""),) * 3
@@ -41,6 +41,7 @@ class AppSettings:
     llm_enabled: bool = False
     llm_endpoint: str = ""
     llm_model: str = ""
+    codex_model: str = "gpt-5.6-luna"
     llm_reasoning_effort: str = ""
     llm_temperature: float = 0.65
     comms_shortcuts: tuple[tuple[str, str], ...] = DEFAULT_COMMS_SHORTCUTS
@@ -54,7 +55,10 @@ class AppSettings:
     wrist_roll: float = 0.0
 
 
-_LOCK = threading.RLock()
+_STORE = SettingsStore(lambda: settings_path())
+_LOCK = _STORE.lock
+settings_transaction = _STORE.transaction
+transactional = _STORE.transactional
 
 
 def settings_path() -> Path:
@@ -157,6 +161,7 @@ def _clamp(settings: AppSettings) -> AppSettings:
         llm_enabled=bool(settings.llm_enabled),
         llm_endpoint=str(settings.llm_endpoint).strip().rstrip("/"),
         llm_model=str(settings.llm_model).strip(),
+        codex_model=str(settings.codex_model).strip() or "gpt-5.6-luna",
         llm_reasoning_effort=str(settings.llm_reasoning_effort).strip(),
         llm_temperature=max(0.0, min(2.0, float(settings.llm_temperature))),
         comms_shortcuts=tuple(shortcuts),
@@ -197,6 +202,7 @@ def load_settings() -> AppSettings:
                 llm_enabled=data.get("llm_enabled", False),
                 llm_endpoint=data.get("llm_endpoint", ""),
                 llm_model=data.get("llm_model", ""),
+                codex_model=data.get("codex_model", "gpt-5.6-luna"),
                 llm_reasoning_effort=data.get("llm_reasoning_effort", ""),
                 llm_temperature=data.get("llm_temperature", 0.65),
                 comms_shortcuts=tuple(tuple(item) for item in
@@ -215,14 +221,11 @@ def load_settings() -> AppSettings:
             return AppSettings()
 
 
+@transactional
 def save_settings(settings: AppSettings) -> AppSettings:
     cleaned = _clamp(settings)
     with _LOCK:
-        path = settings_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(asdict(cleaned), indent=2) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        _STORE.write_json(settings_path(), asdict(cleaned))
     return cleaned
 
 
@@ -250,6 +253,7 @@ def load_desktop_history() -> tuple[tuple[str, str], ...]:
     return tuple(history)
 
 
+@transactional
 def record_desktop_recent(label: str, executable: str) -> tuple[tuple[str, str], ...]:
     cleaned = _clean_desktop_target(label, executable)
     if not cleaned[0] or not cleaned[1]:
@@ -260,24 +264,23 @@ def record_desktop_recent(label: str, executable: str) -> tuple[tuple[str, str],
                    if _desktop_target_identity(item[1]) != identity]
         history.insert(0, cleaned)
         history = history[:MAX_DESKTOP_HISTORY]
-        path = desktop_history_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(path)
+        _STORE.write_json(desktop_history_path(), history)
     return tuple(history)
 
 
+@transactional
 def adjust_tts_volume(delta: float) -> AppSettings:
     current = load_settings()
     return save_settings(replace(current, tts_volume=current.tts_volume + delta))
 
 
+@transactional
 def toggle_tts_mute() -> AppSettings:
     current = load_settings()
     return save_settings(replace(current, tts_muted=not current.tts_muted))
 
 
+@transactional
 def toggle_song_announce() -> AppSettings:
     current = load_settings()
     return save_settings(replace(
@@ -285,6 +288,7 @@ def toggle_song_announce() -> AppSettings:
     ))
 
 
+@transactional
 def adjust_broadcast_gain(delta_db: float) -> AppSettings:
     current = load_settings()
     return save_settings(replace(
@@ -292,6 +296,7 @@ def adjust_broadcast_gain(delta_db: float) -> AppSettings:
     ))
 
 
+@transactional
 def set_runtime_controls(*, tts_volume: float, tts_muted: bool,
                          stt_microphone: str, haptic_strength: float) -> AppSettings:
     return save_settings(replace(
@@ -303,10 +308,12 @@ def set_runtime_controls(*, tts_volume: float, tts_muted: bool,
     ))
 
 
+@transactional
 def set_spotify_client_id(client_id: str) -> AppSettings:
     return save_settings(replace(load_settings(), spotify_client_id=client_id.strip()))
 
 
+@transactional
 def set_llm_profile(*, endpoint: str, model: str, reasoning_effort: str = "",
                     temperature: float = 0.65, enabled: bool | None = None) -> AppSettings:
     current = load_settings()
@@ -320,6 +327,7 @@ def set_llm_profile(*, endpoint: str, model: str, reasoning_effort: str = "",
     ))
 
 
+@transactional
 def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               tts_speed: float, tts_endpoint: str,
                               tts_model: str, tts_voice: str, tts_output: str,
@@ -340,9 +348,11 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               wrist_roll: float | None = None,
                               stt_endpoint: str | None = None,
                               stt_model: str | None = None,
-                              playspace_travel_limit_meters: float | None = None) -> AppSettings:
+                              playspace_travel_limit_meters: float | None = None,
+                              codex_model: str | None = None,
+                              baseline: AppSettings | None = None) -> AppSettings:
     current = load_settings()
-    return save_settings(replace(
+    candidate = _clamp(replace(
         current,
         tts_volume=tts_volume,
         tts_muted=tts_muted,
@@ -363,6 +373,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         llm_enabled=llm_enabled,
         llm_endpoint=llm_endpoint,
         llm_model=llm_model,
+        codex_model=current.codex_model if codex_model is None else codex_model,
         llm_reasoning_effort=llm_reasoning_effort,
         llm_temperature=llm_temperature,
         comms_shortcuts=current.comms_shortcuts if comms_shortcuts is None else comms_shortcuts,
@@ -375,6 +386,11 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         wrist_yaw=current.wrist_yaw if wrist_yaw is None else wrist_yaw,
         wrist_roll=current.wrist_roll if wrist_roll is None else wrist_roll,
     ))
+    if baseline is not None:
+        changes = {name: getattr(candidate, name) for name in asdict(candidate)
+                   if getattr(candidate, name) != getattr(baseline, name)}
+        candidate = replace(current, **changes)
+    return save_settings(candidate)
 
 
 def comms_shortcut_labels(settings: AppSettings | None = None) -> str:

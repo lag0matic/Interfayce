@@ -11,6 +11,8 @@ from .windows_media import WindowsSpotifyMedia
 
 class MusicIntentKind(str, Enum):
     TOGGLE_PLAYBACK = "toggle_playback"
+    PLAY = "play"
+    PAUSE = "pause"
     NEXT_TRACK = "next_track"
     PREVIOUS_TRACK = "previous_track"
     NOW_PLAYING = "now_playing"
@@ -61,7 +63,10 @@ def parse_music_intent(transcript: str) -> MusicIntent:
         "pause music", "resume music", "play music", "stop music",
         "pause the music", "resume the music", "play the music", "stop the music",
     }:
-        return MusicIntent(MusicIntentKind.TOGGLE_PLAYBACK, transcript)
+        action = (MusicIntentKind.TOGGLE_PLAYBACK if words.startswith('toggle')
+                  else MusicIntentKind.PAUSE if words.split()[0] in ('pause', 'stop')
+                  else MusicIntentKind.PLAY)
+        return MusicIntent(action, transcript)
     return MusicIntent(MusicIntentKind.UNKNOWN, transcript)
 
 
@@ -70,6 +75,11 @@ async def execute_music_intent(
     media: WindowsSpotifyMedia | None = None,
 ) -> MusicCommandResult:
     spotify = media or WindowsSpotifyMedia()
+    if intent.kind in (MusicIntentKind.PLAY, MusicIntentKind.PAUSE):
+        playing = intent.kind is MusicIntentKind.PLAY
+        succeeded = await (spotify.play() if playing else spotify.pause())
+        return MusicCommandResult(succeeded, ('Playing music.' if playing else 'Music paused.')
+                                  if succeeded else 'Spotify did not accept the playback command.')
     if intent.kind is MusicIntentKind.NEXT_TRACK:
         succeeded = await spotify.next_track()
         return MusicCommandResult(succeeded, "Skipped to the next track." if succeeded

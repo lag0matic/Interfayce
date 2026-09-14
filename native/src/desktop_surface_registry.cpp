@@ -1,4 +1,5 @@
 #include "desktop_coordinates.h"
+#include "desktop_input_router.h"
 #include "desktop_surface_registry.h"
 
 #include <d2d1helper.h>
@@ -13,6 +14,9 @@
 #include <utility>
 
 namespace {
+
+using interfayce::DesktopPointForHit;
+using interfayce::PrepareWindowForInput;
 
 constexpr UINT kPickerWidth = 1024;
 constexpr UINT kPickerHeight = 640;
@@ -143,151 +147,6 @@ float Distance(const vr::HmdVector3_t& left, const vr::HmdVector3_t& right) {
 vr::HmdVector3_t Midpoint(const vr::HmdVector3_t& left, const vr::HmdVector3_t& right) {
     return {{(left.v[0] + right.v[0]) * 0.5F, (left.v[1] + right.v[1]) * 0.5F,
         (left.v[2] + right.v[2]) * 0.5F}};
-}
-
-using interfayce::PhysicalDesktopCoordinates;
-
-std::optional<POINT> DesktopPointForHit(const interfayce::DesktopSource& source, float u, float v) {
-    PhysicalDesktopCoordinates physicalCoordinates;
-    RECT bounds{};
-    if (source.kind == interfayce::DesktopSource::Kind::Display) {
-        MONITORINFO info{};
-        info.cbSize = sizeof(info);
-        if (source.monitor == nullptr || !GetMonitorInfoW(source.monitor, &info)) return std::nullopt;
-        bounds = info.rcMonitor;
-    } else {
-        if (source.window == nullptr || !IsWindow(source.window)) return std::nullopt;
-        if (FAILED(DwmGetWindowAttribute(source.window, DWMWA_EXTENDED_FRAME_BOUNDS,
-                &bounds, sizeof(bounds))) && !GetWindowRect(source.window, &bounds)) return std::nullopt;
-    }
-    const auto width = (std::max)(bounds.right - bounds.left, 1L);
-    const auto height = (std::max)(bounds.bottom - bounds.top, 1L);
-    return POINT{
-        bounds.left + static_cast<LONG>(std::lround(std::clamp(u, 0.0F, 1.0F) * (width - 1))),
-        bounds.top + static_cast<LONG>(std::lround((1.0F - std::clamp(v, 0.0F, 1.0F)) * (height - 1))),
-    };
-}
-
-void PrepareWindowForInput(HWND window) {
-    PhysicalDesktopCoordinates physicalCoordinates;
-    if (window == nullptr || !IsWindow(window)) return;
-    if (IsIconic(window)) ShowWindow(window, SW_RESTORE);
-    SetWindowPos(window, HWND_TOP, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    BringWindowToTop(window);
-    SetForegroundWindow(window);
-}
-
-HWND CapturedChildAtPoint(HWND rootWindow, const POINT screenPoint) {
-    PhysicalDesktopCoordinates physicalCoordinates;
-    if (rootWindow == nullptr || !IsWindow(rootWindow)) return nullptr;
-
-    // Deliberately walk from the captured root rather than using WindowFromPoint.
-    // WindowFromPoint follows the real desktop Z-order, so an unrelated window
-    // covering this coordinate can steal hit-testing from an otherwise valid
-    // captured surface.
-    HWND target = rootWindow;
-    while (true) {
-        POINT clientPoint = screenPoint;
-        if (!ScreenToClient(target, &clientPoint)) break;
-        const auto child = ChildWindowFromPointEx(target, clientPoint,
-            CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT);
-        if (child == nullptr || child == target) break;
-        target = child;
-    }
-    return target;
-}
-
-bool InjectDesktopPointer(const POINT point, interfayce::DesktopPointerEvent event) {
-    PhysicalDesktopCoordinates physicalCoordinates;
-    const auto virtualLeft = GetSystemMetrics(SM_XVIRTUALSCREEN);
-    const auto virtualTop = GetSystemMetrics(SM_YVIRTUALSCREEN);
-    const auto virtualWidth = (std::max)(GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1, 1);
-    const auto virtualHeight = (std::max)(GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1, 1);
-    INPUT movement{};
-    movement.type = INPUT_MOUSE;
-    movement.mi.dx = static_cast<LONG>(std::lround(
-        static_cast<double>(point.x - virtualLeft) * 65535.0 / virtualWidth));
-    movement.mi.dy = static_cast<LONG>(std::lround(
-        static_cast<double>(point.y - virtualTop) * 65535.0 / virtualHeight));
-    movement.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
-        | MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE;
-    if (event == interfayce::DesktopPointerEvent::Move) {
-        return SendInput(1, &movement, sizeof(movement)) == 1;
-    }
-    INPUT button{};
-    button.type = INPUT_MOUSE;
-    switch (event) {
-    case interfayce::DesktopPointerEvent::PrimaryDown:
-        button.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-        break;
-    case interfayce::DesktopPointerEvent::PrimaryUp:
-        button.mi.dwFlags = MOUSEEVENTF_LEFTUP;
-        break;
-    case interfayce::DesktopPointerEvent::SecondaryDown:
-        button.mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
-        break;
-    case interfayce::DesktopPointerEvent::SecondaryUp:
-        button.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
-        break;
-    case interfayce::DesktopPointerEvent::Move:
-        return SendInput(1, &movement, sizeof(movement)) == 1;
-    }
-    std::array<INPUT, 2> inputs{movement, button};
-    return SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT))
-        == inputs.size();
-}
-
-bool InjectWindowPointer(HWND rootWindow, const POINT screenPoint,
-                         interfayce::DesktopPointerEvent event) {
-    PhysicalDesktopCoordinates physicalCoordinates;
-    if (rootWindow == nullptr || !IsWindow(rootWindow)) return false;
-    // Some retained-mode/web UI frameworks validate posted client messages
-    // against the global cursor position. Keep both coordinate spaces aligned.
-    SetCursorPos(screenPoint.x, screenPoint.y);
-    const HWND target = CapturedChildAtPoint(rootWindow, screenPoint);
-    if (target == nullptr) return false;
-    const auto mappedPoint = interfayce::PhysicalClientPoint(target, screenPoint);
-    if (!mappedPoint) return false;
-    const POINT clientPoint = *mappedPoint;
-    const LPARAM coordinates = MAKELPARAM(
-        static_cast<short>(clientPoint.x), static_cast<short>(clientPoint.y));
-    const bool primary = event == interfayce::DesktopPointerEvent::PrimaryDown
-        || event == interfayce::DesktopPointerEvent::PrimaryUp;
-    const bool secondary = event == interfayce::DesktopPointerEvent::SecondaryDown
-        || event == interfayce::DesktopPointerEvent::SecondaryUp;
-    const bool released = event == interfayce::DesktopPointerEvent::PrimaryUp
-        || event == interfayce::DesktopPointerEvent::SecondaryUp;
-    const WPARAM buttons = released ? 0 : primary ? MK_LBUTTON : secondary ? MK_RBUTTON : 0;
-    if (!PostMessageW(target, WM_MOUSEMOVE,
-            event == interfayce::DesktopPointerEvent::Move ? buttons : 0, coordinates)) {
-        return false;
-    }
-    const UINT message = event == interfayce::DesktopPointerEvent::PrimaryDown
-        ? WM_LBUTTONDOWN : event == interfayce::DesktopPointerEvent::PrimaryUp
-            ? WM_LBUTTONUP : event == interfayce::DesktopPointerEvent::SecondaryDown
-                ? WM_RBUTTONDOWN : event == interfayce::DesktopPointerEvent::SecondaryUp
-                    ? WM_RBUTTONUP : 0;
-    return message == 0 || PostMessageW(target, message, buttons, coordinates) != FALSE;
-}
-
-bool InjectDesktopScroll(const POINT point, int32_t verticalDelta, int32_t horizontalDelta) {
-    if (!InjectDesktopPointer(point, interfayce::DesktopPointerEvent::Move)) return false;
-    std::array<INPUT, 2> inputs{};
-    UINT count = 0;
-    if (verticalDelta != 0) {
-        inputs[count].type = INPUT_MOUSE;
-        inputs[count].mi.dwFlags = MOUSEEVENTF_WHEEL;
-        inputs[count].mi.mouseData = static_cast<DWORD>(verticalDelta);
-        ++count;
-    }
-    if (horizontalDelta != 0) {
-        inputs[count].type = INPUT_MOUSE;
-        inputs[count].mi.dwFlags = MOUSEEVENTF_HWHEEL;
-        inputs[count].mi.mouseData = static_cast<DWORD>(horizontalDelta);
-        ++count;
-    }
-    return count == 0 || SendInput(count, inputs.data(), sizeof(INPUT)) == count;
 }
 
 bool InjectKeyboardKey(const KeyboardKeyDefinition& key, bool controlled, bool altered) {
@@ -1173,10 +1032,7 @@ bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
         stable = desktopSecondaryClick_.End(stable);
         break;
     }
-    if (source.kind == DesktopSource::Kind::Window) {
-        return InjectWindowPointer(source.window, stable, event);
-    }
-    return InjectDesktopPointer(stable, event);
+    return found->input.SendPointer(source, stable, event);
 }
 
 void DesktopSurfaceRegistry::RememberFocusedSurface(uint64_t id) {
@@ -1225,7 +1081,9 @@ bool DesktopSurfaceRegistry::SendScrollEvent(const DesktopSurfaceHit& hit,
         if (!privateWindows_.Contains(window) || !privateWindows_.AllowInput(window)) return false;
     }
     const auto point = DesktopPointForHit(found->sources[*found->assignedSource], hit.u, hit.v);
-    return point && InjectDesktopScroll(*point, verticalDelta, horizontalDelta);
+    if (!point) return false;
+    const auto& source = found->sources[*found->assignedSource];
+    return found->input.SendScroll(source, *point, verticalDelta, horizontalDelta);
 }
 
 bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) {
@@ -1538,6 +1396,7 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
         if (grab && grab->id == id) grab.reset();
     }
     if (activeScale_ && activeScale_->id == id) activeScale_.reset();
+    ReleasePointerInput(*found);
     if (found->capture) found->capture->Stop();
     found->capture.reset();
     found->sources = sources;
@@ -1561,6 +1420,7 @@ bool DesktopSurfaceRegistry::Close(uint64_t id) {
     }
     if (activeScale_ && activeScale_->id == id) activeScale_.reset();
     ForgetFocusedSurface(id);
+    ReleasePointerInput(*found);
     DestroySurfaceOverlays(*found);
     surfaces_.erase(found);
     return true;
@@ -1686,7 +1546,14 @@ std::vector<DesktopSurfaceSummary> DesktopSurfaceRegistry::Summaries() const {
     return summaries;
 }
 
+void DesktopSurfaceRegistry::ReleasePointerInput(Surface& surface) {
+    const DesktopSource* source = surface.assignedSource && *surface.assignedSource < surface.sources.size()
+        ? &surface.sources[*surface.assignedSource] : nullptr;
+    surface.input.Release(source);
+}
+
 void DesktopSurfaceRegistry::Shutdown() {
+    for (auto& surface : surfaces_) ReleasePointerInput(surface);
     privateWindows_.RecoverAll();
     for (auto& grab : activeGrabs_) grab.reset();
     activeScale_.reset();

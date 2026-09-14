@@ -97,6 +97,14 @@ class WindowsSpotifyMedia:
         session = await self._spotify_session()
         return False if session is None else await session.try_toggle_play_pause_async()
 
+    async def play(self) -> bool:
+        session = await self._spotify_session()
+        return False if session is None else await session.try_play_async()
+
+    async def pause(self) -> bool:
+        session = await self._spotify_session()
+        return False if session is None else await session.try_pause_async()
+
     async def next_track(self) -> bool:
         session = await self._spotify_session()
         return False if session is None else await session.try_skip_next_async()

@@ -1,5 +1,6 @@
 #include "panel_layout.h"
 #include "overlay_renderer.h"
+#include "holo_glyph.h"
 
 #include <d2d1_1.h>
 #include <d2d1helper.h>
@@ -19,17 +20,6 @@
 #include <string_view>
 
 namespace interfayce {
-
-enum class HoloGlyph : UINT32 {
-    Music, Comms, Desktop, Playspace, Rig, Settings,
-    Previous, Play, Pause, Next, Broadcast, VoiceMic,
-    NewSurface, Keyboard, SurfaceStack, Back, BringAll, ReturnPicker,
-    Lock, Unlock, BringView, Close, Favorite,
-    CommsMic, ClearChat, PlayspaceRestore, RigReset, RigMount, DesktopSettings,
-    VolumeDown, VolumeUp, Speaker, Mute, BroadcastGainDown, BroadcastGainUp,
-    Shutdown, Copy, Paste,
-    Assistant,
-};
 
 constexpr UINT32 kHoloAtlasColumns = 8;
 constexpr float kHoloAtlasCell = 72.0F;
@@ -1098,30 +1088,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(commsStatus_, labelFormat_.Get(), D2D1::RectF(64, 344, 606, 374),
             commsActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
     } else if (deck == 6) {
-        drawText(assistantTranscript_.empty() ? L"Tap the core and ask anything"
-                : (L"YOU  /  " + assistantTranscript_), labelFormat_.Get(),
-            D2D1::RectF(42, 108, 726, 142),
-            assistantTranscript_.empty() ? mutedTextBrush_.Get() : structureBrush_.Get());
-        drawText(assistantResponse_.empty()
-                ? L"Weather, calculations, current information, or a second opinion."
-                : assistantResponse_, bodyWrapFormat_.Get(), D2D1::RectF(42, 148, 726, 238),
-            assistantResponse_.empty() ? mutedTextBrush_.Get() : textBrush_.Get());
-
-        const auto micCenter = D2D1::Point2F(220, 286);
-        const auto cancelCenter = D2D1::Point2F(384, 286);
-        const auto clearCenter = D2D1::Point2F(548, 286);
-        if (holoGlyphAtlas_) {
-            drawHoloAsset(HoloGlyph::Assistant, micCenter, 49, 49, assistantActive_);
-            drawHoloAsset(HoloGlyph::Close, cancelCenter, 38, 38, assistantActive_);
-            drawHoloAsset(HoloGlyph::ClearChat, clearCenter, 38, 38);
-        }
-        d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
-            structureDimBrush_.Get(), 1.0F);
-        auto* assistantStateBrush = assistantActive_ ? accentBrush_.Get() : structureBrush_.Get();
-        d2dContext_->FillEllipse(
-            D2D1::Ellipse(D2D1::Point2F(49, 355), 5, 5), assistantStateBrush);
-        drawText(assistantStatus_, labelFormat_.Get(), D2D1::RectF(64, 344, 606, 374),
-            assistantActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
+        DrawAssistantPanel(drawHoloAsset);
     } else {
         drawText(L"VOICE OUTPUT", labelFormat_.Get(), D2D1::RectF(42, 108, 300, 140),
             accentBrush_.Get());
@@ -1362,14 +1329,7 @@ void OverlayRenderer::SetCommsStatus(const std::wstring& status,
     commsActive_ = active;
 }
 
-void OverlayRenderer::SetAssistantStatus(const std::wstring& status,
-                                         const std::wstring& transcript,
-                                         const std::wstring& response, bool active) {
-    assistantStatus_ = status;
-    assistantTranscript_ = transcript;
-    assistantResponse_ = response;
-    assistantActive_ = active;
-}
+
 
 void OverlayRenderer::SetCommsShortcuts(const std::array<std::wstring, 4>& labels) {
     commsShortcutLabels_ = labels;

@@ -23,6 +23,7 @@ class ServiceHealth:
         self._stop = threading.Event()
         self._values = {}
         self._local_ready = False
+        self.assistant_health = None
 
     def set(self, name, state, detail):
         with self._lock:
@@ -50,6 +51,10 @@ class ServiceHealth:
             check_json(base + "/models")
             return "good", "Speech server reachable"
         if name == "LLM":
+            if self.assistant_health is not None:
+                selected = self.assistant_health()
+                if selected is not None:
+                    return selected
             from .llm_client import OpenAiCompatibleClient, load_api_key
             if not OpenAiCompatibleClient().configured:
                 return "unknown", "Disabled or not configured"
@@ -58,16 +63,17 @@ class ServiceHealth:
             return "good", "API reachable; authentication accepted"
         if name == "STT":
             from .remote_stt import RemoteSttTranscriber
-            remote = isinstance(self.transcriber, RemoteSttTranscriber)
+            provider = (self.transcriber.current_provider() if hasattr(self.transcriber, "current_provider") else self.transcriber)
+            remote = isinstance(provider, RemoteSttTranscriber)
             if remote:
                 try:
-                    check_json(self.transcriber.health_endpoint, self.transcriber._headers())
+                    check_json(provider.health_endpoint, provider._headers())
                     return "good", "Remote speech recognition reachable"
                 except Exception:
-                    if self.transcriber.fallback is None:
+                    if provider.fallback is None:
                         return "offline", "Remote unavailable; no local fallback"
             if not self._local_ready:
-                local = self.transcriber.fallback if remote else self.transcriber
+                local = provider.fallback if remote else provider
                 local.warm()
                 self._local_ready = True
             return ("backup", "Remote unavailable; local recognition ready") if remote else ("good", "Local recognition ready")

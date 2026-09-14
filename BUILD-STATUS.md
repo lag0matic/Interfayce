@@ -1,6 +1,30 @@
 # Interfayce build status
 
-## Current checkpoint: 1.2.19
+## Validated checkpoint: 1.2.21
+
+Built and installed September 13, 2026. Overlay and resident service are running;
+authenticated health returns 200 ready and ASK reports Codex / READY. Installed
+native, service and recovery binaries match staging. Settings were preserved.
+Installer completed successfully without requiring a Windows restart.
+
+Includes the ASK and full-application review fixes, then a separate structural
+pass for native service transport, desktop input ownership, settings persistence
+and ASK rendering. See APPLICATION-REVIEW.md for findings and scope. Codex ASK
+retains the economical Luna default and Settings -> ASK model selection.
+
+Validation: 192 Python tests passed, one skipped. Release and production-preview
+builds passed. Native checks passed for input ownership/release/scroll targeting,
+click filtering, real mixed-DPI coordinates, decision geometry, artwork, battery
+estimation and private-window recovery. ASK preview visually checked. The maintainer confirmed a successful VR session with 1.2.21 and approved this
+checkpoint for GitHub. Occasional plausible STT word substitutions remain an
+observation; diagnostic recording is deferred. No new model turn was needed
+for the fix/refactor validation.
+
+Local checkpoints: d7efea8 (feature and review fixes), c26e109 (structural pass).
+Installer: packaging/out/installer/Interfayce-Setup-1.2.21.exe. SHA-256:
+88482CAF9101C5F39283FC525F7C171DB6AEC103A6C9118FC58B5F0404EF3EA4
+
+## Previous checkpoint: 1.2.19
 
 Built and installed September 12, 2026. Wrist scrolling and captured-app input on
 a 125% secondary monitor are confirmed working in VR by the maintainer.
