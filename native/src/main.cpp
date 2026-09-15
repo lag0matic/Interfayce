@@ -19,6 +19,7 @@ using interfayce::LocalHttpRequest;
 #include "desktop_surface_manager.h"
 #include "desktop_surface_registry.h"
 #include "desktop_input_blocking.h"
+#include "desktop_primary_gesture.h"
 #include "tray_icon.h"
 
 #include <algorithm>
@@ -1533,7 +1534,7 @@ int main(int argc, char** argv) {
     bool pressFeedbackActive = false;
     int rigResetHoldSegment = 0;
     int shutdownHoldSegment = 0;
-    std::optional<interfayce::DesktopSurfaceHit> activeDesktopPointer;
+    interfayce::DesktopPrimaryGesture desktopPrimaryGesture;
     std::optional<interfayce::DesktopSurfaceHit> activeDesktopSecondaryPointer;
     std::optional<uint64_t> activeScrollSurface;
     auto nextWristListScroll = std::chrono::steady_clock::now();
@@ -1901,7 +1902,7 @@ int main(int argc, char** argv) {
             && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
             const auto texture = renderer.Texture(); vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
         }
-        if (rightPointerRay && !panelHitFound) {
+        if (rightPointerRay && !(panelHitFound && !ttsSettings.wristRight)) {
             vr::VROverlayIntersectionParams_t rightRay{};
             rightRay.eOrigin = vr::TrackingUniverseStanding;
             rightRay.vSource = {{rightPointerRay->source.x, rightPointerRay->source.y,
@@ -1919,7 +1920,7 @@ int main(int argc, char** argv) {
             }
             desktopFrameHit = desktopSurfaces.FrameHitTest(rightRay);
         }
-        if (leftPointerRay && !panelHitFound) {
+        if (leftPointerRay && !(panelHitFound && ttsSettings.wristRight)) {
             vr::VROverlayIntersectionParams_t leftRay{};
             leftRay.eOrigin = vr::TrackingUniverseStanding;
             leftRay.vSource = {{leftPointerRay->source.x, leftPointerRay->source.y,
@@ -1927,7 +1928,7 @@ int main(int argc, char** argv) {
             leftRay.vDirection = {{leftPointerRay->direction.x, leftPointerRay->direction.y,
                 leftPointerRay->direction.z}};
             leftDesktopFrameHit = desktopSurfaces.FrameHitTest(leftRay);
-            leftDesktopSurfaceHit = desktopSurfaces.SurfaceAimHitTest(leftRay);
+            leftDesktopSurfaceHit = desktopSurfaces.HitTest(leftRay);
             leftKeyboardSurfaceHit = desktopSurfaces.KeyboardHitTest(leftRay);
             if (leftDesktopSurfaceHit && leftKeyboardSurfaceHit) {
                 if (leftKeyboardSurfaceHit->distance < leftDesktopSurfaceHit->distance) {
@@ -1937,7 +1938,9 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        desktopSurfaces.SetHoveredHit(desktopSurfaceHit);
+        desktopSurfaces.SetHoveredHit(desktopPrimaryGesture.Active()
+            && desktopPrimaryGesture.Owner() == interfayce::DesktopGrabHand::Left
+                ? leftDesktopSurfaceHit : desktopSurfaceHit ? desktopSurfaceHit : leftDesktopSurfaceHit);
         desktopSurfaces.SetHoveredKeyboard(
             keyboardSurfaceHit ? keyboardSurfaceHit : leftKeyboardSurfaceHit);
         const std::optional<uint64_t> rightAimSurface = keyboardSurfaceHit
@@ -2092,41 +2095,41 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         }
-        if (leftUiClick.bChanged && leftUiClick.bState && leftKeyboardSurfaceHit && !panelHitFound) {
-            if (desktopSurfaces.ActivateKeyboardHit(*leftKeyboardSurfaceHit)) {
-                vr::VRInput()->TriggerHapticVibrationAction(
-                    leftHapticAction, 0.0F, 0.035F, 115.0F, ttsSettings.hapticStrength,
-                    vr::k_ulInvalidInputValueHandle);
-            }
-        }
-        if (rightUiClick.bChanged && rightUiClick.bState && keyboardSurfaceHit && !panelHitFound) {
-            if (desktopSurfaces.ActivateKeyboardHit(*keyboardSurfaceHit)) {
-                vr::VRInput()->TriggerHapticVibrationAction(
-                    rightHapticAction, 0.0F, 0.035F, 115.0F, ttsSettings.hapticStrength,
-                    vr::k_ulInvalidInputValueHandle);
-            }
-        } else if (rightUiClick.bChanged && rightUiClick.bState && desktopSurfaceHit && !panelHitFound) {
-            if (desktopSurfaceHit->captured) {
-                if (desktopSurfaces.SendPointerEvent(*desktopSurfaceHit,
-                        interfayce::DesktopPointerEvent::PrimaryDown)) {
-                    activeDesktopPointer = desktopSurfaceHit;
+        const auto sendDesktopPointer = [&](const interfayce::DesktopSurfaceHit& hit,
+                                             interfayce::DesktopPointerEvent event) {
+            return desktopSurfaces.SendPointerEvent(hit, event);
+        };
+        for (const auto hand : {interfayce::DesktopGrabHand::Right, interfayce::DesktopGrabHand::Left}) {
+            const bool left = hand == interfayce::DesktopGrabHand::Left;
+            const auto& click = left ? leftUiClick : rightUiClick;
+            const auto& keyboard = left ? leftKeyboardSurfaceHit : keyboardSurfaceHit;
+            const auto& hit = left ? leftDesktopSurfaceHit : desktopSurfaceHit;
+            const bool wristBlocks = panelHitFound && (left == ttsSettings.wristRight);
+            if (!click.bActive || !click.bChanged || !click.bState || wristBlocks
+                || desktopPrimaryGesture.Active() || (left && activeDesktopSecondaryPointer)) continue;
+            if (keyboard) {
+                if (desktopSurfaces.ActivateKeyboardHit(*keyboard)) {
+                    vr::VRInput()->TriggerHapticVibrationAction(left ? leftHapticAction : rightHapticAction,
+                        0.0F, 0.035F, 115.0F, ttsSettings.hapticStrength, vr::k_ulInvalidInputValueHandle);
                 }
-            } else {
-                const auto selectedSource = desktopSurfaces.SourceForHit(*desktopSurfaceHit);
-                if (desktopSurfaces.ActivateHit(*desktopSurfaceHit)) {
-                    if (selectedSource) RecordDesktopRecent(*selectedSource);
-                    if (desktopSurfaceHit->sourceIndex) {
-                        desktopPanel.surfaces = desktopSurfaces.Summaries();
-                        std::cout << "Desktop source assigned to surface "
-                                  << desktopSurfaceHit->id << '\n';
+            } else if (hit) {
+                if (hit->captured) {
+                    desktopPrimaryGesture.Begin(hand, *hit, sendDesktopPointer);
+                } else {
+                    const auto selectedSource = desktopSurfaces.SourceForHit(*hit);
+                    if (desktopSurfaces.ActivateHit(*hit)) {
+                        if (selectedSource) RecordDesktopRecent(*selectedSource);
+                        if (hit->sourceIndex) desktopPanel.surfaces = desktopSurfaces.Summaries();
+                    } else if (hit->sourceIndex || hit->pageDelta != 0) {
+                        std::cerr << "Could not start selected desktop capture\n";
                     }
-                } else if (desktopSurfaceHit->sourceIndex || desktopSurfaceHit->pageDelta != 0) {
-                    std::cerr << "Could not start selected desktop capture\n";
                 }
             }
         }
         if (rightSecondaryClick.bChanged && rightSecondaryClick.bState
-            && desktopSurfaceHit && desktopSurfaceHit->captured && !panelHitFound) {
+            && desktopSurfaceHit && desktopSurfaceHit->captured
+            && !(panelHitFound && !ttsSettings.wristRight)
+            && (!desktopPrimaryGesture.Active() || desktopPrimaryGesture.Owner() == interfayce::DesktopGrabHand::Right)) {
             if (desktopSurfaces.SendPointerEvent(*desktopSurfaceHit,
                     interfayce::DesktopPointerEvent::SecondaryDown)) {
                 activeDesktopSecondaryPointer = desktopSurfaceHit;
@@ -2573,17 +2576,12 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         }
-        if (rightUiClick.bState && activeDesktopPointer && desktopSurfaceHit
-            && desktopSurfaceHit->captured && desktopSurfaceHit->id == activeDesktopPointer->id) {
-            activeDesktopPointer = desktopSurfaceHit;
-            desktopSurfaces.SendPointerEvent(*activeDesktopPointer,
-                interfayce::DesktopPointerEvent::Move);
-        }
-        if (rightUiClick.bChanged && !rightUiClick.bState && activeDesktopPointer) {
-            desktopSurfaces.SendPointerEvent(*activeDesktopPointer,
-                interfayce::DesktopPointerEvent::PrimaryUp);
-            activeDesktopPointer.reset();
-        }
+        desktopPrimaryGesture.Update(interfayce::DesktopGrabHand::Left,
+            leftUiClick.bActive && leftUiClick.bState && leftPointerRay.has_value(),
+            leftDesktopSurfaceHit, sendDesktopPointer);
+        desktopPrimaryGesture.Update(interfayce::DesktopGrabHand::Right,
+            rightUiClick.bActive && rightUiClick.bState && rightPointerRay.has_value(),
+            desktopSurfaceHit, sendDesktopPointer);
         if (rightSecondaryClick.bState && activeDesktopSecondaryPointer && desktopSurfaceHit
             && desktopSurfaceHit->captured
             && desktopSurfaceHit->id == activeDesktopSecondaryPointer->id) {
@@ -2624,7 +2622,7 @@ int main(int argc, char** argv) {
             }
         }
         if (desktopSurfaceHit && desktopSurfaceHit->captured && rightSurfaceScroll.bActive
-            && !leftSurfaceGrab.bState && !rightSurfaceGrab.bState && !rightUiClick.bState
+            && !leftSurfaceGrab.bState && !rightSurfaceGrab.bState && !rightUiClick.bState && !leftUiClick.bState
             && !rightSecondaryClick.bState) {
             if (!activeScrollSurface || *activeScrollSurface != desktopSurfaceHit->id) {
                 activeScrollSurface = desktopSurfaceHit->id;

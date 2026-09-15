@@ -1,5 +1,19 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.24
+
+Fixes left-hand desktop clicks: both triggers now use the same captured-window
+and source-picker path. The hand starting a primary press owns its drag through
+release; the other hand cannot steal or release it. Losing tracking also releases
+the press. Wrist occlusion is evaluated for the actual pointing hand.
+
+Native Release build and primary gesture, input ownership, input blocking and
+click filter regressions passed. Installed September 15, 2026; in-headset left-hand
+verification remains necessary. User confirmed 1.2.23 input blocking works.
+Overlay/service running; health 200 ready; installed binaries match staging and
+settings preserved. Installer SHA256:
+483766C9DE98470FDE04373A79E17B3037D941D54B277FF578DF159E80E3EA0C.
+
 ## Installed candidate: 1.2.23
 
 Adds a persistent BLOCK GAME INPUT toggle in the DESK wrist footer, visible on
