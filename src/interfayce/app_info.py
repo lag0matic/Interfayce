@@ -29,7 +29,7 @@ def _read_version() -> str:
                 return value
         except OSError:
             continue
-    return "1.2.22"
+    return "1.2.23"
 
 
 APP_VERSION = _read_version()

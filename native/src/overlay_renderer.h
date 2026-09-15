@@ -18,6 +18,8 @@
 namespace interfayce {
 
 struct DesktopPanelState {
+    bool blockGameInput{};
+    bool inputBlockingAvailable{};
     bool showSurfaceList{};
     size_t firstSurface{};
     std::vector<DesktopSurfaceSummary> surfaces;

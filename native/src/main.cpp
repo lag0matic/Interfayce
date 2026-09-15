@@ -18,6 +18,7 @@ using interfayce::LocalHttpRequest;
 #include "broadcast_controller.h"
 #include "desktop_surface_manager.h"
 #include "desktop_surface_registry.h"
+#include "desktop_input_blocking.h"
 #include "tray_icon.h"
 
 #include <algorithm>
@@ -1257,6 +1258,15 @@ int main(int argc, char** argv) {
     }
 
     if (probeOnly) {
+        std::array<vr::VRActiveActionSet_t, 2> probeSets{};
+        for (size_t hand = 0; hand < probeSets.size(); ++hand) {
+            probeSets[hand].ulActionSet = actionSet;
+            vr::VRInput()->GetInputSourceHandle(hand == 0 ? "/user/hand/left" : "/user/hand/right",
+                &probeSets[hand].ulRestrictedToDevice);
+        }
+        const auto priorityProbe = vr::VRInput()->UpdateActionState(probeSets.data(), sizeof(probeSets[0]), 2);
+        std::cout << "Per-hand input action sets: " << priorityProbe << '\n';
+        if (priorityProbe != vr::VRInputError_None) { vr::VR_Shutdown(); return 1; }
         std::cout << "Interfayce native overlay probe completed.\n";
         vr::VR_Shutdown();
         return actionError == vr::VRInputError_None && actionSetError == vr::VRInputError_None
@@ -1453,6 +1463,12 @@ int main(int argc, char** argv) {
     bool musicPlaying = false;
     std::wstring desktopLine = DesktopSurfaceLine(0);
     interfayce::DesktopPanelState desktopPanel;
+    interfayce::DesktopInputBlocking desktopInputBlocking;
+    desktopInputBlocking.Initialize();
+    desktopPanel.blockGameInput = desktopInputBlocking.Enabled();
+    desktopPanel.inputBlockingAvailable = desktopInputBlocking.Available();
+    std::array<bool, 2> desktopInputHeld{};
+    auto nextInputBlockingPoll = std::chrono::steady_clock::now();
     std::array<DesktopFavorite, 3> desktopFavorites;
     std::wstring rigLine;
     std::array<std::wstring, 8> rigSlots;
@@ -1621,11 +1637,41 @@ int main(int argc, char** argv) {
                 : (std::max)(targetAlpha, wristAlpha - fadeStep);
             vr::VROverlay()->SetOverlayAlpha(wristOverlay, wristAlpha);
         }
-        vr::VRActiveActionSet_t activeSet{};
-        activeSet.ulActionSet = actionSet;
-        activeSet.ulRestrictedToDevice = vr::k_ulInvalidInputValueHandle;
-        activeSet.nPriority = 0;
-        const auto updateError = vr::VRInput()->UpdateActionState(&activeSet, sizeof(activeSet), 1);
+        if (std::chrono::steady_clock::now() >= nextInputBlockingPoll) {
+            nextInputBlockingPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            desktopInputBlocking.Refresh();
+            if (desktopPanel.blockGameInput != desktopInputBlocking.Enabled()
+                || desktopPanel.inputBlockingAvailable != desktopInputBlocking.Available()) {
+                desktopPanel.blockGameInput = desktopInputBlocking.Enabled();
+                desktopPanel.inputBlockingAvailable = desktopInputBlocking.Available();
+                if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto texture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
+                }
+            }
+        }
+        // Determine aim before submitting action priorities, so entering a
+        // surface and pressing in this frame does not use last frame's hover.
+        const auto rightPointerRay = ReadPointerRay(system, DragHand::Right, rightPointerPoseAction);
+        const auto leftPointerRay = ReadPointerRay(system, DragHand::Left, leftPointerPoseAction);
+        const auto hoveringDesktop = [&](const std::optional<PointerRay>& pointer, bool wristHand) {
+            if (!pointer) return false;
+            vr::VROverlayIntersectionParams_t ray{};
+            ray.eOrigin = vr::TrackingUniverseStanding;
+            ray.vSource = {{pointer->source.x, pointer->source.y, pointer->source.z}};
+            ray.vDirection = {{pointer->direction.x, pointer->direction.y, pointer->direction.z}};
+            vr::VROverlayIntersectionResults_t wristHit{};
+            if (wristHand && wristAlpha >= 0.30F
+                && vr::VROverlay()->ComputeOverlayIntersection(wristOverlay, &ray, &wristHit))
+                return selectedDeck == 1;
+            return desktopSurfaces.HitTest(ray).has_value()
+                || desktopSurfaces.KeyboardHitTest(ray).has_value()
+                || desktopSurfaces.FrameHitTest(ray).has_value();
+        };
+        const auto updateError = desktopInputBlocking.UpdateInput(system, actionSet,
+            {leftPointerRay.has_value(), rightPointerRay.has_value()},
+            {hoveringDesktop(leftPointerRay, ttsSettings.wristRight),
+             hoveringDesktop(rightPointerRay, !ttsSettings.wristRight)}, desktopInputHeld);
 
         vr::InputDigitalActionData_t leftDrag{};
         vr::InputDigitalActionData_t rightDrag{};
@@ -1651,6 +1697,12 @@ int main(int argc, char** argv) {
             sizeof(rightSurfaceScroll), vr::k_ulInvalidInputValueHandle);
         vr::VRInput()->GetDigitalActionData(rightSecondaryClickAction, &rightSecondaryClick,
             sizeof(rightSecondaryClick), vr::k_ulInvalidInputValueHandle);
+        desktopInputHeld[0] = (leftUiClick.bActive && leftUiClick.bState)
+            || (leftSurfaceGrab.bActive && leftSurfaceGrab.bState) || (leftDrag.bActive && leftDrag.bState);
+        desktopInputHeld[1] = (rightUiClick.bActive && rightUiClick.bState)
+            || (rightSecondaryClick.bActive && rightSecondaryClick.bState)
+            || (rightSurfaceGrab.bActive && rightSurfaceGrab.bState) || (rightDrag.bActive && rightDrag.bState)
+            || (rightSurfaceScroll.bActive && (std::abs(rightSurfaceScroll.x) > 0.2F || std::abs(rightSurfaceScroll.y) > 0.2F));
         const auto& wristUiClick = ttsSettings.wristRight ? leftUiClick : rightUiClick;
         if (!printedInputDiagnostics) {
             std::array<vr::VRInputValueHandle_t, 16> leftOrigins{};
@@ -1714,6 +1766,7 @@ int main(int argc, char** argv) {
         bool broadcastGainUpHit = false;
         bool songAnnounceHit = false;
         bool desktopSettingsHit = false;
+        bool desktopInputBlockHit = false;
         bool shutdownButtonHit = false;
         std::optional<size_t> desktopBringIndex;
         std::optional<size_t> desktopLockIndex;
@@ -1757,6 +1810,7 @@ int main(int argc, char** argv) {
                     const float dy = y - centerY;
                     return dx * dx + dy * dy <= radius * radius;
                 };
+                desktopInputBlockHit = selectedDeck == 1 && interfayce::DesktopBlockButton::Contains(x, y);
                 const auto restoreX = x - 199.0F;
                 const auto restoreY = y - 250.0F;
                 restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
@@ -1847,8 +1901,6 @@ int main(int argc, char** argv) {
             && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
             const auto texture = renderer.Texture(); vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
         }
-        const auto rightPointerRay = ReadPointerRay(
-            system, DragHand::Right, rightPointerPoseAction);
         if (rightPointerRay && !panelHitFound) {
             vr::VROverlayIntersectionParams_t rightRay{};
             rightRay.eOrigin = vr::TrackingUniverseStanding;
@@ -1867,8 +1919,6 @@ int main(int argc, char** argv) {
             }
             desktopFrameHit = desktopSurfaces.FrameHitTest(rightRay);
         }
-        const auto leftPointerRay = ReadPointerRay(
-            system, DragHand::Left, leftPointerPoseAction);
         if (leftPointerRay && !panelHitFound) {
             vr::VROverlayIntersectionParams_t leftRay{};
             leftRay.eOrigin = vr::TrackingUniverseStanding;
@@ -1921,7 +1971,7 @@ int main(int argc, char** argv) {
             || assistantMicHit || assistantCancelHit || assistantClearHit || assistantSwitchHit || assistantStopHit
             || ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit || desktopSettingsHit
             || broadcastGainDownHit || broadcastGainUpHit || songAnnounceHit
-            || shutdownButtonHit;
+            || shutdownButtonHit || desktopInputBlockHit;
         if (panelHitFound) {
             vr::VROverlay()->SetOverlayWidthInMeters(cursorOverlay, 0.0035F);
             vr::VROverlay()->SetOverlaySortOrder(cursorOverlay, 11);
@@ -2362,6 +2412,9 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && desktopInputBlockHit) {
+            desktopInputBlocking.Toggle();
+            nextInputBlockingPoll = std::chrono::steady_clock::now();
         } else if (wristUiClick.bChanged && wristUiClick.bState && desktopSettingsHit) {
             if (!LaunchDesktopSettings(directory, projectRoot)) {
                 std::cerr << "Could not launch the desktop settings window.\n";

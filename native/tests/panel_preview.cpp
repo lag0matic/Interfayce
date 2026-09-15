@@ -24,7 +24,10 @@ int wmain(int argc, wchar_t** argv) {
     for (int deck = 0; deck < 7; ++deck) {
         interfayce::DesktopPanelState desktop;
         if (deck == 1) {
-            desktop.showSurfaceList = true;
+            const std::wstring mode = argc == 4 ? argv[3] : L"";
+            desktop.showSurfaceList = mode != L"blocking-home";
+            desktop.blockGameInput = mode == L"blocking-home" || mode == L"blocking-list" || mode == L"blocking-unavailable";
+            desktop.inputBlockingAvailable = mode != L"blocking-unavailable";
             desktop.firstSurface = 2;
             for (int index = 0; index < 7; ++index) {
                 interfayce::DesktopSurfaceSummary surface{};

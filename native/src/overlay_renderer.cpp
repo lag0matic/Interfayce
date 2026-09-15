@@ -1,4 +1,5 @@
 #include "panel_layout.h"
+#include "desktop_input_blocking.h"
 #include "overlay_renderer.h"
 #include "holo_glyph.h"
 
@@ -798,8 +799,16 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         }
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
-        drawText(musicLine, labelFormat_.Get(), D2D1::RectF(48, 350, 606, 374),
+        drawText(musicLine, labelFormat_.Get(), D2D1::RectF(48, 350, 410, 374),
             mutedTextBrush_.Get());
+        const auto blockBounds = D2D1::RectF(DesktopBlockButton::Left, DesktopBlockButton::Top,
+            DesktopBlockButton::Right, DesktopBlockButton::Bottom);
+        const auto blockBrush = desktop.blockGameInput && desktop.inputBlockingAvailable
+            ? accentBrush_.Get() : structureBrush_.Get();
+        d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(blockBounds, 6, 6), blockBrush, 1.2F);
+        drawText(!desktop.blockGameInput ? L"BLOCK GAME INPUT: OFF"
+                : desktop.inputBlockingAvailable ? L"BLOCK GAME INPUT: ON" : L"BLOCK GAME: UNAVAILABLE",
+            labelFormat_.Get(), D2D1::RectF(434, 350, 720, 374), blockBrush);
     } else if (deck == 3) {
         if (!slimeAvailable_) {
             d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(92, 242), 9, 9),

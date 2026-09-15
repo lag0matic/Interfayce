@@ -1,5 +1,29 @@
 # Interfayce build status
 
+## Candidate: 1.2.23
+
+Adds a persistent BLOCK GAME INPUT toggle in the DESK wrist footer, visible on
+both the home and window-list views. Default Off. Turning it On enables SteamVR's
+globalActionSetPriority prerequisite and selectively raises the Interfayce action
+set priority for the hand aiming at a desktop surface, keyboard, frame, or DESK
+wrist view. This covers sources bound to Interfayce, not every controller input.
+Ownership lasts through held clicks, grabs and scrolling, including pointer drift;
+tracking loss, unavailable support and app exit release the claim. Off uses the
+original unrestricted input path once held interactions finish.
+
+The preference is stored through SteamVR settings in com.lag0matic.interfayce /
+desktopBlockGameInput. Turning it off leaves SteamVR's general overlay support
+available to other apps. A disabled prerequisite or rejected priority update shows
+UNAVAILABLE; rejected input updates fall back to ordinary controls. Windows mouse
+injection is a separate path and is not blocked by SteamVR action priority.
+
+Validation: native Release and production preview builds passed; ownership tests
+cover Off, unavailable support, independent hands, dragging out, toggling off
+while held, release and tracking loss. SteamVR accepted the per-hand action-set
+probe (error 0). Footer previews checked. 193 Python tests passed, one skipped.
+Packaging/install validation is in progress. Actual VRChat suppression needs an
+in-headset test with the toggle enabled.
+
 ## Installed candidate: 1.2.22
 
 Adds approximately 200 ms of microphone capture after releasing chatbox
