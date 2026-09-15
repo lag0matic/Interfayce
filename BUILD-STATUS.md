@@ -1,6 +1,6 @@
 # Interfayce build status
 
-## Candidate: 1.2.23
+## Installed candidate: 1.2.23
 
 Adds a persistent BLOCK GAME INPUT toggle in the DESK wrist footer, visible on
 both the home and window-list views. Default Off. Turning it On enables SteamVR's
@@ -21,8 +21,10 @@ Validation: native Release and production preview builds passed; ownership tests
 cover Off, unavailable support, independent hands, dragging out, toggling off
 while held, release and tracking loss. SteamVR accepted the per-hand action-set
 probe (error 0). Footer previews checked. 193 Python tests passed, one skipped.
-Packaging/install validation is in progress. Actual VRChat suppression needs an
-in-headset test with the toggle enabled.
+Installed September 15, 2026: overlay and service running, health 200 ready,
+installed binaries match staging, settings preserved. Actual VRChat suppression
+needs an in-headset test with the toggle enabled.
+Installer SHA256: 5163ADBE75BEA4EDB9EE2272B08B2E586DD5F335BA772B5D3A1290DAE23FB193.
 
 ## Installed candidate: 1.2.22
 
