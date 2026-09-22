@@ -231,7 +231,7 @@ class SpotifyWebApi:
         return refresh_token(self.client_id, token) if token.needs_refresh else token
 
     def request(self, method: str, path: str, *, query: dict[str, str | int] | None = None,
-                body: dict[str, Any] | None = None) -> Any:
+                body: dict[str, Any] | None = None, expect_json: bool = True) -> Any:
         token = self._valid_token()
         url = API_URL + path
         if query:
@@ -244,6 +244,8 @@ class SpotifyWebApi:
         try:
             with urlopen(request, timeout=15.0) as response:
                 data = response.read()
+                if not expect_json:
+                    return None
                 return None if not data else json.loads(data.decode("utf-8"))
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
@@ -316,4 +318,6 @@ class SpotifyWebApi:
         query: dict[str, str | int] = {"state": str(enabled).lower()}
         if device_id:
             query["device_id"] = device_id
-        self.request("PUT", "/me/player/shuffle", query=query)
+        # Successful shuffle replies can contain an opaque plain-text body.
+        # The HTTP status acknowledges this command; there is no JSON payload to use.
+        self.request("PUT", "/me/player/shuffle", query=query, expect_json=False)

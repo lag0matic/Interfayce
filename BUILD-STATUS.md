@@ -1,5 +1,20 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.27
+
+Confirmed the shuffle warning's cause against live Spotify: shuffle returned HTTP
+200 with an opaque plain-text body and no Content-Type, which the generic API
+handler tried to decode as JSON. Shuffle now treats successful HTTP completion
+as acknowledgment without parsing that body. HTTP errors still propagate; read
+endpoints continue to require JSON. The 1.2.26 no-retry protection remains.
+
+201 tests passed, one skipped; native Release passed. Reapplying the current live
+shuffle setting succeeded with the fix without changing playback or the setting.
+Regressions cover text/empty successful responses, HTTP rejection, and strict
+JSON parsing for reads. Installed September 22, 2026: health 200 ready, settings
+preserved, installed binaries match stage, overlay/service running.
+Installer SHA256: 0FEA9A45F8326F1E191209B5F834A0EF2D153FE99F287DAF9CC0FA07B3458218.
+
 ## Installed candidate: 1.2.26
 
 Fixes planner retries after Spotify command dispatch: an unreadable response can
