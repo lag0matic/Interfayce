@@ -6,6 +6,42 @@ from interfayce.music_conversation import run_music_request
 from interfayce.voice import parse_music_intent, MusicIntentKind
 
 class MusicConversationTests(unittest.TestCase):
+    def test_shuffle_failure_does_not_replay_or_report_missing_music(self):
+        from interfayce.spotify_oauth import SpotifyOAuthError
+        for failure in (ValueError("invalid response"), SpotifyOAuthError("shuffle unavailable")):
+            with self.subTest(failure=type(failure).__name__):
+                api = self.api()
+                api.search.return_value = {"playlists": {"items": [
+                    {"name": "Chillstep", "uri": "spotify:playlist:chill", "artists": None}]}}
+                api.set_shuffle.side_effect = failure
+                result, client, api = self.run_actions([
+                    {"tool": "search", "type": "playlist", "query": "chillstep"},
+                    {"tool": "select", "index": 0, "shuffle": True}], api=api)
+                self.assertTrue(result.succeeded)
+                self.assertEqual(result.message, "Playing Chillstep. I couldn't update shuffle.")
+                api.start_playback.assert_called_once()
+                self.assertEqual(client.chat_json.call_count, 2)
+
+    def test_unreadable_playback_response_does_not_retry_command(self):
+        api = self.api()
+        api.start_playback.side_effect = ValueError("unreadable response after dispatch")
+        result, client, api = self.run_actions([
+            {"tool": "search", "type": "track", "query": "Muse"},
+            {"tool": "select", "index": 0}], api=api)
+        self.assertFalse(result.succeeded)
+        self.assertIn("haven't retried", result.message)
+        api.start_playback.assert_called_once()
+        self.assertEqual(client.chat_json.call_count, 2)
+
+    def test_unreadable_next_response_does_not_skip_multiple_tracks(self):
+        api = self.api()
+        api.next.side_effect = ValueError("unreadable response")
+        result, client, api = self.run_actions([
+            {"tool": "control", "command": "next"}], api=api)
+        self.assertFalse(result.succeeded)
+        api.next.assert_called_once()
+        self.assertEqual(client.chat_json.call_count, 1)
+
     def test_genre_playlist_selection_uses_description_and_real_context(self):
         api = self.api()
         api.search.return_value = {"playlists": {"items": [None,

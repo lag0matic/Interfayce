@@ -4,10 +4,18 @@ from __future__ import annotations
 import json
 import html
 import re
+import logging
 
 from .llm_client import OpenAiCompatibleClient
 from .music_llm import LlmMusicResult, execute_music_llm_intent, validate_music_intent
-from .spotify_oauth import SpotifyWebApi
+from .spotify_oauth import SpotifyWebApi, SpotifyOAuthError
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _artists(entry):
+    return [str(a.get("name", ""))[:120] for a in (entry.get("artists") or [])
+            if isinstance(a, dict)][:5]
 
 PROMPT = """You control the user's personal Spotify player from a deliberately pressed
 Music microphone. Interpret casual speech generously, including transcription
@@ -54,7 +62,7 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
     item = state.get("item") or {}
     playback = {
         "title": str(item.get("name", ""))[:200],
-        "artists": [str(a.get("name", ""))[:120] for a in item.get("artists", [])[:5]],
+        "artists": _artists(item),
         "playing": state.get("is_playing"),
         "volume": (state.get("device") or {}).get("volume_percent"),
     }
@@ -65,6 +73,7 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
             "request": transcript[:2000], "history": (context or [])[-3:],
             "playback": playback, "observations": observations,
         }, ensure_ascii=False))
+        action_started = False
         try:
             action = json.loads(response.content)
             if not isinstance(action, dict):
@@ -89,7 +98,7 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
                     rows.append({"index": index, "name": str(entry.get("name", ""))[:200],
                                  "type": kind,
                                  "description": html.unescape(re.sub(r"<[^>]*>", "", str(entry.get("description") or "")))[:500],
-                                 "artists": [str(a.get("name", ""))[:120] for a in entry.get("artists", [])[:5]],
+                                 "artists": _artists(entry),
                                  "album": str((entry.get("album") or {}).get("name", ""))[:200]})
                 observations.append({"query": query, "results": rows})
                 continue
@@ -104,6 +113,12 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
                 device, _name = _active_device(api)
                 if not device:
                     return LlmMusicResult(False, "Open Spotify on a playback device first.")
+                name = str(chosen.get("name") or "your selection")
+                artists = ", ".join(_artists(chosen)[:3])
+                message = "Playing " + name + (" by " + artists if artists else "") + "."
+                # Once an action is dispatched, an error cannot safely be retried:
+                # Spotify may have applied it even if its response was unreadable.
+                action_started = True
                 if kind == "track":
                     album_uri = (chosen.get("album") or {}).get("uri")
                     if isinstance(album_uri, str) and album_uri.startswith("spotify:album:"):
@@ -113,18 +128,26 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
                         api.start_playback(uri=chosen["uri"], device_id=device)
                 else:
                     api.start_playback(context_uri=chosen["uri"], device_id=device)
-                    api.set_shuffle(shuffle, device_id=device)
-                name = str(chosen.get("name", "your selection"))
-                artists = ", ".join(str(a.get("name", "")) for a in chosen.get("artists", [])[:3])
-                return LlmMusicResult(True, "Playing " + name + (" by " + artists if artists else "") + ".")
+                    try:
+                        api.set_shuffle(shuffle, device_id=device)
+                    except (SpotifyOAuthError, ValueError, TypeError, OSError) as error:
+                        LOGGER.warning("Music playback started; shuffle update failed: %s", type(error).__name__)
+                        message += " I couldn't update shuffle."
+                return LlmMusicResult(True, message)
             if tool in {"control", "status"}:
-                return execute_music_llm_intent(validate_music_intent(action), api)
+                intent = validate_music_intent(action)
+                action_started = tool == "control"
+                return execute_music_llm_intent(intent, api)
             if tool == "liked":
+                action_started = True
                 return execute_music_llm_intent(validate_music_intent({
                     "tool": "play", "type": "playlist", "query": "liked songs"}), api)
             if tool == "reply" and isinstance(action.get("message"), str) and action["message"].strip():
                 return LlmMusicResult(False, action["message"].strip()[:400])
             raise ValueError("Choose a supported action or ask a short clarification")
         except (ValueError, TypeError) as error:
+            LOGGER.warning("Music action error: dispatched=%s error=%s", action_started, type(error).__name__)
+            if action_started:
+                return LlmMusicResult(False, "Spotify may have applied that command, but I couldn't confirm it. I haven't retried it.")
             observations.append({"action_error": str(error)[:200]})
     return LlmMusicResult(False, "I couldn't find a suitable match. Try another style, playlist, artist, or song.")

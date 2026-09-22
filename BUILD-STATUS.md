@@ -1,5 +1,21 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.26
+
+Fixes planner retries after Spotify command dispatch: an unreadable response can
+no longer cause repeated playback or repeated skips. After confirmed playback,
+a shuffle failure returns playback success with a separate shuffle warning.
+Artist metadata tolerates nulls, and acknowledgment text is prepared before play.
+Diagnostic logs record exception class and whether an action was dispatched.
+
+198 tests passed, one skipped; native Release passed. New regressions cover
+shuffle errors after successful play, uncertain playback responses, and uncertain
+next-track responses. Original live exception was not logged, so its exact trigger
+is unconfirmed; the retry path matching the observed repeats is fixed.
+Installed September 22, 2026: health 200 ready, overlay/service running, settings
+preserved, and installed binaries match stage. Await live VR confirmation.
+Installer SHA256: 8313732845034F8624BF19A7B6307C49F696F59F73AB988D7AABC3F5362399F6.
+
 ## Installed candidate: 1.2.25
 
 Music voice requests now explicitly interpret genres, moods and activities as
