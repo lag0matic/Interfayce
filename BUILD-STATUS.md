@@ -1,5 +1,22 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.25
+
+Music voice requests now explicitly interpret genres, moods and activities as
+playlist searches, selecting a suitable result with shuffle unless requested
+otherwise. Named songs retain track searches. Playlist descriptions are supplied
+as bounded plain text to help selection, and failed searches no longer demand
+a specific song or artist.
+
+195 Python tests passed, one skipped; native Release build passed. Added playlist
+selection and empty-result retry coverage, including shuffle preference and
+conversation context. The configured live LLM correctly routed synthwave and
+mellow instrumental requests to playlists and Hysteria by Muse to tracks; no
+Spotify playback was changed during that check. Installed September 22, 2026:
+overlay/service running, health 200 ready, staged binaries match installed,
+settings preserved. In-headset genre playback confirmation pending.
+Installer SHA256: 752AC78196FF527380BB8EAD2F914660E02BC2463E2D00A41B2BA957E0402DA7.
+
 ## Installed candidate: 1.2.24
 
 Fixes left-hand desktop clicks: both triggers now use the same captured-window
