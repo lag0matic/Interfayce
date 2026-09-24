@@ -40,6 +40,7 @@ set_target_properties(openvr_api PROPERTIES
 add_executable(InterfayceOverlay
     "${CMAKE_BINARY_DIR}/interfayce.rc"
     src/main.cpp
+    src/performance_monitor.cpp
     src/local_service_client.cpp
     src/artwork_cache.cpp
     src/broadcast_controller.cpp
@@ -149,3 +150,7 @@ target_compile_features(InterfayceArtworkCacheTests PRIVATE cxx_std_20)
 add_executable(InterfayceDesktopClickTests tests/desktop_click_filter_tests.cpp)
 target_include_directories(InterfayceDesktopClickTests PRIVATE src)
 target_compile_features(InterfayceDesktopClickTests PRIVATE cxx_std_20)
+
+add_executable(InterfaycePerformanceProbe tests/performance_probe.cpp src/performance_monitor.cpp)
+target_include_directories(InterfaycePerformanceProbe PRIVATE src)
+target_compile_features(InterfaycePerformanceProbe PRIVATE cxx_std_20)

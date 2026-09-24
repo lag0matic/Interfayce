@@ -1,5 +1,28 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.28
+
+Adds a 28-pixel CPU/GPU/VRAM/RAM row between tabs and service lights. The panel
+is 768x452; existing content sizes and relative hit targets are preserved.
+Status hover regions move with the status strip. Values use neutral colors and
+fixed columns; RAM and VRAM are used/total (GiB quantities labeled GB).
+
+Native PerformanceMonitor uses one worker, direct Windows CPU/RAM APIs and the
+installed NVIDIA NVML driver. Selects the NVIDIA adapter with most VRAM (RTX5080
+on this machine), excluding AMD integrated/virtual adapters. Polls every second
+visible, five seconds hidden; missing/failed reads show --. No sensors, helper
+processes, network requests, per-frame sampling or history logging.
+
+201 Python tests passed, one skipped; native Release and production previews
+passed. Input blocking/layout checks passed. Live probe returned all four values.
+After warmup, process CPU time was below timer resolution over 10s (not zero-cost).
+Cached production redraw/submission averaged 0.36ms across 100 iterations; this
+is a desktop preview measurement, not a complete VR frame-time benchmark.
+Music/Desktop/ASK previews inspected; VRAM label clipping corrected.
+Installed and launched September 24, 2026: health 200 ready, settings preserved,
+installed binaries match staging. User headset verification pending.
+Installer SHA256: C098F2F42DDD011CF01D75B70B0A668CA6A325861762808106AF997B3081E539.
+
 ## Installed candidate: 1.2.27
 
 Confirmed the shuffle warning's cause against live Spotify: shuffle returned HTTP

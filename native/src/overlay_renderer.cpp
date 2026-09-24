@@ -459,7 +459,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     d2dContext_->BeginDraw();
     d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     d2dContext_->Clear(D2D1::ColorF(0.0F, 0.0F, 0.0F, 0.0F));
-    const auto panelBounds = D2D1::RectF(6.0F, 6.0F, 762.0F, 418.0F);
+    const auto panelBounds = D2D1::RectF(6.0F, 6.0F, 762.0F, static_cast<float>(panel::Height) - 6.0F);
     d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(panelBounds, 16.0F, 16.0F), glassBrush_.Get());
     d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(panelBounds, 16.0F, 16.0F),
         structureDimBrush_.Get(), 1.0F);
@@ -1248,6 +1248,13 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         }
     }
     d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+    const std::array<const wchar_t*, 4> metricLabels{L"CPU", L"GPU", L"VRAM", L"RAM"};
+    for (size_t i = 0; i < metricLabels.size(); ++i) {
+        const float left = 28 + static_cast<float>(i) * 181;
+        drawText(metricLabels[i], labelFormat_.Get(), D2D1::RectF(left, 86, left + 60, 110), mutedTextBrush_.Get());
+        drawText(performanceText_[i], labelFormat_.Get(), D2D1::RectF(left + 62, 86, left + 179, 110), textBrush_.Get());
+    }
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Translation(0, panel::MetricsHeight));
     const auto statusBounds = D2D1::RectF(20, 85, 748, 120);
     d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(statusBounds, 5, 5), stripBrush_.Get());
     d2dContext_->DrawLine(D2D1::Point2F(24, 120), D2D1::Point2F(744, 120), structureDimBrush_.Get(), 1);
@@ -1282,6 +1289,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(labels[statusHover_] + L": " + details[statusHover_], labelFormat_.Get(),
                  D2D1::RectF(152, 128, 732, 156), textBrush_.Get());
     }
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     if (pressFeedbackActive_) {
         d2dContext_->FillEllipse(D2D1::Ellipse(pressFeedbackCenter_, 15, 15), scanFillBrush_.Get());
         d2dContext_->DrawEllipse(D2D1::Ellipse(pressFeedbackCenter_, 21, 21), accentBrush_.Get(), 1.5F);

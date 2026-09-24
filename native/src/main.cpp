@@ -1,4 +1,5 @@
 #include "panel_layout.h"
+#include "performance_monitor.h"
 #include "local_service_client.h"
 using interfayce::LocalHttpRequest;
 #include "assistant_panel_layout.h"
@@ -1520,6 +1521,8 @@ int main(int argc, char** argv) {
         UserCacheFile(L"battery-discharge-rates.tsv"));
     std::wstring batteryEstimateText;
     int displayedLowestBattery = -1;
+    interfayce::PerformanceMonitor performanceMonitor;
+    std::array<std::wstring, 4> lastPerformance{};
     auto nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     bool restoreHoldActive = false;
     int restoreHoldSegment = 0;
@@ -1594,7 +1597,11 @@ int main(int argc, char** argv) {
         if (std::chrono::steady_clock::now() >= nextClockPoll) {
             nextClockPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             const auto updatedClock = LocalClockText();
-            if (updatedClock != clockText) {
+            performanceMonitor.SetVisible(wristAlpha >= 0.30F);
+            const auto performance = performanceMonitor.Snapshot();
+            if (updatedClock != clockText || (wristAlpha >= 0.30F && performance != lastPerformance)) {
+                lastPerformance = performance;
+                renderer.SetPerformance(performance);
                 clockText = updatedClock;
                 renderer.SetClockText(clockText);
                 if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine,
@@ -1802,7 +1809,7 @@ int main(int argc, char** argv) {
                 const auto x = panelHit.vUVs.v[0] * 768.0F;
                 const auto physicalY = (1.0F - panelHit.vUVs.v[1]) * interfayce::panel::Height;
                 const auto y = interfayce::panel::ContentY(physicalY);
-                if (physicalY >= 85 && physicalY <= 120 && x >= 140 && x < 610)
+                if (physicalY >= 85 + interfayce::panel::MetricsHeight && physicalY <= 120 + interfayce::panel::MetricsHeight && x >= 140 && x < 610)
                     statusHover = static_cast<int>((x - 140) / 94);
                 panelX = x;
                 panelY = physicalY;

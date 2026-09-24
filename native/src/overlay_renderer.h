@@ -52,6 +52,7 @@ public:
     void SetRigHoldProgress(float resetProgress, float mountProgress);
     void SetServiceStatus(const std::wstring& wire) { serviceStatus_ = wire; }
     bool SetStatusHover(int index) { if (statusHover_ == index) return false; statusHover_ = index; return true; }
+    void SetPerformance(const std::array<std::wstring, 4>& text) { performanceText_ = text; }
     void SetClockText(const std::wstring& text);
     void SetControllerCharging(const std::array<bool, 2>& charging);
     void SetBatteryEstimate(const std::wstring& text, int lowestPercent);
@@ -108,6 +109,7 @@ private:
     bool playspaceAdjusted_{};
     float playspaceHoldProgress_{};
     bool slimeAvailable_{};
+    std::array<std::wstring, 4> performanceText_{L"--", L"--", L"--", L"--"};
     std::wstring serviceStatus_;
     int statusHover_{-1};
     std::wstring musicVoiceStatus_{L"VOICE READY"};

@@ -2,6 +2,7 @@
 #include <wincodec.h>
 #include <filesystem>
 #include <iostream>
+#include <chrono>
 
 // Render the actual production panel without a headset or running overlay.
 int wmain(int argc, wchar_t** argv) {
@@ -13,6 +14,7 @@ int wmain(int argc, wchar_t** argv) {
     renderer.SetRigBodyArtPath((root / L"assets/ui/rig-body-scanner.png").wstring());
     renderer.SetPlayspaceResetArtPath((root / L"assets/ui/playspace-reset.png").wstring());
     renderer.SetBatteryEstimate(L"4h 20m", 65);
+    renderer.SetPerformance({L"32%", L"91%", L"12.0/16 GB", L"24.0/64 GB"});
     renderer.SetClockText(L"8:42 PM");
     renderer.SetSlimeAvailable(true);
     renderer.SetMusicPlaying(true);
@@ -75,4 +77,11 @@ int wmain(int argc, wchar_t** argv) {
         if (FAILED(hr)) return 7;
     }
     std::cout << "Rendered seven production panels.\n";
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i) {
+        renderer.SetPerformance({std::to_wstring(i) + L"%", L"91%", L"12.0/16 GB", L"24.0/64 GB"});
+        if (!renderer.Initialize(nullptr, 0, L"Persevere / Gang of Youths")) return 8;
+    }
+    std::cout << "Average cached panel redraw/submission ms: "
+              << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / 100 << '\n';
 }

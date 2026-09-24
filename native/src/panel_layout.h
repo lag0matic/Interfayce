@@ -2,8 +2,9 @@
 
 namespace interfayce::panel {
 inline constexpr unsigned Width = 768;
-inline constexpr unsigned Height = 424;
-inline constexpr float ContentOffset = 40;
+inline constexpr unsigned Height = 452;
+inline constexpr float ContentOffset = 68;
+inline constexpr float MetricsHeight = 28;
 inline constexpr float HeaderBottom = 82;
 inline constexpr float ContentTop = HeaderBottom + ContentOffset;
 // The status row is deliberately outside every existing content hit target.
@@ -12,5 +13,5 @@ constexpr float ContentY(float y) {
 }
 static_assert(ContentY(49) == 49);
 static_assert(ContentY(102) == -1000);
-static_assert(ContentY(327) == 287);
+static_assert(ContentY(355) == 287);
 }
