@@ -38,7 +38,7 @@ public:
     void SetMusicVoiceStatus(const std::wstring& status, bool active);
     void SetMusicPlaying(bool playing);
     void SetMusicBroadcastState(bool active, const std::wstring& status);
-    void SetMusicBroadcastSource(bool chrome);
+    void SetMusicBroadcastSource(int source);
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetAssistantStatus(const std::wstring& status, const std::wstring& transcript,
                             const std::wstring& response, bool active);
@@ -117,7 +117,7 @@ private:
     bool musicPlaying_{};
     bool musicBroadcastActive_{};
     std::wstring musicBroadcastStatus_{L"BROADCAST OFF"};
-    bool musicBroadcastChrome_{};
+    int musicBroadcastSource_{};
     std::wstring commsStatus_{L"IDLE"};
     std::wstring commsTranscript_;
     bool commsActive_{};

@@ -37,6 +37,7 @@ class AppSettings:
     broadcast_gain_db: float = 12.0
     playspace_travel_limit_meters: float = 10.0
     spotify_client_id: str = ""
+    music_provider: str = "spotify"
     song_announce_enabled: bool = True
     llm_enabled: bool = False
     llm_endpoint: str = ""
@@ -157,6 +158,7 @@ def _clamp(settings: AppSettings) -> AppSettings:
         playspace_travel_limit_meters=max(
             1.0, min(50.0, float(settings.playspace_travel_limit_meters))),
         spotify_client_id=str(settings.spotify_client_id).strip(),
+        music_provider="youtube" if settings.music_provider == "youtube" else "spotify",
         song_announce_enabled=bool(settings.song_announce_enabled),
         llm_enabled=bool(settings.llm_enabled),
         llm_endpoint=str(settings.llm_endpoint).strip().rstrip("/"),
@@ -198,6 +200,7 @@ def load_settings() -> AppSettings:
                 playspace_travel_limit_meters=data.get(
                     "playspace_travel_limit_meters", 10.0),
                 spotify_client_id=data.get("spotify_client_id", ""),
+                music_provider=data.get("music_provider", "spotify"),
                 song_announce_enabled=data.get("song_announce_enabled", True),
                 llm_enabled=data.get("llm_enabled", False),
                 llm_endpoint=data.get("llm_endpoint", ""),
@@ -350,6 +353,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               stt_model: str | None = None,
                               playspace_travel_limit_meters: float | None = None,
                               codex_model: str | None = None,
+                              music_provider: str | None = None,
                               baseline: AppSettings | None = None) -> AppSettings:
     current = load_settings()
     candidate = _clamp(replace(
@@ -370,6 +374,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         playspace_travel_limit_meters=(current.playspace_travel_limit_meters
             if playspace_travel_limit_meters is None else playspace_travel_limit_meters),
         spotify_client_id=spotify_client_id,
+        music_provider=current.music_provider if music_provider is None else music_provider,
         llm_enabled=llm_enabled,
         llm_endpoint=llm_endpoint,
         llm_model=llm_model,
@@ -434,4 +439,4 @@ def settings_wire_text(settings: AppSettings | None = None) -> str:
             f"{current.wrist_offset_z:.3f}\t{current.wrist_pitch:.1f}\t"
             f"{current.wrist_yaw:.1f}\t{current.wrist_roll:.1f}\t"
             f"{current.playspace_travel_limit_meters:.1f}\t"
-            f"{int(current.song_announce_enabled)}")
+            f"{int(current.song_announce_enabled)}\t{current.music_provider}")

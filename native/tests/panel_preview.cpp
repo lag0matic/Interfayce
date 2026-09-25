@@ -18,6 +18,7 @@ int wmain(int argc, wchar_t** argv) {
     renderer.SetClockText(L"8:42 PM");
     renderer.SetSlimeAvailable(true);
     renderer.SetMusicPlaying(true);
+    if (argc == 4 && std::wstring(argv[3]) == L"youtube") renderer.SetMusicBroadcastSource(2);
     renderer.SetAssistantStatus(L"CODEX / ANSWER", L"What should we try next?",
         L"We could find a quiet world, put on some music, and see where the evening goes.\n\n"
         L"I can keep our conversation going while you are in VR. Scroll here with the thumbstick to read longer replies.", false);

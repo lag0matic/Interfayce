@@ -36,14 +36,14 @@ Interfayce is developed with substantial AI assistance. Lag0Matic supplies the o
 - Mixed-DPI input mapping supports applications on monitors with different scaling.
 - Closing an overlay surface does **not** close its underlying application.
 
-### Music and Spotify
+### Music players
 
 - Play/pause, previous, next, current-track status, and local media-session control.
 - Optional Spotify OAuth with PKCE for search, volume, and natural-language requests.
 - Optional OpenAI-compatible LLM control with playback context, conversational follow-ups, Spotify search-result selection, and relative volume changes.
 - Optional spoken responses through an OpenAI-compatible Kokoro TTS server.
 - Current-track announcements through the VRChat OSC chatbox. Announcements wait behind Interfayce chat messages for their 30-second lifetime, then display for seven seconds; your next message takes priority. Only the latest queued track is announced.
-- Optional Spotify-only broadcast to VRChat through VB-CABLE, with an independent gain control.
+- Optional Spotify, Chrome, or YouTube Music broadcast to VRChat through VB-CABLE, with an independent gain control.
 
 Basic transport and track status use the Windows media session and do not require Spotify OAuth. Search, direct playback requests, and Spotify volume control do.
 
@@ -87,7 +87,8 @@ Basic transport and track status use the Windows media session and do not requir
 | SlimeVR Server | Tracker batteries, mount readiness, and rig controls |
 | Spotify desktop app | Music status and local transport |
 | Spotify developer application | Search, direct playback, and volume through OAuth |
-| VB-CABLE | Broadcasting Spotify audio into VRChat |
+| Pear Desktop / YouTube Music | Optional YouTube Music playback, with API Server enabled |
+| VB-CABLE | Broadcasting selected app audio into VRChat |
 | Kokoro or compatible TTS server | Spoken assistant responses and warnings |
 | OpenAI-compatible LLM provider | Natural-language Spotify control and ASK |
 | Brave Search API | Current web research in ASK |
@@ -139,6 +140,35 @@ Non-secret settings are stored in:
 
 Credentials and OAuth tokens are stored separately using Windows DPAPI under the current Windows account. API keys, tokens, personal endpoints, and LAN addresses are not built into the application or installer.
 
+### YouTube Music (Pear Desktop)
+
+Install [Pear Desktop](https://github.com/pear-devs/pear-desktop), sign in to
+YouTube Music, and enable its API Server plugin on port 26538. Keep authentication
+on; using hostname `127.0.0.1` confines API access to this PC. In Interfayce
+Settings → Integrations, connect YouTube Music, approve the request in Pear,
+select **YouTube Music (Pear)**, and click Apply. Authorization is protected with
+Windows DPAPI; no YouTube credentials or browser cookies are copied.
+
+The selected provider supplies wrist transport, artwork, track information, and
+OSC song announcements. Announcements retain the existing chatbox queue and
+seven-second lifetime. The first observed song establishes the baseline; later
+stable song changes announce when enabled. If Pear was already playing when its
+API plugin was enabled, advance a track once to populate its metadata cache.
+
+Voice supports transport, volume, named songs, and genre/mood searches for long
+mixes. Search selections are grounded in actual playable results. Playlist,
+album, liked-song, shuffle, and radio parity with Spotify is not implemented.
+Pear's queue is preserved; unconfirmed mutations are never retried automatically.
+
+Broadcasting is independent of the selected music provider: the source button
+cycles Spotify → Chrome → YouTube. The initial source follows the music provider;
+changing providers in Settings does not change an already chosen broadcast source.
+The app-specific capture, VB-CABLE output, and independent broadcast gain are
+shared by all three sources. Normal listening output is still configured in
+Windows. Pear must remain running for playback and control.
+
+Tested with Pear/YouTube Music 3.12.0. Its unofficial API may change across versions.
+
 ### Spotify OAuth
 
 Create or reuse a Spotify developer application with Web API access and register this exact redirect URI:
@@ -171,7 +201,7 @@ The packaged app includes local Parakeet STT, so speech recognition works withou
 
 Keep the remote server on a trusted LAN; do not expose its port directly to the internet. Enter its URL, model, and generated API key in Settings.
 
-### Spotify broadcast through VB-CABLE
+### Music broadcast through VB-CABLE
 
 1. Install the production VB-CABLE driver and reboot if requested.
 2. Select `CABLE Output (VB-Audio Virtual Cable)` as VRChat's microphone.
@@ -257,7 +287,7 @@ Confirm SlimeVR Server is running and listening on its normal local service port
 
 ### Broadcast is silent
 
-Confirm VRChat is listening to `CABLE Output`, Windows has not muted the cable input, and Spotify itself is playing. The broadcast control captures Spotify specifically rather than all desktop audio.
+Confirm VRChat is listening to `CABLE Output`, Windows has not muted the cable input, and the selected broadcast app is playing. The broadcast control captures the selected app specifically rather than all desktop audio.
 
 ### SteamVR input changed unexpectedly
 

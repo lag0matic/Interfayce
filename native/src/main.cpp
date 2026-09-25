@@ -472,7 +472,7 @@ void RecordDesktopRecent(const interfayce::DesktopSource& source) {
     }).detach();
 }
 
-void LaunchSpotifyControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
+void LaunchMusicControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
     static_cast<void>(projectRoot);
     std::string operationPath;
     for (const auto* character = operation; *character; ++character) {
@@ -488,10 +488,10 @@ struct MusicPlaybackState {
     std::optional<std::string> artwork;
 };
 
-MusicPlaybackState ReadSpotifyNowPlaying(const std::filesystem::path& projectRoot) {
+MusicPlaybackState ReadMusicNowPlaying(const std::filesystem::path& projectRoot) {
     static_cast<void>(projectRoot);
     const auto response = LocalHttpRequest("GET", "/music/current", std::chrono::seconds(2));
-    if (!response || response->empty()) return {};
+    if (!response || response->empty()) return {L"No track from selected player", false, std::string{}};
     const auto statusEnd = response->find('\t');
     const auto artistEnd = statusEnd == std::string::npos
         ? std::string::npos : response->find('\t', statusEnd + 1);
@@ -519,6 +519,7 @@ struct TtsSettingsState {
     float wristRoll{};
     float playspaceTravelLimitMeters{10.0F};
     bool songAnnounceEnabled{true};
+    bool youtubeMusic{};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
@@ -548,6 +549,7 @@ std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
         if (fields.size() > 12) state.playspaceTravelLimitMeters =
             std::clamp(std::stof(fields[12]), 1.0F, 50.0F);
         if (fields.size() > 13) state.songAnnounceEnabled = fields[13] != "0";
+        if (fields.size() > 14) state.youtubeMusic = fields[14] == "youtube";
         return state;
     } catch (...) {
         return std::nullopt;
@@ -1007,11 +1009,11 @@ int main(int argc, char** argv) {
         const auto root = ProjectRoot(ExecutableDirectory(argv[0]));
         const bool slimeAvailable = SlimeAdapterAvailable(root)
             && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
-        const bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
+        const bool musicAvailable = (IsProcessRunning(L"Spotify.exe") || IsProcessRunning(L"YouTube Music.exe"));
         std::cout << "SLIMEVR\t" << (slimeAvailable ? "available" : "offline")
                   << "\t127.0.0.1:21110\n"
-                  << "SPOTIFY\t" << (spotifyAvailable ? "running" : "offline")
-                  << "\tSpotify.exe\n";
+                  << "MUSIC\t" << (musicAvailable ? "running" : "offline")
+                  << "\tSpotify.exe / YouTube Music.exe\n";
         CoUninitialize();
         return 0;
     }
@@ -1173,11 +1175,11 @@ int main(int argc, char** argv) {
     }
     bool slimeAvailable = SlimeAdapterAvailable(projectRoot)
         && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
-    bool spotifyAvailable = IsProcessRunning(L"Spotify.exe");
-    const std::wstring initialMusicLine = spotifyAvailable
-        ? L"Loading Spotify..." : L"Spotify is not running";
+    bool musicAvailable = (IsProcessRunning(L"Spotify.exe") || IsProcessRunning(L"YouTube Music.exe"));
+    const std::wstring initialMusicLine = musicAvailable
+        ? L"Loading music..." : L"Open your music player";
     std::cout << "startup capabilities: SlimeVR=" << (slimeAvailable ? "available" : "offline")
-              << " Spotify=" << (spotifyAvailable ? "running" : "offline") << '\n';
+              << " Music=" << (musicAvailable ? "running" : "offline") << '\n';
     vr::VRApplications()->IdentifyApplication(GetCurrentProcessId(), kAppKey);
     const auto actionError = vr::VRInput()->SetActionManifestPath(actionManifest.string().c_str());
     if (actionError != vr::VRInputError_None) {
@@ -1245,15 +1247,23 @@ int main(int argc, char** argv) {
     renderer.SetAssistantStatus(
         voiceServiceAvailable ? L"READY" : L"VOICE WARMING", L"", L"", false);
     TtsSettingsState ttsSettings;
+    bool initialBroadcastSourcePending = true;
     if (voiceServiceAvailable) {
-        if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
+        if (const auto loaded = ReadTtsSettings()) {
+            ttsSettings = *loaded;
+            initialBroadcastSourcePending = false;
+        }
     }
     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
     renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
     renderer.SetBroadcastGainDb(static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
     broadcast.SetGainDb(ttsSettings.broadcastGainDb);
+    if (ttsSettings.youtubeMusic) {
+        broadcast.SetSource(interfayce::BroadcastSource::YouTubeMusic);
+        renderer.SetMusicBroadcastSource(2);
+    }
     if (!rawPanel && !renderer.Initialize(system, 0, initialMusicLine,
-            spotifyAvailable ? musicArtPath.wstring() : L"")) {
+            musicAvailable ? musicArtPath.wstring() : L"")) {
         std::cerr << "Could not initialize the Interfayce D3D11 panel texture.\n";
         vr::VR_Shutdown();
         return 1;
@@ -1827,9 +1837,9 @@ int main(int argc, char** argv) {
                 musicBroadcastHit = selectedDeck == 0 && circleHit(520, 145, 35);
                 musicBroadcastSourceHit = selectedDeck == 0
                     && x >= 365.0F && x <= 482.0F && y >= 181.0F && y <= 213.0F;
-                musicPreviousHit = selectedDeck == 0 && spotifyAvailable && circleHit(140, 287, 39);
-                musicToggleHit = selectedDeck == 0 && spotifyAvailable && circleHit(384, 287, 49);
-                musicNextHit = selectedDeck == 0 && spotifyAvailable && circleHit(628, 287, 39);
+                musicPreviousHit = selectedDeck == 0 && musicAvailable && circleHit(140, 287, 39);
+                musicToggleHit = selectedDeck == 0 && musicAvailable && circleHit(384, 287, 49);
+                musicNextHit = selectedDeck == 0 && musicAvailable && circleHit(628, 287, 39);
                 commsClearHit = selectedDeck == 5 && circleHit(560, 285, 40);
                 if (selectedDeck == 5 && y >= 198.0F && y <= 236.0F) {
                     constexpr std::array<float, 4> shortcutLeft{42, 218, 394, 570};
@@ -2165,14 +2175,14 @@ int main(int argc, char** argv) {
                 : panelX < 363.0F ? 6 : panelX < 477.0F ? 1
                 : panelX < 591.0F ? 2 : panelX < 705.0F ? 3 : 4;
             if (requestedDeck == 0) {
-                spotifyAvailable = IsProcessRunning(L"Spotify.exe");
-                if (spotifyAvailable) {
-                    if (musicLine.empty() || musicLine == L"Spotify is not running") {
-                        musicLine = L"Loading Spotify...";
+                musicAvailable = (IsProcessRunning(L"Spotify.exe") || IsProcessRunning(L"YouTube Music.exe"));
+                if (musicAvailable) {
+                    if (musicLine.empty() || musicLine == L"Open your music player") {
+                        musicLine = L"Loading music...";
                     }
                     nextMusicPoll = std::chrono::steady_clock::now();
                 } else {
-                    musicLine = L"Spotify is not running";
+                    musicLine = L"Open your music player";
                 }
             }
             if (requestedDeck == 1) {
@@ -2220,7 +2230,7 @@ int main(int argc, char** argv) {
             }
             if (requestedDeck != selectedDeck && renderer.Initialize(
                     system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
-                    requestedDeck == 0 && !spotifyAvailable ? L"" : musicArtPath.wstring(),
+                    requestedDeck == 0 && !musicAvailable ? L"" : musicArtPath.wstring(),
                     rigLine, rigSlots, mountReady, desktopPanel)) {
                 selectedDeck = requestedDeck;
                 desktopSurfaces.SetDeckVisible(selectedDeck == 1);
@@ -2233,12 +2243,14 @@ int main(int argc, char** argv) {
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && musicBroadcastSourceHit) {
+            initialBroadcastSourcePending = false;
             if (broadcast.Enabled()) broadcast.Stop();
             const auto nextSource = broadcast.Source() == interfayce::BroadcastSource::Spotify
                 ? interfayce::BroadcastSource::Chrome
-                : interfayce::BroadcastSource::Spotify;
+                : broadcast.Source() == interfayce::BroadcastSource::Chrome
+                ? interfayce::BroadcastSource::YouTubeMusic : interfayce::BroadcastSource::Spotify;
             broadcast.SetSource(nextSource);
-            renderer.SetMusicBroadcastSource(nextSource == interfayce::BroadcastSource::Chrome);
+            renderer.SetMusicBroadcastSource(static_cast<int>(nextSource));
             renderer.SetMusicBroadcastState(false, broadcast.StatusText());
             if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                     rigLine, rigSlots, mountReady, desktopPanel)) {
@@ -2246,13 +2258,15 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && musicBroadcastHit) {
+            initialBroadcastSourcePending = false;
             if (broadcast.Enabled()) {
                 broadcast.Stop();
                 renderer.SetMusicBroadcastState(false, broadcast.StatusText());
             } else if (!IsProcessRunning(broadcast.SourceProcessName())) {
                 renderer.SetMusicBroadcastState(false,
                     broadcast.Source() == interfayce::BroadcastSource::Chrome
-                        ? L"CHROME OFFLINE" : L"SPOTIFY OFFLINE");
+                        ? L"CHROME OFFLINE" : broadcast.Source() == interfayce::BroadcastSource::YouTubeMusic
+                        ? L"YOUTUBE OFFLINE" : L"SPOTIFY OFFLINE");
             } else {
                 std::wstring error;
                 if (!broadcast.Start(error)) {
@@ -2442,11 +2456,11 @@ int main(int argc, char** argv) {
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (musicPreviousHit || musicToggleHit || musicNextHit)) {
             if (musicPreviousHit) {
-                LaunchSpotifyControl(projectRoot, L"previous");
+                LaunchMusicControl(projectRoot, L"previous");
             } else if (musicToggleHit) {
-                LaunchSpotifyControl(projectRoot, L"toggle");
+                LaunchMusicControl(projectRoot, L"toggle");
             } else if (musicNextHit) {
-                LaunchSpotifyControl(projectRoot, L"next");
+                LaunchMusicControl(projectRoot, L"next");
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && desktopFavoriteHit) {
             const auto& favorite = desktopFavorites[*desktopFavoriteHit];
@@ -2713,13 +2727,13 @@ int main(int argc, char** argv) {
                 }
             }
             if (!musicPoll.valid() && musicNow >= nextMusicPoll) {
-                const bool spotifyRunningNow = IsProcessRunning(L"Spotify.exe");
+                const bool spotifyRunningNow = (IsProcessRunning(L"Spotify.exe") || IsProcessRunning(L"YouTube Music.exe"));
                 if (!spotifyRunningNow) {
-                    spotifyAvailable = false;
+                    musicAvailable = false;
                     musicPlaying = false;
                     renderer.SetMusicPlaying(false);
                     nextMusicPoll = musicNow + std::chrono::seconds(2);
-                    const std::wstring unavailable = L"Spotify is not running";
+                    const std::wstring unavailable = L"Open your music player";
                     if (musicLine != unavailable && renderer.Initialize(system, selectedDeck,
                             unavailable, L"", rigLine, rigSlots, mountReady, desktopPanel)) {
                         musicLine = unavailable;
@@ -2727,9 +2741,9 @@ int main(int argc, char** argv) {
                         vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                     }
                 } else {
-                    spotifyAvailable = true;
+                    musicAvailable = true;
                     musicPoll = std::async(std::launch::async,
-                        [projectRoot] { return ReadSpotifyNowPlaying(projectRoot); });
+                        [projectRoot] { return ReadMusicNowPlaying(projectRoot); });
                 }
             }
         }
@@ -2865,6 +2879,13 @@ int main(int argc, char** argv) {
         if (settingsPoll.valid() && settingsPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             nextRuntimeSettingsPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             if (const auto loaded = settingsPoll.get()) {
+                const bool broadcastSourceChanged = initialBroadcastSourcePending;
+                if (initialBroadcastSourcePending) {
+                    initialBroadcastSourcePending = false;
+                    broadcast.SetSource(loaded->youtubeMusic
+                        ? interfayce::BroadcastSource::YouTubeMusic : interfayce::BroadcastSource::Spotify);
+                    renderer.SetMusicBroadcastSource(static_cast<int>(broadcast.Source()));
+                }
                 const bool wristDisplayChanged = loaded->volumePercent != ttsSettings.volumePercent
                     || loaded->muted != ttsSettings.muted
                     || loaded->broadcastGainDb != ttsSettings.broadcastGainDb
@@ -2877,7 +2898,7 @@ int main(int argc, char** argv) {
                     wristTransform = ConfiguredWristTransform(ttsSettings);
                     wristAttached = attachWristOverlay();
                 }
-                if (selectedDeck == 4 && wristDisplayChanged) {
+                if ((selectedDeck == 4 && wristDisplayChanged) || broadcastSourceChanged) {
                     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
                     renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
                     renderer.SetBroadcastGainDb(

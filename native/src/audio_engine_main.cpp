@@ -80,7 +80,9 @@ int main(int argc, char** argv) {
         && std::string_view(argv[1]) == "--broadcast-spotify";
     const bool chromeBroadcast = argc > 1
         && std::string_view(argv[1]) == "--broadcast-chrome";
-    const bool applicationBroadcast = spotifyBroadcast || chromeBroadcast;
+    const bool youtubeBroadcast = argc > 1
+        && std::string_view(argv[1]) == "--broadcast-youtube-music";
+    const bool applicationBroadcast = spotifyBroadcast || chromeBroadcast || youtubeBroadcast;
     const bool listRenderEndpoints = argc > 1
         && std::string_view(argv[1]) == "--list-render-endpoints";
     if (listRenderEndpoints) {
@@ -96,6 +98,7 @@ int main(int argc, char** argv) {
                   << "  --probe-process <process-id> [seconds]\n"
                   << "  --broadcast-spotify [seconds] [--gain-db -24..24]\n"
                   << "  --broadcast-chrome [seconds] [--gain-db -24..24]\n"
+                  << "  --broadcast-youtube-music [seconds] [--gain-db -24..24]\n"
                   << "  --list-render-endpoints\n";
         uninitialize();
         return 0;
@@ -107,8 +110,8 @@ int main(int argc, char** argv) {
     if (spotifyProbe || applicationBroadcast) {
         const bool chrome = chromeBroadcast;
         targetProcess = interfayce::FindProcessTreeRoot(
-            chrome ? L"chrome.exe" : L"Spotify.exe");
-        heading = chrome ? "CHROME_INTERFAYCE_BROADCAST"
+            chrome ? L"chrome.exe" : youtubeBroadcast ? L"YouTube Music.exe" : L"Spotify.exe");
+        heading = youtubeBroadcast ? "YOUTUBE_INTERFAYCE_BROADCAST" : chrome ? "CHROME_INTERFAYCE_BROADCAST"
             : spotifyBroadcast ? "SPOTIFY_INTERFAYCE_BROADCAST"
             : "SPOTIFY_PROCESS_LOOPBACK";
     } else if (argc > 2) {
@@ -125,6 +128,7 @@ int main(int argc, char** argv) {
         std::cerr << ((spotifyProbe || applicationBroadcast)
             ? (chromeBroadcast
                 ? "Chrome is not running; no audio process tree is available.\n"
+                : youtubeBroadcast ? "YouTube Music is not running; no audio process tree is available.\n"
                 : "Spotify is not running; no audio process tree is available.\n")
             : "Usage: --probe-process <process-id> [seconds]\n");
         uninitialize();

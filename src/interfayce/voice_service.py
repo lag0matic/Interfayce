@@ -34,7 +34,9 @@ from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
 from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
-from .windows_media import WindowsSpotifyMedia
+from .music_provider import SelectedMusicMedia
+from .pear_music import PearError
+from .pear_conversation import run_pear_request
 
 
 DEFAULT_PORT = 43817
@@ -129,7 +131,7 @@ class VoiceRuntime:
             self.transcriber, self.command_lock, cue=play_capture_cue,
             result_cue=play_result_cue, osc=self.chatbox)
         self.battery_alerts = BatteryAlertMonitor()
-        self._song_media = WindowsSpotifyMedia()
+        self._song_media = SelectedMusicMedia()
         self._song_read_failure_logged = False
         self.song_announcer = ResidentSongAnnouncer(
             self._read_current_song,
@@ -305,7 +307,7 @@ class VoiceRuntime:
             track = asyncio.run(self._song_media.current_track())
             self._song_read_failure_logged = False
             self.health.set("SPOTIFY", "good" if track is not None else "offline",
-                            "Media session available" if track is not None else "No Spotify media session")
+                            "Media session available" if track is not None else "No selected music session")
             return track
         except Exception:
             self.health.set("SPOTIFY", "offline", "Media session unavailable")
@@ -359,16 +361,17 @@ class VoiceRuntime:
             if OpenAiCompatibleClient().configured:
                 try:
                     action = "llm:conversation"
-                    result = run_music_request(
+                    music_request = run_pear_request if load_settings().music_provider == "youtube" else run_music_request
+                    result = music_request(
                         transcript, context=self.music_conversation.recent())
                 except (LlmError, MusicLlmValidationError) as error:
                     LOGGER.warning("LLM music fallback rejected: %s", error)
                     result = MusicCommandResult(False, "I couldn't understand that request. Could you phrase it another way?")
-                except SpotifyOAuthError as error:
+                except (SpotifyOAuthError, PearError) as error:
                     LOGGER.warning("Spotify OAuth action failed: %s", error)
-                    result = MusicCommandResult(False, "Spotify rejected that command.")
+                    result = MusicCommandResult(False, str(error) if isinstance(error, PearError) else "Spotify rejected that command.")
             else:
-                result = asyncio.run(execute_music_intent(intent))
+                result = asyncio.run(execute_music_intent(intent, self._song_media))
             LOGGER.info("Music command completed: succeeded=%s response_chars=%s",
                         result.succeeded, len(result.message))
             self.music_conversation.remember(
@@ -384,7 +387,7 @@ class VoiceRuntime:
 
     def current_music(self) -> str:
         try:
-            track, playing = asyncio.run(WindowsSpotifyMedia().current_track_and_playback())
+            track, playing = asyncio.run(self._song_media.current_track_and_playback())
             return "" if track is None else (
                 f"{'PLAYING' if playing else 'PAUSED'}\t"
                 f"{_safe_field(track.artist)}\t{_safe_field(track.title)}")
@@ -393,7 +396,7 @@ class VoiceRuntime:
             return ""
 
     def music_control(self, operation: str) -> bool:
-        media = WindowsSpotifyMedia()
+        media = self._song_media
         actions = {
             "previous": media.previous_track,
             "toggle": media.toggle_play_pause,
@@ -412,7 +415,7 @@ class VoiceRuntime:
 
     def music_art(self) -> bytes:
         try:
-            return asyncio.run(WindowsSpotifyMedia().current_art_bytes()) or b""
+            return asyncio.run(self._song_media.current_art_bytes()) or b""
         except Exception:
             LOGGER.exception("Music artwork query failed")
             return b""

@@ -602,7 +602,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             buttonBrush_.Get());
         d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(sourceRect, 8, 8),
             musicBroadcastActive_ ? accentBrush_.Get() : structureDimBrush_.Get(), 1.4F);
-        drawText(musicBroadcastChrome_ ? L"CHROME" : L"SPOTIFY", labelFormat_.Get(),
+        drawText(musicBroadcastSource_ == 2 ? L"YOUTUBE" : musicBroadcastSource_ == 1 ? L"CHROME" : L"SPOTIFY", labelFormat_.Get(),
             D2D1::RectF(378, 185, 472, 210),
             musicBroadcastActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
@@ -1276,6 +1276,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             states[i] = row.substr(first + 1, second - first - 1); details[i] = row.substr(second + 1);
         }
     }
+    labels[3] = L"MUSIC";
     for (size_t i = 0; i < labels.size(); ++i) {
         const float left = 140 + static_cast<float>(i) * 94;
         auto* brush = states[i] == L"good" ? chargingBrush_.Get() : states[i] == L"backup" ? warningBrush_.Get()
@@ -1383,8 +1384,8 @@ void OverlayRenderer::SetBatteryEstimate(const std::wstring& text, int lowestPer
     lowestBatteryPercent_ = lowestPercent < 0 ? -1 : (std::min)(100, lowestPercent);
 }
 
-void OverlayRenderer::SetMusicBroadcastSource(bool chrome) {
-    musicBroadcastChrome_ = chrome;
+void OverlayRenderer::SetMusicBroadcastSource(int source) {
+    musicBroadcastSource_ = source;
 }
 
 void OverlayRenderer::SetSongAnnounceEnabled(bool enabled) {

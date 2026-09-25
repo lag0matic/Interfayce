@@ -106,6 +106,8 @@ class SettingsWindow:
         self.tts_model = tk.StringVar(value=current.tts_model)
         self.tts_voice = tk.StringVar(value=current.tts_voice)
         self.spotify_client_id = tk.StringVar(value=current.spotify_client_id)
+        self.music_provider = tk.StringVar(value="YouTube Music (Pear)" if current.music_provider == "youtube" else "Spotify")
+        self.pear_status = tk.StringVar(value="Enable API Server in Pear, then connect here.")
         self.llm_enabled = tk.BooleanVar(value=current.llm_enabled)
         self.llm_endpoint = tk.StringVar(value=current.llm_endpoint)
         self.llm_model = tk.StringVar(value=current.llm_model)
@@ -409,7 +411,14 @@ class SettingsWindow:
         threading.Thread(target=work, name='CodexModels', daemon=True).start()
 
     def _build_integrations(self, panel: ttk.Frame) -> None:
-        row = self._section(panel, 0, "SPOTIFY OAUTH")
+        row = self._section(panel, 0, "MUSIC PLAYER")
+        ttk.Label(panel, text="Music provider", style="Panel.TLabel").grid(row=row, column=0, sticky="w")
+        ttk.Combobox(panel, textvariable=self.music_provider, state="readonly",
+                     values=("Spotify", "YouTube Music (Pear)")).grid(row=row, column=1, sticky="ew")
+        row += 1
+        ttk.Button(panel, text="Connect YouTube Music", command=self.connect_pear).grid(row=row, column=1, sticky="e")
+        ttk.Label(panel, textvariable=self.pear_status, style="Muted.Panel.TLabel").grid(row=row + 1, column=0, columnspan=2, sticky="w")
+        row = self._section(panel, row + 2, "SPOTIFY OAUTH")
         row = self._entry_row(panel, row, "Client ID", self.spotify_client_id)
         ttk.Label(panel, textvariable=self.spotify_status, style="Muted.Panel.TLabel").grid(
             row=row, column=0, sticky="w")
@@ -760,6 +769,7 @@ class SettingsWindow:
             broadcast_gain_db=round(self.broadcast_gain.get()),
             playspace_travel_limit_meters=self.playspace_travel_limit.get(),
             spotify_client_id=self.spotify_client_id.get(),
+            music_provider="youtube" if self.music_provider.get() == "YouTube Music (Pear)" else "spotify",
             llm_enabled=self.llm_enabled.get(),
             llm_endpoint=llm_endpoint,
             llm_model=self.llm_model.get(),
@@ -843,6 +853,21 @@ class SettingsWindow:
         self.brave_key.set("")
         self._refresh_integration_status()
         self.save_status.set("Brave Search key removed")
+
+    def connect_pear(self) -> None:
+        from .pear_music import connect, PearError
+        self.pear_status.set("Approve Interfayce in the YouTube Music window.")
+        def work():
+            try:
+                connect()
+                message = "Connected. Choose YouTube Music above and click Apply."
+            except PearError as error:
+                message = str(error)
+            try:
+                self.root.after(0, lambda: self.pear_status.set(message))
+            except RuntimeError:
+                pass
+        threading.Thread(target=work, name="PearConnect", daemon=True).start()
 
     def connect_spotify(self) -> None:
         if not self._persist():

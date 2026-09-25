@@ -1,5 +1,29 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.29 — YouTube Music via Pear Desktop
+
+Adds a Settings music-provider selector and authenticated local Pear API support.
+YouTube Music supplies transport, artwork, and the existing OSC song announcement
+pipeline. Spotify and Chrome broadcast choices remain; YouTube adds a third
+app-only capture source using the same VB-CABLE output and broadcast gain.
+The service indicator is labeled MUSIC. Voice supports real search-result song
+selection and long mixes, transport and absolute volume. Playlist/album/radio,
+liked-song, and shuffle parity are intentionally not included in this version.
+
+212 Python tests passed, one skipped. Native Release build passed and the
+production wrist preview was inspected. Live Pear 3.12.0 checks passed for
+next-track, search playback, pause/resume, metadata and artwork. Its process
+capture returned 48 kHz stereo with no discontinuities during the 3-second probe.
+No live VRChat broadcast was triggered by these checks. Headset validation remains.
+Installed and restarted September 25, 2026. Installer exit 0; existing settings
+were preserved. Only music_provider was then changed to youtube; announcements
+remain enabled. Overlay, audio engine, recovery helper and frozen service hashes
+match staging. Installed health returned 200 ready; current track and 150354-byte
+artwork came from Pear. Exactly one overlay and service were observed.
+Installer SHA256: E330F134A47C29DC1D8E0D90968371FD28E38CDDB3CD8D4F2E331C071EC79613.
+An initial installer compilation was superseded before installation to include
+cold-start broadcast-source initialization; the final build includes this fix.
+
 ## Installed candidate: 1.2.28
 
 Adds a 28-pixel CPU/GPU/VRAM/RAM row between tabs and service lights. The panel
@@ -20,7 +44,7 @@ Cached production redraw/submission averaged 0.36ms across 100 iterations; this
 is a desktop preview measurement, not a complete VR frame-time benchmark.
 Music/Desktop/ASK previews inspected; VRAM label clipping corrected.
 Installed and launched September 24, 2026: health 200 ready, settings preserved,
-installed binaries match staging. User headset verification pending.
+installed binaries match staging. User reported the metrics work very well.
 Installer SHA256: C098F2F42DDD011CF01D75B70B0A668CA6A325861762808106AF997B3081E539.
 
 ## Installed candidate: 1.2.27

@@ -9,7 +9,7 @@
 namespace interfayce {
 
 enum class BroadcastState { Off, Starting, Active, Faulted };
-enum class BroadcastSource { Spotify, Chrome };
+enum class BroadcastSource { Spotify, Chrome, YouTubeMusic };
 
 class BroadcastController {
 public:
