@@ -1258,6 +1258,7 @@ int main(int argc, char** argv) {
     renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
     renderer.SetBroadcastGainDb(static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
     broadcast.SetGainDb(ttsSettings.broadcastGainDb);
+    renderer.SetMusicProvider(ttsSettings.youtubeMusic);
     if (ttsSettings.youtubeMusic) {
         broadcast.SetSource(interfayce::BroadcastSource::YouTubeMusic);
         renderer.SetMusicBroadcastSource(2);
@@ -1489,6 +1490,10 @@ int main(int argc, char** argv) {
     auto nextHealthPoll = std::chrono::steady_clock::now();
     auto nextMusicPoll = std::chrono::steady_clock::now();
     std::future<MusicPlaybackState> musicPoll;
+    bool musicPollYoutube{};
+    std::future<std::optional<std::string>> musicProviderChange;
+    bool musicProviderSwitchPending{};
+    bool requestedMusicYoutube{};
     std::future<std::wstring> musicVoiceCommand;
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
@@ -1758,6 +1763,7 @@ int main(int argc, char** argv) {
         bool musicMicHit = false;
         bool musicBroadcastHit = false;
         bool musicBroadcastSourceHit = false;
+        bool musicProviderHit = false;
         bool musicPreviousHit = false;
         bool musicToggleHit = false;
         bool musicNextHit = false;
@@ -1834,12 +1840,13 @@ int main(int argc, char** argv) {
                 restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
                     && restoreX * restoreX + restoreY * restoreY <= 98.0F * 98.0F;
                 musicMicHit = selectedDeck == 0 && circleHit(520, 225, 35);
-                musicBroadcastHit = selectedDeck == 0 && circleHit(520, 145, 35);
-                musicBroadcastSourceHit = selectedDeck == 0
-                    && x >= 365.0F && x <= 482.0F && y >= 181.0F && y <= 213.0F;
-                musicPreviousHit = selectedDeck == 0 && musicAvailable && circleHit(140, 287, 39);
-                musicToggleHit = selectedDeck == 0 && musicAvailable && circleHit(384, 287, 49);
-                musicNextHit = selectedDeck == 0 && musicAvailable && circleHit(628, 287, 39);
+                musicBroadcastHit = selectedDeck == 0 && !musicProviderSwitchPending && circleHit(520, 145, 35);
+                musicBroadcastSourceHit = selectedDeck == 0 && !musicProviderSwitchPending && interfayce::panel::MusicBroadcastSource.Contains(x, y);
+                musicProviderHit = selectedDeck == 0 && interfayce::panel::MusicPlayer.Contains(x, y)
+                    && !musicProviderSwitchPending && !musicProviderChange.valid() && !musicVoiceCommand.valid();
+                musicPreviousHit = selectedDeck == 0 && musicAvailable && !musicProviderSwitchPending && circleHit(140, 287, 39);
+                musicToggleHit = selectedDeck == 0 && musicAvailable && !musicProviderSwitchPending && circleHit(384, 287, 49);
+                musicNextHit = selectedDeck == 0 && musicAvailable && !musicProviderSwitchPending && circleHit(628, 287, 39);
                 commsClearHit = selectedDeck == 5 && circleHit(560, 285, 40);
                 if (selectedDeck == 5 && y >= 198.0F && y <= 236.0F) {
                     constexpr std::array<float, 4> shortcutLeft{42, 218, 394, 570};
@@ -1985,7 +1992,7 @@ int main(int argc, char** argv) {
             || desktopBringIndex.has_value() || desktopLockIndex.has_value()
             || desktopReuseIndex.has_value() || desktopCloseIndex.has_value()
             || desktopPrivateIndex.has_value()
-            || musicMicHit || musicBroadcastHit || musicBroadcastSourceHit
+            || musicMicHit || musicBroadcastHit || musicBroadcastSourceHit || musicProviderHit
             || musicPreviousHit || musicToggleHit || musicNextHit
             || commsMicHit || commsClearHit || commsShortcutHit.has_value()
             || assistantMicHit || assistantCancelHit || assistantClearHit || assistantSwitchHit || assistantStopHit
@@ -2241,6 +2248,22 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && musicProviderHit) {
+            // Stop outgoing audio before dispatch; never automatically resume it.
+            if (broadcast.Enabled()) broadcast.Stop();
+            renderer.SetMusicBroadcastState(false, broadcast.StatusText());
+            renderer.SetMusicProvider(ttsSettings.youtubeMusic, true);
+            musicProviderSwitchPending = true;
+            requestedMusicYoutube = !ttsSettings.youtubeMusic;
+            const std::string target = requestedMusicYoutube ? "youtube" : "spotify";
+            musicProviderChange = std::async(std::launch::async, [target] {
+                return LocalHttpRequest("POST", "/music/provider/" + target, std::chrono::seconds(2));
+            });
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto texture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
+            }
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && musicBroadcastSourceHit) {
             initialBroadcastSourcePending = false;
@@ -2281,7 +2304,7 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && musicMicHit) {
-            if (!musicVoiceCommand.valid()) {
+            if (!musicVoiceCommand.valid() && !musicProviderChange.valid() && !musicProviderSwitchPending) {
                 voiceServiceAvailable = VoiceServiceAvailable();
                 if (!voiceServiceAvailable) {
                     LaunchVoiceService(directory, projectRoot);
@@ -2678,6 +2701,20 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         }
+        if (musicProviderChange.valid()
+            && musicProviderChange.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            const auto response = musicProviderChange.get();
+            const bool accepted = response && ParseTtsSettings(*response).has_value();
+            if (!accepted) musicProviderSwitchPending = false;
+            renderer.SetMusicProvider(ttsSettings.youtubeMusic, musicProviderSwitchPending);
+            renderer.SetMusicVoiceStatus(accepted ? L"VOICE READY" : L"PLAYER SWITCH UNAVAILABLE", false);
+            nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+            if (selectedDeck == 0 && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto texture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
+            }
+        }
         if (selectedDeck == 0) {
             const auto musicNow = std::chrono::steady_clock::now();
             if (musicVoiceCommand.valid()
@@ -2709,21 +2746,23 @@ int main(int argc, char** argv) {
                 && musicPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
                 const auto updatedMusic = musicPoll.get();
                 nextMusicPoll = musicNow + std::chrono::seconds(2);
-                const bool trackChanged = updatedMusic.line != musicLine;
-                bool artChanged = false;
-                if (updatedMusic.artwork) {
-                    artChanged = artworkCache.Update(*updatedMusic.artwork);
-                } else if (trackChanged) {
-                    artChanged = artworkCache.Update({});
-                }
-                if (trackChanged || updatedMusic.playing != musicPlaying || artChanged) {
-                    musicLine = updatedMusic.line;
-                    musicPlaying = updatedMusic.playing;
-                    renderer.SetMusicPlaying(musicPlaying);
-                    renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                        rigLine, rigSlots, mountReady, desktopPanel);
-                    const auto updatedTexture = renderer.Texture();
-                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                if (musicPollYoutube == ttsSettings.youtubeMusic) {
+                    const bool trackChanged = updatedMusic.line != musicLine;
+                    bool artChanged = false;
+                    if (updatedMusic.artwork) {
+                        artChanged = artworkCache.Update(*updatedMusic.artwork);
+                    } else if (trackChanged) {
+                        artChanged = artworkCache.Update({});
+                    }
+                    if (trackChanged || updatedMusic.playing != musicPlaying || artChanged) {
+                        musicLine = updatedMusic.line;
+                        musicPlaying = updatedMusic.playing;
+                        renderer.SetMusicPlaying(musicPlaying);
+                        renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                            rigLine, rigSlots, mountReady, desktopPanel);
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
                 }
             }
             if (!musicPoll.valid() && musicNow >= nextMusicPoll) {
@@ -2742,6 +2781,7 @@ int main(int argc, char** argv) {
                     }
                 } else {
                     musicAvailable = true;
+                    musicPollYoutube = ttsSettings.youtubeMusic;
                     musicPoll = std::async(std::launch::async,
                         [projectRoot] { return ReadMusicNowPlaying(projectRoot); });
                 }
@@ -2879,7 +2919,25 @@ int main(int argc, char** argv) {
         if (settingsPoll.valid() && settingsPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             nextRuntimeSettingsPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
             if (const auto loaded = settingsPoll.get()) {
-                const bool broadcastSourceChanged = initialBroadcastSourcePending;
+                const bool providerChanged = loaded->youtubeMusic != ttsSettings.youtubeMusic;
+                const bool broadcastSourceChanged = initialBroadcastSourcePending || providerChanged
+                    || (musicProviderSwitchPending && loaded->youtubeMusic == requestedMusicYoutube);
+                if (providerChanged) {
+                    if (broadcast.Enabled()) broadcast.Stop();
+                    broadcast.SetSource(interfayce::SourceAfterPlayerSwitch(broadcast.Source(),
+                        ttsSettings.youtubeMusic, loaded->youtubeMusic));
+                    renderer.SetMusicBroadcastSource(static_cast<int>(broadcast.Source()));
+                    renderer.SetMusicBroadcastState(false, broadcast.StatusText());
+                    artworkCache.Update({});
+                    musicLine = loaded->youtubeMusic ? L"Loading YouTube Music..." : L"Loading Spotify...";
+                    musicPlaying = false;
+                    renderer.SetMusicPlaying(false);
+                    nextMusicPoll = std::chrono::steady_clock::now();
+                }
+                if (musicProviderSwitchPending && loaded->youtubeMusic == requestedMusicYoutube) {
+                    musicProviderSwitchPending = false;
+                }
+                renderer.SetMusicProvider(loaded->youtubeMusic, musicProviderSwitchPending);
                 if (initialBroadcastSourcePending) {
                     initialBroadcastSourcePending = false;
                     broadcast.SetSource(loaded->youtubeMusic

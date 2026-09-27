@@ -1,5 +1,29 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.30 — wrist music-provider switch
+
+Music now has separate PLAYER and BROADCAST buttons with shared render/hit bounds.
+The authenticated provider endpoint makes an idempotent selection, preserving
+other settings and refusing to switch during an active voice command. Native
+requests run off the render loop, show SWITCHING, and refresh metadata/art after
+acknowledged settings changes. Old-provider poll results are discarded.
+
+When players change, any active broadcast stops and remains off. Its source
+follows only when it matched the old player; independently selected sources stay
+selected. Desktop-settings changes use the same native transition behavior.
+
+216 Python tests passed, one skipped. Native Release build and compile-time
+routing/hit-bound assertions passed. Production wrist preview inspected with
+both new labels visible. Installed September 27, 2026; installer exit 0 and all
+four installed binaries match staging. Settings were unchanged by installation.
+Installed authenticated endpoint smoke tests passed for Spotify/YouTube selection,
+repeated selection and invalid-provider rejection. Initial startup returned 409
+while assistant restoration held the command lock; the repeat check waited for
+startup to finish. Original Spotify selection and all settings were restored.
+The smoke service stopped cleanly. SteamVR/overlay were not running, so the app
+was left stopped for the next VR session; physical wrist validation remains.
+Installer SHA256: D41C5131F4AA356B9BF41926A24D1612D09031DD1BD0841EED3383A678F1CE56.
+
 ## Installed candidate: 1.2.29 — YouTube Music via Pear Desktop
 
 Adds a Settings music-provider selector and authenticated local Pear API support.

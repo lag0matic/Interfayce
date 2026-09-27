@@ -39,6 +39,7 @@ public:
     void SetMusicPlaying(bool playing);
     void SetMusicBroadcastState(bool active, const std::wstring& status);
     void SetMusicBroadcastSource(int source);
+    void SetMusicProvider(bool youtube, bool switching = false);
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetAssistantStatus(const std::wstring& status, const std::wstring& transcript,
                             const std::wstring& response, bool active);
@@ -118,6 +119,8 @@ private:
     bool musicBroadcastActive_{};
     std::wstring musicBroadcastStatus_{L"BROADCAST OFF"};
     int musicBroadcastSource_{};
+    bool musicYoutube_{};
+    bool musicProviderSwitching_{};
     std::wstring commsStatus_{L"IDLE"};
     std::wstring commsTranscript_;
     bool commsActive_{};

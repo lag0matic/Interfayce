@@ -160,9 +160,16 @@ mixes. Search selections are grounded in actual playable results. Playlist,
 album, liked-song, shuffle, and radio parity with Spotify is not implemented.
 Pear's queue is preserved; unconfirmed mutations are never retried automatically.
 
-Broadcasting is independent of the selected music provider: the source button
-cycles Spotify → Chrome → YouTube. The initial source follows the music provider;
-changing providers in Settings does not change an already chosen broadcast source.
+On the Music wrist panel, tap **PLAYER: SPOTIFY/YOUTUBE** to switch providers.
+Controls, voice requests, artwork and announcements follow that selection; the
+choice persists and stays synchronized with desktop Settings. Switching is
+unavailable during an active voice request. The player app must already be running.
+
+The separate **BROADCAST** button cycles Spotify → Chrome → YouTube. When changing
+players, broadcast follows if its source matched the previous player. A separately
+chosen source (including Chrome) stays selected. Any active broadcast stops on a
+player change and remains off until explicitly enabled again. These rules also
+apply when changing players in desktop Settings.
 The app-specific capture, VB-CABLE output, and independent broadcast gain are
 shared by all three sources. Normal listening output is still configured in
 Windows. Pear must remain running for playback and control.

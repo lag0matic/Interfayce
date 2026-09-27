@@ -284,6 +284,13 @@ def toggle_tts_mute() -> AppSettings:
 
 
 @transactional
+def set_music_provider(provider: str) -> AppSettings:
+    if provider not in {"spotify", "youtube"}:
+        raise ValueError("Choose Spotify or YouTube Music.")
+    return save_settings(replace(load_settings(), music_provider=provider))
+
+
+@transactional
 def toggle_song_announce() -> AppSettings:
     current = load_settings()
     return save_settings(replace(

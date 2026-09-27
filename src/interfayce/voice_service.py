@@ -30,7 +30,8 @@ from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
                        desktop_favorites_wire_text, load_settings, record_desktop_recent,
-                       settings_wire_text, toggle_song_announce, toggle_tts_mute)
+                       settings_wire_text, toggle_song_announce, toggle_tts_mute,
+                       set_music_provider)
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
 from .voice import MusicCommandResult, MusicIntentKind, execute_music_intent, parse_music_intent
@@ -385,6 +386,15 @@ class VoiceRuntime:
         finally:
             self.command_lock.release()
 
+    def select_music_provider(self, provider):
+        # Do not redirect a voice request halfway through its search/play action.
+        if not self.command_lock.acquire(blocking=False):
+            return None
+        try:
+            return set_music_provider(provider)
+        finally:
+            self.command_lock.release()
+
     def current_music(self) -> str:
         try:
             track, playing = asyncio.run(self._song_media.current_track_and_playback())
@@ -532,6 +542,13 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 token = self.path.rsplit("/", 1)[-1]
                 threading.Thread(target=runtime.dictate_assistant_answer, args=(token,), daemon=True).start()
                 self._reply(200, "listening")
+            elif self.path.startswith("/music/provider/"):
+                try:
+                    selected = runtime.select_music_provider(self.path.rsplit("/", 1)[-1])
+                    self._reply(409 if selected is None else 200,
+                                "busy" if selected is None else settings_wire_text(selected))
+                except ValueError:
+                    self._reply(400, "Choose Spotify or YouTube Music.")
             elif self.path.startswith("/music/control/"):
                 operation = self.path.rsplit("/", 1)[-1]
                 self._reply(200, "ok" if runtime.music_control(operation) else "unavailable")

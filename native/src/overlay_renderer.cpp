@@ -534,7 +534,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             D2D1::Point2F(140, 287), D2D1::Point2F(384, 287), D2D1::Point2F(628, 287)};
         const auto broadcastCenter = D2D1::Point2F(520, 145);
         const auto micCenter = D2D1::Point2F(520, 225);
-        const auto sourceRect = D2D1::RectF(365, 181, 482, 213);
+        const auto sourceRect = D2D1::RectF(panel::MusicBroadcastSource.left, panel::MusicBroadcastSource.top,
+            panel::MusicBroadcastSource.right, panel::MusicBroadcastSource.bottom);
+        const auto playerRect = D2D1::RectF(panel::MusicPlayer.left, panel::MusicPlayer.top,
+            panel::MusicPlayer.right, panel::MusicPlayer.bottom);
         if (holoGlyphAtlas_) {
             drawHoloAsset(HoloGlyph::Previous, centers[0], 39, 39);
             drawHoloAsset(musicPlaying_ ? HoloGlyph::Pause : HoloGlyph::Play,
@@ -602,8 +605,12 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             buttonBrush_.Get());
         d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(sourceRect, 8, 8),
             musicBroadcastActive_ ? accentBrush_.Get() : structureDimBrush_.Get(), 1.4F);
-        drawText(musicBroadcastSource_ == 2 ? L"YOUTUBE" : musicBroadcastSource_ == 1 ? L"CHROME" : L"SPOTIFY", labelFormat_.Get(),
-            D2D1::RectF(378, 185, 472, 210),
+        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(playerRect, 8, 8), buttonBrush_.Get());
+        d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(playerRect, 8, 8), structureDimBrush_.Get(), 1.4F);
+        drawText(musicProviderSwitching_ ? L"PLAYER: SWITCHING" : musicYoutube_ ? L"PLAYER: YOUTUBE" : L"PLAYER: SPOTIFY",
+            labelFormat_.Get(), D2D1::RectF(54, 190, 236, 216), mutedTextBrush_.Get());
+        drawText(musicBroadcastSource_ == 2 ? L"BROADCAST: YOUTUBE" : musicBroadcastSource_ == 1 ? L"BROADCAST: CHROME" : L"BROADCAST: SPOTIFY", labelFormat_.Get(),
+            D2D1::RectF(266, 190, 478, 216),
             musicBroadcastActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
@@ -1382,6 +1389,11 @@ void OverlayRenderer::SetControllerCharging(const std::array<bool, 2>& charging)
 void OverlayRenderer::SetBatteryEstimate(const std::wstring& text, int lowestPercent) {
     batteryEstimateText_ = text;
     lowestBatteryPercent_ = lowestPercent < 0 ? -1 : (std::min)(100, lowestPercent);
+}
+
+void OverlayRenderer::SetMusicProvider(bool youtube, bool switching) {
+    musicYoutube_ = youtube;
+    musicProviderSwitching_ = switching;
 }
 
 void OverlayRenderer::SetMusicBroadcastSource(int source) {
