@@ -9,7 +9,18 @@
 namespace interfayce {
 
 enum class BroadcastState { Off, Starting, Active, Faulted };
-enum class BroadcastSource { Spotify, Chrome };
+enum class BroadcastSource { Spotify, Chrome, YouTubeMusic };
+
+constexpr BroadcastSource SourceAfterPlayerSwitch(BroadcastSource source,
+        bool oldYoutube, bool newYoutube) {
+    const auto oldPlayer = oldYoutube ? BroadcastSource::YouTubeMusic : BroadcastSource::Spotify;
+    return source == oldPlayer
+        ? (newYoutube ? BroadcastSource::YouTubeMusic : BroadcastSource::Spotify) : source;
+}
+static_assert(SourceAfterPlayerSwitch(BroadcastSource::Spotify, false, true) == BroadcastSource::YouTubeMusic);
+static_assert(SourceAfterPlayerSwitch(BroadcastSource::YouTubeMusic, true, false) == BroadcastSource::Spotify);
+static_assert(SourceAfterPlayerSwitch(BroadcastSource::Chrome, false, true) == BroadcastSource::Chrome);
+static_assert(SourceAfterPlayerSwitch(BroadcastSource::YouTubeMusic, false, true) == BroadcastSource::YouTubeMusic);
 
 class BroadcastController {
 public:

@@ -2,6 +2,7 @@
 #include <wincodec.h>
 #include <filesystem>
 #include <iostream>
+#include <chrono>
 
 // Render the actual production panel without a headset or running overlay.
 int wmain(int argc, wchar_t** argv) {
@@ -13,9 +14,14 @@ int wmain(int argc, wchar_t** argv) {
     renderer.SetRigBodyArtPath((root / L"assets/ui/rig-body-scanner.png").wstring());
     renderer.SetPlayspaceResetArtPath((root / L"assets/ui/playspace-reset.png").wstring());
     renderer.SetBatteryEstimate(L"4h 20m", 65);
+    renderer.SetPerformance({L"32%", L"91%", L"12.0/16 GB", L"24.0/64 GB"});
     renderer.SetClockText(L"8:42 PM");
     renderer.SetSlimeAvailable(true);
     renderer.SetMusicPlaying(true);
+    if (argc == 4 && std::wstring(argv[3]) == L"youtube") {
+        renderer.SetMusicBroadcastSource(2);
+        renderer.SetMusicProvider(true);
+    }
     renderer.SetAssistantStatus(L"CODEX / ANSWER", L"What should we try next?",
         L"We could find a quiet world, put on some music, and see where the evening goes.\n\n"
         L"I can keep our conversation going while you are in VR. Scroll here with the thumbstick to read longer replies.", false);
@@ -24,7 +30,10 @@ int wmain(int argc, wchar_t** argv) {
     for (int deck = 0; deck < 7; ++deck) {
         interfayce::DesktopPanelState desktop;
         if (deck == 1) {
-            desktop.showSurfaceList = true;
+            const std::wstring mode = argc == 4 ? argv[3] : L"";
+            desktop.showSurfaceList = mode != L"blocking-home";
+            desktop.blockGameInput = mode == L"blocking-home" || mode == L"blocking-list" || mode == L"blocking-unavailable";
+            desktop.inputBlockingAvailable = mode != L"blocking-unavailable";
             desktop.firstSurface = 2;
             for (int index = 0; index < 7; ++index) {
                 interfayce::DesktopSurfaceSummary surface{};
@@ -72,4 +81,11 @@ int wmain(int argc, wchar_t** argv) {
         if (FAILED(hr)) return 7;
     }
     std::cout << "Rendered seven production panels.\n";
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i) {
+        renderer.SetPerformance({std::to_wstring(i) + L"%", L"91%", L"12.0/16 GB", L"24.0/64 GB"});
+        if (!renderer.Initialize(nullptr, 0, L"Persevere / Gang of Youths")) return 8;
+    }
+    std::cout << "Average cached panel redraw/submission ms: "
+              << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / 100 << '\n';
 }

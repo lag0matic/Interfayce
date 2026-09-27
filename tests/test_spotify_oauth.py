@@ -4,7 +4,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+from urllib.error import HTTPError
+from io import BytesIO
 from urllib.parse import parse_qs, urlparse
 
 from interfayce.secure_store import protect, read_secret, unprotect, write_secret
@@ -12,6 +14,7 @@ from interfayce.spotify_oauth import (
     REDIRECT_URI,
     SpotifyToken,
     SpotifyWebApi,
+    SpotifyOAuthError,
     _token_from_response,
     authorization_url,
     code_challenge,
@@ -36,6 +39,37 @@ class SecureStoreTests(unittest.TestCase):
 
 
 class SpotifyOAuthTests(unittest.TestCase):
+    def test_shuffle_accepts_successful_plain_text_or_empty_body(self):
+        api = SpotifyWebApi(client_id="test")
+        for body in (b"opaque-command-acknowledgment", b"", b" "):
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = body
+            with patch.object(api, "_valid_token", return_value=SpotifyToken("test", "test", 9999999999, "")), patch(
+                "interfayce.spotify_oauth.urlopen", return_value=response
+            ) as send:
+                self.assertIsNone(api.set_shuffle(True, device_id="device"))
+                self.assertEqual(send.call_count, 1)
+                self.assertIn("state=true", send.call_args.args[0].full_url)
+
+    def test_shuffle_still_reports_http_rejection(self):
+        api = SpotifyWebApi(client_id="test")
+        error = HTTPError("https://api.spotify.com", 403, "Forbidden", {}, BytesIO(b"denied"))
+        with patch.object(api, "_valid_token", return_value=SpotifyToken("test", "test", 9999999999, "")), patch(
+            "interfayce.spotify_oauth.urlopen", side_effect=error
+        ):
+            with self.assertRaises(SpotifyOAuthError):
+                api.set_shuffle(True)
+
+    def test_read_endpoints_still_require_valid_json(self):
+        api = SpotifyWebApi(client_id="test")
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b"not-json"
+        with patch.object(api, "_valid_token", return_value=SpotifyToken("test", "test", 9999999999, "")), patch(
+            "interfayce.spotify_oauth.urlopen", return_value=response
+        ):
+            with self.assertRaises(json.JSONDecodeError):
+                api.playback_state()
+
     def test_pkce_challenge_matches_rfc_example(self) -> None:
         verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
         self.assertEqual(code_challenge(verifier), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")

@@ -40,6 +40,7 @@ set_target_properties(openvr_api PROPERTIES
 add_executable(InterfayceOverlay
     "${CMAKE_BINARY_DIR}/interfayce.rc"
     src/main.cpp
+    src/performance_monitor.cpp
     src/local_service_client.cpp
     src/artwork_cache.cpp
     src/broadcast_controller.cpp
@@ -47,6 +48,7 @@ add_executable(InterfayceOverlay
     src/desktop_surface_manager.cpp
     src/desktop_surface_registry.cpp
     src/desktop_input_router.cpp
+    src/desktop_input_blocking.cpp
     src/overlay_renderer.cpp
     src/overlay_renderer_assistant.cpp
     src/tray_icon.cpp
@@ -78,6 +80,12 @@ add_executable(InterfayceBatteryEstimatorTests
 )
 add_executable(InterfayceDesktopCoordinatesTests tests/desktop_coordinates_tests.cpp)
 add_executable(InterfayceDesktopInputTests tests/desktop_input_tests.cpp src/desktop_input_router.cpp)
+add_executable(InterfayceDesktopInputBlockingTests tests/desktop_input_blocking_tests.cpp)
+add_executable(InterfayceDesktopPrimaryGestureTests tests/desktop_primary_gesture_tests.cpp)
+target_include_directories(InterfayceDesktopPrimaryGestureTests PRIVATE src "${openvr_sdk_SOURCE_DIR}/headers")
+target_compile_features(InterfayceDesktopPrimaryGestureTests PRIVATE cxx_std_20)
+target_include_directories(InterfayceDesktopInputBlockingTests PRIVATE src "${openvr_sdk_SOURCE_DIR}/headers")
+target_compile_features(InterfayceDesktopInputBlockingTests PRIVATE cxx_std_20)
 target_include_directories(InterfayceDesktopInputTests PRIVATE src "${openvr_sdk_SOURCE_DIR}/headers")
 target_compile_features(InterfayceDesktopInputTests PRIVATE cxx_std_20)
 target_link_libraries(InterfayceDesktopInputTests PRIVATE user32 dwmapi)
@@ -142,3 +150,7 @@ target_compile_features(InterfayceArtworkCacheTests PRIVATE cxx_std_20)
 add_executable(InterfayceDesktopClickTests tests/desktop_click_filter_tests.cpp)
 target_include_directories(InterfayceDesktopClickTests PRIVATE src)
 target_compile_features(InterfayceDesktopClickTests PRIVATE cxx_std_20)
+
+add_executable(InterfaycePerformanceProbe tests/performance_probe.cpp src/performance_monitor.cpp)
+target_include_directories(InterfaycePerformanceProbe PRIVATE src)
+target_compile_features(InterfaycePerformanceProbe PRIVATE cxx_std_20)

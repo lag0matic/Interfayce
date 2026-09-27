@@ -53,7 +53,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(saved.stt_microphone, "Beyond Microphone")
             self.assertAlmostEqual(saved.haptic_strength, 0.37)
             self.assertEqual(settings_wire_text(saved),
-                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0\t10.0\t1")
+                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0\t10.0\t1\tspotify")
 
     def test_complete_desktop_configuration_round_trip(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {

@@ -122,10 +122,11 @@ def capture_microphone_until(
     stop_event: threading.Event,
     *,
     max_seconds: float = 30.0,
+    release_tail_seconds: float = 0.2,
     on_ready=None,
     on_chunk=None,
 ):
-    """Capture every microphone frame until the caller releases push-to-talk."""
+    """Capture push-to-talk plus a short tail to preserve the final syllable."""
 
     import speech_recognition as sr  # type: ignore[import-not-found]
 
@@ -137,7 +138,13 @@ def capture_microphone_until(
         if on_ready is not None:
             on_ready()
         deadline = time.monotonic() + max(1.0, float(max_seconds))
-        while not stop_event.is_set() and time.monotonic() < deadline:
+        release_deadline = None
+        while time.monotonic() < deadline:
+            if stop_event.is_set():
+                if release_deadline is None:
+                    release_deadline = time.monotonic() + max(0.0, release_tail_seconds)
+                if time.monotonic() >= release_deadline:
+                    break
             chunk = source.stream.read(source.CHUNK)
             frames.append(chunk)
             if on_chunk is not None:

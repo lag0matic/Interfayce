@@ -68,7 +68,8 @@ bool BroadcastController::Start(std::wstring& error) {
     }
 
     const wchar_t* mode = source_ == BroadcastSource::Chrome
-        ? L"--broadcast-chrome" : L"--broadcast-spotify";
+        ? L"--broadcast-chrome" : source_ == BroadcastSource::YouTubeMusic
+        ? L"--broadcast-youtube-music" : L"--broadcast-spotify";
     std::wstring command = L"\"" + enginePath_.wstring() + L"\" " + mode
         + L" 86400 --gain-db " + std::to_wstring(gainDb_);
     std::vector<wchar_t> mutableCommand(command.begin(), command.end());
@@ -99,7 +100,7 @@ bool BroadcastController::Start(std::wstring& error) {
     CloseHandle(process.hThread);
     startedAt_ = std::chrono::steady_clock::now();
     SetState(BroadcastState::Starting,
-        source_ == BroadcastSource::Chrome ? L"CHROME STARTING" : L"SPOTIFY STARTING");
+        source_ == BroadcastSource::Chrome ? L"CHROME STARTING" : source_ == BroadcastSource::YouTubeMusic ? L"YOUTUBE STARTING" : L"SPOTIFY STARTING");
     return true;
 }
 
@@ -125,7 +126,7 @@ bool BroadcastController::Poll() {
     if (state_ == BroadcastState::Starting
         && std::chrono::steady_clock::now() - startedAt_ >= std::chrono::milliseconds(350)) {
         SetState(BroadcastState::Active,
-            source_ == BroadcastSource::Chrome ? L"CHROME LIVE" : L"SPOTIFY LIVE");
+            source_ == BroadcastSource::Chrome ? L"CHROME LIVE" : source_ == BroadcastSource::YouTubeMusic ? L"YOUTUBE LIVE" : L"SPOTIFY LIVE");
         return true;
     }
     return false;
@@ -142,7 +143,7 @@ void BroadcastController::SetSource(BroadcastSource source) {
 BroadcastSource BroadcastController::Source() const { return source_; }
 
 const wchar_t* BroadcastController::SourceProcessName() const {
-    return source_ == BroadcastSource::Chrome ? L"chrome.exe" : L"Spotify.exe";
+    return source_ == BroadcastSource::Chrome ? L"chrome.exe" : source_ == BroadcastSource::YouTubeMusic ? L"YouTube Music.exe" : L"Spotify.exe";
 }
 
 BroadcastState BroadcastController::State() const { return state_; }

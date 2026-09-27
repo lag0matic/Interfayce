@@ -79,22 +79,22 @@ async def execute_music_intent(
         playing = intent.kind is MusicIntentKind.PLAY
         succeeded = await (spotify.play() if playing else spotify.pause())
         return MusicCommandResult(succeeded, ('Playing music.' if playing else 'Music paused.')
-                                  if succeeded else 'Spotify did not accept the playback command.')
+                                  if succeeded else 'The music player did not accept the playback command.')
     if intent.kind is MusicIntentKind.NEXT_TRACK:
         succeeded = await spotify.next_track()
         return MusicCommandResult(succeeded, "Skipped to the next track." if succeeded
-                                  else "Spotify did not accept the next-track command.")
+                                  else "The music player did not accept the next-track command.")
     if intent.kind is MusicIntentKind.PREVIOUS_TRACK:
         succeeded = await spotify.previous_track()
         return MusicCommandResult(succeeded, "Returned to the previous track." if succeeded
-                                  else "Spotify did not accept the previous-track command.")
+                                  else "The music player did not accept the previous-track command.")
     if intent.kind is MusicIntentKind.TOGGLE_PLAYBACK:
         succeeded = await spotify.toggle_play_pause()
         return MusicCommandResult(succeeded, "Playback toggled." if succeeded
-                                  else "Spotify did not accept the playback command.")
+                                  else "The music player did not accept the playback command.")
     if intent.kind is MusicIntentKind.NOW_PLAYING:
         track = await spotify.current_track()
         if track is None:
-            return MusicCommandResult(False, "Spotify is not reporting an active track.")
+            return MusicCommandResult(False, "The music player is not reporting an active track.")
         return MusicCommandResult(True, f"{track.title}, by {track.artist}.")
     return MusicCommandResult(False, "I did not recognize a safe Music command.")

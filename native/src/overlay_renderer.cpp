@@ -1,4 +1,5 @@
 #include "panel_layout.h"
+#include "desktop_input_blocking.h"
 #include "overlay_renderer.h"
 #include "holo_glyph.h"
 
@@ -458,7 +459,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     d2dContext_->BeginDraw();
     d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     d2dContext_->Clear(D2D1::ColorF(0.0F, 0.0F, 0.0F, 0.0F));
-    const auto panelBounds = D2D1::RectF(6.0F, 6.0F, 762.0F, 418.0F);
+    const auto panelBounds = D2D1::RectF(6.0F, 6.0F, 762.0F, static_cast<float>(panel::Height) - 6.0F);
     d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(panelBounds, 16.0F, 16.0F), glassBrush_.Get());
     d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(panelBounds, 16.0F, 16.0F),
         structureDimBrush_.Get(), 1.0F);
@@ -533,7 +534,10 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             D2D1::Point2F(140, 287), D2D1::Point2F(384, 287), D2D1::Point2F(628, 287)};
         const auto broadcastCenter = D2D1::Point2F(520, 145);
         const auto micCenter = D2D1::Point2F(520, 225);
-        const auto sourceRect = D2D1::RectF(365, 181, 482, 213);
+        const auto sourceRect = D2D1::RectF(panel::MusicBroadcastSource.left, panel::MusicBroadcastSource.top,
+            panel::MusicBroadcastSource.right, panel::MusicBroadcastSource.bottom);
+        const auto playerRect = D2D1::RectF(panel::MusicPlayer.left, panel::MusicPlayer.top,
+            panel::MusicPlayer.right, panel::MusicPlayer.bottom);
         if (holoGlyphAtlas_) {
             drawHoloAsset(HoloGlyph::Previous, centers[0], 39, 39);
             drawHoloAsset(musicPlaying_ ? HoloGlyph::Pause : HoloGlyph::Play,
@@ -601,8 +605,12 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             buttonBrush_.Get());
         d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(sourceRect, 8, 8),
             musicBroadcastActive_ ? accentBrush_.Get() : structureDimBrush_.Get(), 1.4F);
-        drawText(musicBroadcastChrome_ ? L"CHROME" : L"SPOTIFY", labelFormat_.Get(),
-            D2D1::RectF(378, 185, 472, 210),
+        d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(playerRect, 8, 8), buttonBrush_.Get());
+        d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(playerRect, 8, 8), structureDimBrush_.Get(), 1.4F);
+        drawText(musicProviderSwitching_ ? L"PLAYER: SWITCHING" : musicYoutube_ ? L"PLAYER: YOUTUBE" : L"PLAYER: SPOTIFY",
+            labelFormat_.Get(), D2D1::RectF(54, 190, 236, 216), mutedTextBrush_.Get());
+        drawText(musicBroadcastSource_ == 2 ? L"BROADCAST: YOUTUBE" : musicBroadcastSource_ == 1 ? L"BROADCAST: CHROME" : L"BROADCAST: SPOTIFY", labelFormat_.Get(),
+            D2D1::RectF(266, 190, 478, 216),
             musicBroadcastActive_ ? accentBrush_.Get() : mutedTextBrush_.Get());
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
@@ -798,8 +806,16 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         }
         d2dContext_->DrawLine(D2D1::Point2F(42, 343), D2D1::Point2F(726, 343),
             structureDimBrush_.Get(), 1.0F);
-        drawText(musicLine, labelFormat_.Get(), D2D1::RectF(48, 350, 606, 374),
+        drawText(musicLine, labelFormat_.Get(), D2D1::RectF(48, 350, 410, 374),
             mutedTextBrush_.Get());
+        const auto blockBounds = D2D1::RectF(DesktopBlockButton::Left, DesktopBlockButton::Top,
+            DesktopBlockButton::Right, DesktopBlockButton::Bottom);
+        const auto blockBrush = desktop.blockGameInput && desktop.inputBlockingAvailable
+            ? accentBrush_.Get() : structureBrush_.Get();
+        d2dContext_->DrawRoundedRectangle(D2D1::RoundedRect(blockBounds, 6, 6), blockBrush, 1.2F);
+        drawText(!desktop.blockGameInput ? L"BLOCK GAME INPUT: OFF"
+                : desktop.inputBlockingAvailable ? L"BLOCK GAME INPUT: ON" : L"BLOCK GAME: UNAVAILABLE",
+            labelFormat_.Get(), D2D1::RectF(434, 350, 720, 374), blockBrush);
     } else if (deck == 3) {
         if (!slimeAvailable_) {
             d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(92, 242), 9, 9),
@@ -1239,6 +1255,13 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         }
     }
     d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
+    const std::array<const wchar_t*, 4> metricLabels{L"CPU", L"GPU", L"VRAM", L"RAM"};
+    for (size_t i = 0; i < metricLabels.size(); ++i) {
+        const float left = 28 + static_cast<float>(i) * 181;
+        drawText(metricLabels[i], labelFormat_.Get(), D2D1::RectF(left, 86, left + 60, 110), mutedTextBrush_.Get());
+        drawText(performanceText_[i], labelFormat_.Get(), D2D1::RectF(left + 62, 86, left + 179, 110), textBrush_.Get());
+    }
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Translation(0, panel::MetricsHeight));
     const auto statusBounds = D2D1::RectF(20, 85, 748, 120);
     d2dContext_->FillRoundedRectangle(D2D1::RoundedRect(statusBounds, 5, 5), stripBrush_.Get());
     d2dContext_->DrawLine(D2D1::Point2F(24, 120), D2D1::Point2F(744, 120), structureDimBrush_.Get(), 1);
@@ -1260,6 +1283,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
             states[i] = row.substr(first + 1, second - first - 1); details[i] = row.substr(second + 1);
         }
     }
+    labels[3] = L"MUSIC";
     for (size_t i = 0; i < labels.size(); ++i) {
         const float left = 140 + static_cast<float>(i) * 94;
         auto* brush = states[i] == L"good" ? chargingBrush_.Get() : states[i] == L"backup" ? warningBrush_.Get()
@@ -1273,6 +1297,7 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(labels[statusHover_] + L": " + details[statusHover_], labelFormat_.Get(),
                  D2D1::RectF(152, 128, 732, 156), textBrush_.Get());
     }
+    d2dContext_->SetTransform(D2D1::Matrix3x2F::Identity());
     if (pressFeedbackActive_) {
         d2dContext_->FillEllipse(D2D1::Ellipse(pressFeedbackCenter_, 15, 15), scanFillBrush_.Get());
         d2dContext_->DrawEllipse(D2D1::Ellipse(pressFeedbackCenter_, 21, 21), accentBrush_.Get(), 1.5F);
@@ -1366,8 +1391,13 @@ void OverlayRenderer::SetBatteryEstimate(const std::wstring& text, int lowestPer
     lowestBatteryPercent_ = lowestPercent < 0 ? -1 : (std::min)(100, lowestPercent);
 }
 
-void OverlayRenderer::SetMusicBroadcastSource(bool chrome) {
-    musicBroadcastChrome_ = chrome;
+void OverlayRenderer::SetMusicProvider(bool youtube, bool switching) {
+    musicYoutube_ = youtube;
+    musicProviderSwitching_ = switching;
+}
+
+void OverlayRenderer::SetMusicBroadcastSource(int source) {
+    musicBroadcastSource_ = source;
 }
 
 void OverlayRenderer::SetSongAnnounceEnabled(bool enabled) {

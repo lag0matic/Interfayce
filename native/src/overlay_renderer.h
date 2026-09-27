@@ -18,6 +18,8 @@
 namespace interfayce {
 
 struct DesktopPanelState {
+    bool blockGameInput{};
+    bool inputBlockingAvailable{};
     bool showSurfaceList{};
     size_t firstSurface{};
     std::vector<DesktopSurfaceSummary> surfaces;
@@ -36,7 +38,8 @@ public:
     void SetMusicVoiceStatus(const std::wstring& status, bool active);
     void SetMusicPlaying(bool playing);
     void SetMusicBroadcastState(bool active, const std::wstring& status);
-    void SetMusicBroadcastSource(bool chrome);
+    void SetMusicBroadcastSource(int source);
+    void SetMusicProvider(bool youtube, bool switching = false);
     void SetCommsStatus(const std::wstring& status, const std::wstring& transcript, bool active);
     void SetAssistantStatus(const std::wstring& status, const std::wstring& transcript,
                             const std::wstring& response, bool active);
@@ -50,6 +53,7 @@ public:
     void SetRigHoldProgress(float resetProgress, float mountProgress);
     void SetServiceStatus(const std::wstring& wire) { serviceStatus_ = wire; }
     bool SetStatusHover(int index) { if (statusHover_ == index) return false; statusHover_ = index; return true; }
+    void SetPerformance(const std::array<std::wstring, 4>& text) { performanceText_ = text; }
     void SetClockText(const std::wstring& text);
     void SetControllerCharging(const std::array<bool, 2>& charging);
     void SetBatteryEstimate(const std::wstring& text, int lowestPercent);
@@ -106,6 +110,7 @@ private:
     bool playspaceAdjusted_{};
     float playspaceHoldProgress_{};
     bool slimeAvailable_{};
+    std::array<std::wstring, 4> performanceText_{L"--", L"--", L"--", L"--"};
     std::wstring serviceStatus_;
     int statusHover_{-1};
     std::wstring musicVoiceStatus_{L"VOICE READY"};
@@ -113,7 +118,9 @@ private:
     bool musicPlaying_{};
     bool musicBroadcastActive_{};
     std::wstring musicBroadcastStatus_{L"BROADCAST OFF"};
-    bool musicBroadcastChrome_{};
+    int musicBroadcastSource_{};
+    bool musicYoutube_{};
+    bool musicProviderSwitching_{};
     std::wstring commsStatus_{L"IDLE"};
     std::wstring commsTranscript_;
     bool commsActive_{};
