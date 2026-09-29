@@ -140,6 +140,14 @@ Non-secret settings are stored in:
 
 Credentials and OAuth tokens are stored separately using Windows DPAPI under the current Windows account. API keys, tokens, personal endpoints, and LAN addresses are not built into the application or installer.
 
+Music suggestions are retained for five minutes in memory, separately for Spotify
+and YouTube Music. The assistant offers numbered choices in their spoken order;
+follow-ups such as “the second one,” “the original,” or “the one by Feint” select
+from those exact search results. A fresh search replaces pending choices, and a
+playback attempt consumes them even if its response is uncertain. Expired choices
+require a new request. The last five exchanges are also retained for five minutes
+per player; this context is cleared when the service exits.
+
 ### YouTube Music (Pear Desktop)
 
 Install [Pear Desktop](https://github.com/pear-devs/pear-desktop), sign in to

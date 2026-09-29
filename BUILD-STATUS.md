@@ -1,5 +1,28 @@
 # Interfayce build status
 
+## Installed candidate: 1.2.31 — retained music suggestions
+
+Spotify and YouTube Music retain explicitly offered alternatives in spoken order
+for five minutes, separately per provider. The new offer action produces the
+spoken numbered question from actual search candidates. Exact ordinal replies
+resolve without another LLM call or search; descriptive follow-ups receive the
+saved candidates. Fresh searches discard pending choices, and dispatch consumes
+choices even on an uncertain response. Missing/expired ordinal references ask
+for a fresh request. Memory is bounded to five alternatives per provider and is
+not written to disk. Music history now keeps five exchanges/five minutes per
+provider instead of a shared three exchanges/two minutes.
+
+227 Python tests passed, one skipped. Configured LLM was tested with synthetic
+search results and mocked playback for both providers: it offered two versions,
+then selected the correct version by artist without searching again. No real
+playback was changed by these tests. Native Release build passed.
+Installed September 29, 2026; installer exit 0. All four installed binaries
+match staging; settings stayed byte-for-byte unchanged. Restarted with one
+overlay and one service; authenticated health returned 200 ready. Physical VR
+follow-up playback is left for the next user test. Spotify's separate search
+HTTP 502 incident is not changed by this update.
+Installer SHA256: 3E97B480D8A3BCBA673E88068F728F626C9E6BA4CE18BFF37BF68CFF7F58CFEE.
+
 ## Installed candidate: 1.2.30 — wrist music-provider switch
 
 Music now has separate PLAYER and BROADCAST buttons with shared render/hit bounds.

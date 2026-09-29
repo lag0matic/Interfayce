@@ -6,6 +6,7 @@ import html
 import re
 import logging
 
+from .music_choices import offered_indices, ordinal_choice, question
 from .llm_client import OpenAiCompatibleClient
 from .music_llm import LlmMusicResult, execute_music_llm_intent, validate_music_intent
 from .spotify_oauth import SpotifyWebApi, SpotifyOAuthError
@@ -23,10 +24,19 @@ errors, corrections, mood requests, and follow-ups. Use current playback and
 recent exchanges to resolve references. Return one JSON action per turn:
 {"tool":"search","type":"track|artist|album|playlist","query":"search text"}
 {"tool":"select","index":0,"shuffle":false}
+{"tool":"offer","indices":[0,1]}
 {"tool":"control","command":"pause|resume|next|previous|restart|volume_up|volume_down|volume_set|mute|unmute","value":null}
 {"tool":"status"}
 {"tool":"liked"}
 {"tool":"reply","message":"short spoken answer or clarification"}
+To offer alternatives or ask which search result the user wants, use offer with
+candidate indices IN SPOKEN ORDER. The application speaks and retains those exact
+choices for five minutes. Never list song suggestions through reply. Pending
+choices in observations are from your previous question: resolve follow-ups such
+as 'the original' or 'the one by Feint' against them. Ordinals refer to their
+listed order. A new unrelated request must start a fresh search; never select a
+pending result for an unrelated request. Do not reconstruct expired choices from
+history; ask the user to repeat the song request if no pending choices remain.
 Search returns numbered real Spotify candidates; select only an index supplied
 in this session. Search again with corrected or simpler terms if needed. You
 may pick a reasonable result for an open-ended request; ask a brief question
@@ -53,7 +63,7 @@ calling an ordinary misunderstanding a safety failure.
 """
 
 
-def run_music_request(transcript, *, context=None, client=None, api=None):
+def run_music_request(transcript, *, context=None, client=None, api=None, choices=None):
     if not transcript.strip():
         return LlmMusicResult(False, "I didn't catch anything. Try again when you hear the ready tone.")
     client = client or OpenAiCompatibleClient()
@@ -66,16 +76,23 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
         "playing": state.get("is_playing"),
         "volume": (state.get("device") or {}).get("volume_percent"),
     }
-    observations = []
-    candidates = []
+    candidates = choices.get("spotify") if choices is not None else []
+    observations = [{"pending_choices": [
+        {"index": i, "name": entry["name"], "artists": _artists(entry), "type": kind}
+        for i, (kind, entry) in enumerate(candidates)]}] if candidates else []
+    pending_loaded = bool(candidates)
+    direct = ordinal_choice(transcript, len(candidates)) if candidates else None
+    if not candidates and ordinal_choice(transcript, 5) is not None:
+        return LlmMusicResult(False, "I no longer have those choices. Please repeat the song or artist you wanted.")
     for _ in range(5):
-        response = client.chat_json(system=PROMPT, user=json.dumps({
-            "request": transcript[:2000], "history": (context or [])[-3:],
+        response = None if direct is not None else client.chat_json(system=PROMPT, user=json.dumps({
+            "request": transcript[:2000], "history": (context or [])[-5:],
             "playback": playback, "observations": observations,
         }, ensure_ascii=False))
         action_started = False
         try:
-            action = json.loads(response.content)
+            action = {"tool": "select", "index": direct} if direct is not None else json.loads(response.content)
+            direct = None
             if not isinstance(action, dict):
                 raise ValueError("Expected an action object")
             tool = action.get("tool")
@@ -84,6 +101,13 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
                 query = action.get("query")
                 if kind not in {"track", "artist", "album", "playlist"} or not isinstance(query, str) or not 1 <= len(query.strip()) <= 160:
                     raise ValueError("Search needs a type and a short query")
+                if choices is not None:
+                    choices.clear("spotify")
+                # A fresh search invalidates prior offered alternatives, while
+                # current-turn search observations retain their original indices.
+                if pending_loaded:
+                    candidates, observations = [], []
+                    pending_loaded = False
                 result = api.search(query.strip(), item_type=kind, limit=10)
                 found = (result.get(kind + "s") or {}).get("items") or []
                 rows = []
@@ -102,6 +126,20 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
                                  "album": str((entry.get("album") or {}).get("name", ""))[:200]})
                 observations.append({"query": query, "results": rows})
                 continue
+            if tool == "offer":
+                indices = offered_indices(action, len(candidates))
+                selected = []
+                for index in indices:
+                    kind, entry = candidates[index]
+                    selected.append((kind, {
+                        "uri": entry["uri"], "name": str(entry.get("name") or "Untitled")[:160],
+                        "artists": [{"name": name} for name in _artists(entry)],
+                        "album": {"uri": (entry.get("album") or {}).get("uri")}}))
+                if choices is not None:
+                    choices.save("spotify", selected)
+                return LlmMusicResult(False, question([
+                    entry["name"] + (" by " + ", ".join(_artists(entry)) if _artists(entry) else "")
+                    for _, entry in selected]))
             if tool == "select":
                 index = action.get("index")
                 shuffle = action.get("shuffle", False)
@@ -119,6 +157,8 @@ def run_music_request(transcript, *, context=None, client=None, api=None):
                 # Once an action is dispatched, an error cannot safely be retried:
                 # Spotify may have applied it even if its response was unreadable.
                 action_started = True
+                if choices is not None:
+                    choices.clear("spotify")
                 if kind == "track":
                     album_uri = (chosen.get("album") or {}).get("uri")
                     if isinstance(album_uri, str) and album_uri.startswith("spotify:album:"):
