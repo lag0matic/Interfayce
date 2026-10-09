@@ -1,8 +1,30 @@
 # Interfayce build status
 
+## Installed 1.2.32 — direct OpenAI music compatibility
+
+For api.openai.com, the client sends max_completion_tokens instead of the
+rejected legacy max_tokens field. Sampling temperature is omitted for GPT-5/6
+and o-series reasoning configurations (unless effort is explicitly none).
+Other compatible providers retain their original payload and output bounds.
+No playback retries or model fallback changes were introduced.
+
+User configured direct OpenAI GPT-5.6 Luna, low reasoning, and entered the key
+through the existing protected settings field. Live interpretation-only tests:
+All Hallows Eve / Type O Negative search 2.33 s (673 input + 36 output tokens),
+synthetic candidate selection 1.67 s (745 input + 19 output). Both correct;
+1,473 tokens total, no playback dispatched. These do not include actual Spotify
+search latency or verify account complimentary-token billing. ASK remains Codex.
+229 existing tests passed, two server modules skipped in the base environment.
+Native Release build and installer passed. Installed and restarted October 9;
+authenticated health returned 200 ready, with exactly one overlay and service.
+Settings and protected LLM key hashes unchanged; all four installed executable
+hashes match staging. Overlay reports 1.2.32. Actual headset music playback is
+left for the user's next trial. No GitHub push performed.
+Installer SHA256: 90BECAA24F8E5BE96AC7CEEF4D7B2EA7823E6FAEC72116A99BCD2C737C19DC47.
+
 ## Active server: Nemotron live STT — October 9, 2026
 
-Server-only update, desktop remains 1.2.31. Streaming backends now expose a
+Server-only update (desktop was 1.2.31 at activation). Streaming backends now expose a
 common create_stream interface. Nemotron English 0.6B uses sherpa-onnx 1.13.8,
 560 ms chunks, 128-bin features, four CPU threads and a final 660 ms padding
 flush. This is incremental recognition, not a post-release second pass. Model

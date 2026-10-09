@@ -233,6 +233,11 @@ class OpenAiCompatibleClient:
             "temperature": self.settings.llm_temperature,
             "max_tokens": int(max_tokens),
         }
+        if urlparse(endpoint).hostname == "api.openai.com":
+            payload["max_completion_tokens"] = payload.pop("max_tokens")
+            # Reasoning-enabled OpenAI models reject sampling overrides.
+            if model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")) and self.settings.llm_reasoning_effort != "none":
+                payload.pop("temperature", None)
         clean_tools = self._tools(tools)
         if clean_tools:
             payload["tools"] = clean_tools
