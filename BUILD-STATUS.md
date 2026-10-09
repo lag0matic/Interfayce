@@ -1,6 +1,6 @@
 # Interfayce build status
 
-## Server candidate: Nemotron live STT — October 9, 2026
+## Active server: Nemotron live STT — October 9, 2026
 
 Server-only update, desktop remains 1.2.31. Streaming backends now expose a
 common create_stream interface. Nemotron English 0.6B uses sherpa-onnx 1.13.8,
@@ -23,8 +23,10 @@ and silent audio. Upstream 6.625-second sample: median chunk 71 ms, max 76 ms,
 RTF 0.131 on the development PC CPU; not a server or headset accuracy benchmark.
 Activation script parses successfully. Source/model copied and hash-verified on
 the server share with source backups; config is unchanged. User must run the
-helper on the server because SSH/WinRM are unavailable. Activation and personal
-accuracy testing are pending. No app restart, GitHub push or installer rebuild.
+helper on the server because SSH/WinRM are unavailable. User ran the helper successfully. Authenticated health confirms streaming_model=
+nemotron, loaded=true, no errors; Whisper is also loaded. Server sample benchmark:
+median chunk 82 ms, max 91 ms, final flush 81 ms, RTF 0.151. Personal headset
+accuracy testing is pending. No app restart, GitHub push or installer rebuild.
 
 ## Installed candidate: 1.2.31 — retained music suggestions
 
