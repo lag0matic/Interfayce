@@ -5,7 +5,6 @@ import threading
 import time
 
 from flask import jsonify, request
-from .backends import MoonshineBackend, MoonshineStream
 
 
 @dataclass
@@ -39,18 +38,16 @@ def install_streaming(app, registry, config):
             if len(sessions) >= 2:
                 return jsonify(error="Streaming sessions busy"), 429
             if model_name not in registry.names:
-                return jsonify(error="Streaming Moonshine model is not configured"), 503
+                return jsonify(error="Streaming model is not configured"), 503
             try:
                 backend = registry.get(model_name)
-                if not isinstance(backend, MoonshineBackend):
-                    return jsonify(error="Streaming requires the Moonshine backend"), 503
-                stream = MoonshineStream(backend)
+                stream = backend.create_stream()
             except Exception:
                 app.logger.exception("Could not open streaming recognizer")
                 return jsonify(error="Streaming model unavailable; check server log"), 503
             key = secrets.token_hex(16)
             sessions[key] = Session(stream, time.monotonic())
-            return jsonify(session=key, sample_rate=16000)
+            return jsonify(session=key, sample_rate=16000, model=model_name)
 
     @app.route("/v1/audio/streams/<key>", methods=["POST", "DELETE"])
     def update(key):

@@ -1,5 +1,7 @@
 .venv/
 config.json
+config.json.pending
+update-backups/
 models/
 cuda-runtime/
 logs/
