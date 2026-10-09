@@ -26,7 +26,8 @@ from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_choices import MusicChoices
 from .music_conversation import run_music_request
 from .music_llm import MusicConversationMemory, MusicLlmValidationError
-from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
+from .parakeet_stt import ParakeetTranscriber, capture_microphone_once, capture_microphone_until
+from .music_voice_capture import MusicVoiceCapture
 from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
@@ -129,6 +130,7 @@ class VoiceRuntime:
         self.music_conversations = {name: MusicConversationMemory(max_turns=5, max_age_seconds=300)
                                     for name in ("spotify", "youtube")}
         self.music_choices = MusicChoices()
+        self.music_capture = MusicVoiceCapture(self.music_command)
         self.chatbox = ChatboxCoordinator(
             song_enabled=lambda: load_settings().song_announce_enabled)
         self.comms = CommsDictation(
@@ -340,13 +342,16 @@ class VoiceRuntime:
         finally:
             self._warm_lock.release()
 
-    def music_command(self) -> str:
+    def music_command(self, *, stop_event=None) -> str:
         if not self.command_lock.acquire(blocking=False):
             return "BUSY\t\tVoice capture is already active."
         try:
             try:
                 LOGGER.info("Music microphone capture started")
-                audio = capture_microphone_with_cues()
+                audio = (capture_microphone_with_cues() if stop_event is None else
+                         capture_with_cues(capture_microphone_until, stop_event,
+                                           max_seconds=30.0, cue=play_capture_cue,
+                                           end_async=True))
                 LOGGER.info("Music microphone capture completed: rate=%s width=%s bytes=%s",
                     getattr(audio, "sample_rate", "?"), getattr(audio, "sample_width", "?"),
                     len(getattr(audio, "frame_data", b"")))
@@ -522,6 +527,14 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 return
             if self.path == "/listen/music":
                 self._reply(200, runtime.music_command())
+            elif self.path == "/listen/music/start":
+                token = runtime.music_capture.start()
+                self._reply(200 if token else 409, token or "busy")
+            elif self.path.startswith("/listen/music/stop/"):
+                stopped = runtime.music_capture.stop(self.path.rsplit("/", 1)[-1])
+                self._reply(200 if stopped else 409, "stopped" if stopped else "expired")
+            elif self.path.startswith("/listen/music/result/"):
+                self._reply(200, runtime.music_capture.result(self.path.rsplit("/", 1)[-1]))
             elif self.path == "/warm":
                 threading.Thread(
                     target=runtime.warm, name="InterfayceVoiceWarm", daemon=True

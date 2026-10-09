@@ -1,5 +1,23 @@
 # Interfayce build status
 
+## Installed 1.2.33 — music microphone hold-to-talk
+
+Music wrist capture previously started on button-down and ignored button-up;
+silence detection ended recording and LISTENING persisted through the request.
+The wrist now starts a release-aware session, records while held, and sends
+button-up even after the pointer leaves the mic. Recording uses the existing
+200 ms tail and 30-second safety maximum. Release shows PROCESSING while the
+existing transcriber and music planner finish. Legacy /listen/music is unchanged.
+Each capture owns its stop event and token, preventing early-release and stale
+release races. Command locking still serializes music with other voice work.
+234 tests passed; two server modules skipped in the base environment. Native
+Release build and installer passed. Installed/restarted October 9; overlay
+version 1.2.33, authenticated health 200 ready, one overlay and service. All four
+installed executable hashes match staging; settings and protected LLM key are
+unchanged. No model requests or actual music playback dispatched during
+validation; headset release behavior awaits the user's trial. No GitHub push.
+Installer SHA256: 5C2D9F10AD3D74DBBC29B4303677C5083DFA2570400FE390CABE47D48ECDA0DD.
+
 ## Installed 1.2.32 — direct OpenAI music compatibility
 
 For api.openai.com, the client sends max_completion_tokens instead of the

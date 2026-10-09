@@ -301,8 +301,8 @@ std::string WideToUtf8(const std::wstring& text) {
     return result;
 }
 
-std::wstring RequestMusicVoiceCommand() {
-    const auto response = LocalHttpRequest("POST", "/listen/music", std::chrono::seconds(180));
+std::wstring RequestMusicVoiceCommand(const std::string& token) {
+    const auto response = LocalHttpRequest("POST", "/listen/music/result/" + token, std::chrono::seconds(180));
     return response ? Utf8ToWide(*response) : L"ERROR\t\tVoice service did not respond.";
 }
 
@@ -1498,6 +1498,7 @@ int main(int argc, char** argv) {
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
     bool commsMicHeld = false;
+    std::string musicMicHeldToken;
     std::array<std::wstring, 4> commsShortcuts;
     AssistantPanelState assistantState;
     std::future<std::optional<AssistantPanelState>> assistantCommand;
@@ -2161,6 +2162,17 @@ int main(int argc, char** argv) {
         }
         // Push-to-talk release belongs to the press that armed it, even if the
         // aiming dot has drifted away from the mic icon in the meantime.
+        if (!wristUiClick.bState && !musicMicHeldToken.empty()) {
+            const auto stopped = LocalHttpRequest("POST", "/listen/music/stop/" + musicMicHeldToken,
+                std::chrono::seconds(2));
+            musicMicHeldToken.clear();
+            renderer.SetMusicVoiceStatus(stopped ? L"PROCESSING..." : L"VOICE STOP ERROR", false);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
         if (wristUiClick.bChanged && !wristUiClick.bState && commsMicHeld) {
             commsMicHeld = false;
             if (const auto changed = RequestCommsState("POST", "/comms/stop")) {
@@ -2310,9 +2322,15 @@ int main(int argc, char** argv) {
                     LaunchVoiceService(directory, projectRoot);
                     renderer.SetMusicVoiceStatus(L"VOICE WARMING", false);
                 } else {
-                    renderer.SetMusicVoiceStatus(L"LISTENING...", true);
-                    musicVoiceCommand = std::async(
-                        std::launch::async, [] { return RequestMusicVoiceCommand(); });
+                    const auto token = LocalHttpRequest("POST", "/listen/music/start", std::chrono::seconds(2));
+                    if (token && token->size() == 32) {
+                        musicMicHeldToken = *token;
+                        renderer.SetMusicVoiceStatus(L"LISTENING...", true);
+                        musicVoiceCommand = std::async(std::launch::async,
+                            [captureToken = *token] { return RequestMusicVoiceCommand(captureToken); });
+                    } else {
+                        renderer.SetMusicVoiceStatus(L"VOICE BUSY / UNAVAILABLE", false);
+                    }
                 }
                 if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                         rigLine, rigSlots, mountReady, desktopPanel)) {
@@ -2721,6 +2739,7 @@ int main(int argc, char** argv) {
                 && musicVoiceCommand.wait_for(std::chrono::milliseconds(0))
                     == std::future_status::ready) {
                 const auto response = musicVoiceCommand.get();
+                musicMicHeldToken.clear();
                 std::wcout << L"music voice response: " << response << L'\n';
                 renderer.SetMusicVoiceStatus(VoiceStatusFromResponse(response), false);
                 nextMusicPoll = musicNow;
