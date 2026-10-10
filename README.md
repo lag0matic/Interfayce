@@ -290,7 +290,9 @@ The installer is written beneath `packaging\out\installer`.
 
 ### SlimeVR is shown as offline
 
-Confirm SlimeVR Server is running and listening on its normal local service port. The installed build contains the pinned SolarXR adapter. A raw `native\build\bin\InterfayceOverlay.exe` development launch does not include that staged dependency and can report SlimeVR offline even while the server is healthy.
+The current adapter targets the SlimeVR 22 server rewrite, tested against 22.0.0-rc.1. The Slime light requires a decoded tracker-data response, not just an open port. Older servers require an older Interfayce build. The installed build contains the pinned SolarXR adapter. A raw `native\build\bin\InterfayceOverlay.exe` development launch does not include that staged dependency and can report SlimeVR offline even while the server is healthy.
+
+If Slime is connected but the body diagram shows `--`, check tracker assignments in SlimeVR. Unassigned, disconnected, or missing-battery trackers are not shown on the body diagram. The new server may need its roles assigned again after migrating from an older installation.
 
 ### Speech is missing or slow
 

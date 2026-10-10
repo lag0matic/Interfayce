@@ -10,7 +10,7 @@ $stage = Join-Path $outRoot "stage"
 $cache = Join-Path $PSScriptRoot ".cache"
 $work = Join-Path $PSScriptRoot ".work"
 $protocolRoot = Join-Path $cache "solarxr-protocol"
-$protocolCommit = "00c38a6dc28070b30850a89c26b17928e56245d4"
+$protocolCommit = "7a5e15c28bb7a0a15b722a93077a7abf8d97a845"
 $nodeVersion = "24.15.0"
 $appVersion = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
 $parakeetModel = Join-Path $projectRoot "models\parakeet"
@@ -63,6 +63,9 @@ try {
         npm --prefix $protocolRoot run build
         if ($LASTEXITCODE -ne 0) { throw "Pinned SolarXR protocol build failed." }
     }
+    if ((git -C $protocolRoot rev-parse HEAD).Trim() -ne $protocolCommit) {
+        throw "SolarXR cache does not match the release pin; rerun without SkipProtocolRefresh."
+    }
 
     $nodeArchive = Join-Path $cache "node-v$nodeVersion-win-x64.zip"
     $nodeExtract = Join-Path $cache "node-v$nodeVersion-win-x64"
@@ -83,7 +86,9 @@ try {
     Copy-Item native\build\bin\assets $stage -Recurse
     Copy-Item (Join-Path $work "dist\InterfayceService") (Join-Path $stage "service") -Recurse
     New-Item -ItemType Directory -Path (Join-Path $stage "tools\vendor\solarxr-protocol") -Force | Out-Null
-    Copy-Item tools\slimevr_probe.cjs,tools\slimevr_reset.cjs (Join-Path $stage "tools")
+    # v22 generated JS is ESM; retain the upstream module declaration.
+    Copy-Item (Join-Path $protocolRoot "package.json") (Join-Path $stage "tools\vendor\solarxr-protocol")
+    Copy-Item tools\slimevr_probe.cjs,tools\slimevr_reset.cjs,tools\slimevr_protocol.cjs (Join-Path $stage "tools")
     Copy-Item (Join-Path $protocolRoot "protocol\typescript\dist") `
         (Join-Path $stage "tools\vendor\solarxr-protocol\protocol\typescript\dist") -Recurse
     Copy-Item (Join-Path $protocolRoot "node_modules\flatbuffers") `

@@ -674,9 +674,12 @@ SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoo
         + (projectRoot / "tools" / "slimevr_probe.cjs").wstring() + L"\" --summary";
     if (const auto captured = RunHiddenAndCapture(
             std::move(command), projectRoot, std::chrono::milliseconds(6500))) {
-        status.received = true;
         const auto newline = captured->find_first_of("\r\n");
         const std::string line = captured->substr(0, newline);
+        if (std::count(line.begin(), line.end(), '\t') != 8) return status;
+        const auto guard = line.substr(line.rfind('\t') + 1);
+        if (guard != "MOUNT_OK" && guard != "MOUNT_WAIT") return status;
+        status.received = true;
         size_t start = 0;
         for (size_t index = 0; index < status.slots.size() && start <= line.size(); ++index) {
             const auto end = line.find('\t', start);
@@ -1173,8 +1176,9 @@ int main(int argc, char** argv) {
         // speech models on every app start without delaying the OpenVR input loop.
         LocalHttpRequest("POST", "/warm", std::chrono::milliseconds(150));
     }
-    bool slimeAvailable = SlimeAdapterAvailable(projectRoot)
+    bool slimeReachable = SlimeAdapterAvailable(projectRoot)
         && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
+    bool slimeAvailable = false; // Green only after a valid data-feed response.
     bool musicAvailable = (IsProcessRunning(L"Spotify.exe") || IsProcessRunning(L"YouTube Music.exe"));
     const std::wstring initialMusicLine = musicAvailable
         ? L"Loading music..." : L"Open your music player";
@@ -1598,7 +1602,13 @@ int main(int argc, char** argv) {
         }
         if (healthPoll.valid() && healthPoll.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             const auto [result, slimeHealthy] = healthPoll.get();
-            slimeAvailable = slimeHealthy;
+            if (slimeReachable != slimeHealthy) nextRigPoll = std::chrono::steady_clock::now();
+            slimeReachable = slimeHealthy;
+            if (!slimeReachable) {
+                slimeAvailable = false;
+                rigSlots.fill(L"");
+                mountReady = false;
+            }
             renderer.SetSlimeAvailable(slimeAvailable);
             renderer.SetServiceStatus(result ? Utf8ToWide(*result) : L"TTS\toffline\tLocal voice service unavailable\nSTT\toffline\tLocal voice service unavailable\nLLM\toffline\tLocal voice service unavailable\nSPOTIFY\tunknown\tLocal voice service unavailable");
             if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
@@ -3012,7 +3022,7 @@ int main(int argc, char** argv) {
             controllerBatteries = updated;
             rigLine = ReadControllerBatteryLine(system);
         }
-        if (slimeAvailable && !slimeBatteryPoll.valid() && batteryNow >= nextRigPoll) {
+        if (slimeReachable && !slimeBatteryPoll.valid() && batteryNow >= nextRigPoll) {
             nextRigPoll = batteryNow + std::chrono::seconds(30);
             slimeBatteryPoll = std::async(std::launch::async,
                 [projectRoot] { return ReadSlimeTrackerBatteries(projectRoot); });
@@ -3020,12 +3030,22 @@ int main(int argc, char** argv) {
         if (slimeBatteryPoll.valid()
             && slimeBatteryPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             const auto updated = slimeBatteryPoll.get();
-            if (updated.received) {
+            const bool healthy = slimeReachable && updated.received;
+            batteryStateChanged = batteryStateChanged || slimeAvailable != healthy;
+            slimeAvailable = healthy;
+            renderer.SetSlimeAvailable(slimeAvailable);
+            if (healthy) {
                 batteryStateChanged = batteryStateChanged || updated.slots != rigSlots
                     || updated.mountReady != mountReady;
                 batterySampleReady = true;
                 rigSlots = updated.slots;
                 mountReady = updated.mountReady;
+            } else {
+                batteryStateChanged = true;
+                batterySampleReady = true;
+                rigSlots.fill(L"");
+                mountReady = false;
+                nextRigPoll = batteryNow + std::chrono::seconds(5);
             }
         }
         if (batterySampleReady) {

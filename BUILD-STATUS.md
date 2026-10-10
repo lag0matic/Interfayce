@@ -1,5 +1,28 @@
 # Interfayce build status
 
+## Installed 1.2.34 — SlimeVR 22 server compatibility
+
+SolarXR pinned to 7a5e15c28bb7a0a15b722a93077a7abf8d97a845 for the v22 rewrite.
+New adapter uses named body-role enums, v22 mounting availability and reset
+lifecycle messages. Single read-only polls request only battery/device info and
+tracker roles/status. Missing/unassigned/disconnected roles remain blank; empty
+valid feeds are healthy, while close/decode/timeout failures exit nonzero.
+Slime status requires a valid feed response; stale rig values clear on failure.
+Reset requests retain server-configured delay/mounting method; no live resets
+were dispatched. Packaging includes ESM metadata and checks the protocol pin.
+
+Validation: ten offline adapter tests and 234 Python tests passed (2 skipped).
+Live v22.0.0-rc.1 server returned ten trackers with battery readings; all roles
+were NONE/unassigned, so body slots correctly remain blank. Native Release and
+installer passed. Installed/launched October 10: version 1.2.34, health 200 ready,
+one overlay/service, all four binaries and five adapter/protocol files verified
+against staging, settings and key unchanged. Installed JS probe and native
+--slime-summary both returned valid data with MOUNT_WAIT; native exit 0.
+Actual calibration remains for the user's headset test. No GitHub push.
+Installer SHA256: 5FB62362206A1272F09B9DB879FD1A2B6E8696175C772F1F2511DFAF7C1E0F95.
+Older pre-rewrite servers are not supported
+by this adapter; see README. No server configuration or assignments changed.
+
 ## Installed 1.2.33 — music microphone hold-to-talk
 
 Music wrist capture previously started on button-down and ignored button-up;
