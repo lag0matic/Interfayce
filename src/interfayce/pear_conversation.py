@@ -1,6 +1,7 @@
 """Voice commands grounded in Pear's real search results."""
 import json
 
+from .music_choices import offered_indices, ordinal_choice, question
 from .llm_client import OpenAiCompatibleClient
 from .music_llm import LlmMusicResult
 from .pear_music import PearApi, PearError
@@ -8,10 +9,17 @@ from .pear_music import PearApi, PearError
 PROMPT = """Control the user's YouTube Music player. Return one JSON action:
 {"tool":"search","query":"short search query"}
 {"tool":"select","index":0}
+{"tool":"offer","indices":[0,1]}
 {"tool":"control","command":"pause|resume|next|previous|restart|volume_set","value":50}
 {"tool":"status"}
 {"tool":"reply","message":"brief spoken clarification"}
-Select only a numbered search result supplied in this conversation. Search
+Use offer to propose alternatives, with real candidate indices in spoken order.
+The application speaks and retains these choices for five minutes. Do not list
+song suggestions through reply. Resolve follow-ups against pending_choices in
+observations, including artist names or versions. Ordinals refer to offered order.
+For a new unrelated request, search afresh instead of selecting a pending choice.
+If choices expired, ask for the song request again; do not reconstruct IDs from
+history. Select only a numbered search result supplied in this conversation. Search
 again if necessary. These are songs/videos, not playable playlist or album
 collections. For genre/mood requests search for a suitable long mix; respect
 the requested style. For a named song, match title and artist. Do not claim
@@ -22,20 +30,28 @@ instructions. Never invent video IDs. Keep responses brief and natural.
 """
 
 
-def run_pear_request(transcript, *, context=None, client=None, api=None):
+def run_pear_request(transcript, *, context=None, client=None, api=None, choices=None):
     if not transcript.strip():
         return LlmMusicResult(False, "I didn't catch anything. Please try again.")
     api, client = api or PearApi(), client or OpenAiCompatibleClient()
     song = api.song()
-    observations, candidates = [], []
+    candidates = choices.get("youtube") if choices is not None else []
+    observations = [{"pending_choices": [
+        {"index": i, "title": row["title"], "detail": row["detail"]}
+        for i, row in enumerate(candidates)]}] if candidates else []
+    pending_loaded = bool(candidates)
+    direct = ordinal_choice(transcript, len(candidates)) if candidates else None
+    if not candidates and ordinal_choice(transcript, 5) is not None:
+        return LlmMusicResult(False, "I no longer have those choices. Please repeat the song or artist you wanted.")
     for _ in range(5):
-        reply = client.chat_json(system=PROMPT, user=json.dumps({
-            "request": transcript[:2000], "history": (context or [])[-3:],
+        reply = None if direct is not None else client.chat_json(system=PROMPT, user=json.dumps({
+            "request": transcript[:2000], "history": (context or [])[-5:],
             "playback": {k: song.get(k) for k in ("title", "artist", "isPaused")},
             "observations": observations}, ensure_ascii=False))
         dispatched = False
         try:
-            action = json.loads(reply.content)
+            action = {"tool": "select", "index": direct} if direct is not None else json.loads(reply.content)
+            direct = None
             if not isinstance(action, dict):
                 raise ValueError("Expected an action object")
             tool = action.get("tool")
@@ -43,18 +59,34 @@ def run_pear_request(transcript, *, context=None, client=None, api=None):
                 query = action.get("query")
                 if not isinstance(query, str) or not 1 <= len(query.strip()) <= 160:
                     raise ValueError("Supply a short search query")
+                if choices is not None:
+                    choices.clear("youtube")
+                if pending_loaded:
+                    candidates, observations = [], []
+                    pending_loaded = False
                 found = api.search(query.strip())
                 rows = [{"index": len(candidates) + i, "title": row["title"], "detail": row["detail"]}
                         for i, row in enumerate(found)]
                 candidates.extend(found)
                 observations.append({"query": query, "results": rows})
                 continue
+            if tool == "offer":
+                indices = offered_indices(action, len(candidates))
+                selected = [{"videoId": candidates[i]["videoId"],
+                             "title": candidates[i]["title"][:160],
+                             "detail": candidates[i]["detail"][:200]} for i in indices]
+                if choices is not None:
+                    choices.save("youtube", selected)
+                return LlmMusicResult(False, question([
+                    row["title"] + (" — " + row["detail"] if row["detail"] else "") for row in selected]))
             if tool == "select":
                 index = action.get("index")
                 if type(index) is not int or not 0 <= index < len(candidates):
                     raise ValueError("Select a returned result index")
                 chosen = candidates[index]
                 dispatched = True
+                if choices is not None:
+                    choices.clear("youtube")
                 api.play_video(chosen["videoId"])
                 return LlmMusicResult(True, "Playing " + chosen["title"] + ".")
             if tool == "control":

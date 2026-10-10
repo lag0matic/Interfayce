@@ -140,6 +140,14 @@ Non-secret settings are stored in:
 
 Credentials and OAuth tokens are stored separately using Windows DPAPI under the current Windows account. API keys, tokens, personal endpoints, and LAN addresses are not built into the application or installer.
 
+Music suggestions are retained for five minutes in memory, separately for Spotify
+and YouTube Music. The assistant offers numbered choices in their spoken order;
+follow-ups such as “the second one,” “the original,” or “the one by Feint” select
+from those exact search results. A fresh search replaces pending choices, and a
+playback attempt consumes them even if its response is uncertain. Expired choices
+require a new request. The last five exchanges are also retained for five minutes
+per player; this context is cleared when the service exits.
+
 ### YouTube Music (Pear Desktop)
 
 Install [Pear Desktop](https://github.com/pear-devs/pear-desktop), sign in to
@@ -278,11 +286,20 @@ powershell -ExecutionPolicy Bypass -File packaging\build-installer.ps1
 
 The installer is written beneath `packaging\out\installer`.
 
+The model bundle is compressed once into `packaging\.cache\parakeet-model.zip`.
+Later builds verify source-file hashes and the archive checksum before reusing it;
+changed models or a damaged archive trigger a rebuild. The offline installer
+embeds that archive without recompression and extracts it into the normal model
+directory. Both pinned SolarXR protocol generations are bundled for automatic
+legacy/v22 server detection.
+
 ## Troubleshooting
 
 ### SlimeVR is shown as offline
 
-Confirm SlimeVR Server is running and listening on its normal local service port. The installed build contains the pinned SolarXR adapter. A raw `native\build\bin\InterfayceOverlay.exe` development launch does not include that staged dependency and can report SlimeVR offline even while the server is healthy.
+The installer bundles both the legacy SolarXR adapter and the SlimeVR 22 rewrite adapter. A read-only data request selects the matching protocol automatically, including after reverting servers. Reset commands use the detected protocol on that same connection. The Slime light requires a decoded tracker-data response, not just an open port. A raw `native\build\bin\InterfayceOverlay.exe` development launch does not include the staged dependencies and can report SlimeVR offline even while the server is healthy.
+
+If Slime is connected but the body diagram shows `--`, check tracker assignments in SlimeVR. Unassigned, disconnected, or missing-battery trackers are not shown on the body diagram. The new server may need its roles assigned again after migrating from an older installation.
 
 ### Speech is missing or slow
 

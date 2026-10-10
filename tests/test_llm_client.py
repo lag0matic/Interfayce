@@ -23,6 +23,33 @@ class _Response:
 
 
 class LlmClientTests(unittest.TestCase):
+    def test_openai_uses_completion_limit_and_omits_reasoning_temperature(self):
+        client = OpenAiCompatibleClient(AppSettings(
+            llm_enabled=True, llm_endpoint="https://api.openai.com/v1",
+            llm_model="gpt-5.6-luna", llm_reasoning_effort="low"))
+        response = _Response({"choices": [{"message": {"content": '{}'}}]})
+        with patch("interfayce.llm_client.load_api_key", return_value="test"), \
+                patch("interfayce.llm_client.urlopen", return_value=response) as send:
+            client.chat_json(system="Return JSON", user="play a song")
+        body = json.loads(send.call_args.args[0].data)
+        self.assertEqual(body["max_completion_tokens"], 220)
+        self.assertNotIn("max_tokens", body)
+        self.assertNotIn("temperature", body)
+        self.assertEqual(body["reasoning_effort"], "low")
+
+    def test_other_providers_keep_their_existing_payload(self):
+        client = OpenAiCompatibleClient(AppSettings(
+            llm_enabled=True, llm_endpoint="https://example.test/v1",
+            llm_model="gpt-5.6-luna", llm_reasoning_effort="low", llm_temperature=0.65))
+        response = _Response({"choices": [{"message": {"content": '{}'}}]})
+        with patch("interfayce.llm_client.load_api_key", return_value="test"), \
+                patch("interfayce.llm_client.urlopen", return_value=response) as send:
+            client.chat_json(system="Return JSON", user="play a song")
+        body = json.loads(send.call_args.args[0].data)
+        self.assertEqual(body["max_tokens"], 220)
+        self.assertEqual(body["temperature"], 0.65)
+        self.assertNotIn("max_completion_tokens", body)
+
     def test_key_is_protected_and_request_is_constrained_to_json(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
             "INTERFAYCE_SECURE_DIRECTORY": directory

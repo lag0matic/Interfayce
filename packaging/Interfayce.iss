@@ -1,6 +1,6 @@
 #define AppName "Interfayce"
 #ifndef AppVersion
-#define AppVersion "1.2.30"
+#define AppVersion "1.2.35"
 #endif
 #define AppPublisher "Lag0Matic"
 
@@ -18,6 +18,7 @@ SetupIconFile=..\assets\branding\interfayce.ico
 UninstallDisplayIcon={app}\InterfayceOverlay.exe
 Compression=lzma2/ultra64
 SolidCompression=yes
+ArchiveExtraction=full
 WizardStyle=modern dynamic
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -33,6 +34,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
+Source: ".cache\parakeet-model.zip"; DestDir: "{tmp}"; DestName: "interfayce-parakeet.zip"; Flags: nocompression deleteafterinstall
+Source: "{tmp}\interfayce-parakeet.zip"; DestDir: "{app}\models\parakeet"; ExternalSize: {#ModelUnpackedSize}; Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "out\stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

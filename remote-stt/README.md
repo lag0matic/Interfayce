@@ -1,5 +1,31 @@
 # Interfayce Remote STT
 
+## Nemotron live-caption trial (October 2026)
+
+Run **Enable Nemotron.cmd on the server PC** to try Nemotron English streaming
+with 560 ms encoder chunks. The helper adds pinned sherpa-onnx 1.13.8, verifies
+the official model archive SHA256, and benchmarks actual incremental decoding
+before changing `streaming_model`. This Windows trial uses four CPU threads;
+it does not consume additional GPU memory or alter Whisper command recognition.
+The existing client keeps sending audio while you speak, using the same HTTP
+streaming protocol. There is no post-release second transcription pass.
+
+Activation requires nonempty live partials, a real-time factor below 0.8 and no
+individual test chunk taking two seconds. These are startup safeguards, not
+proof of accuracy on your voice. The benchmark and upgrade log are saved in
+`logs/nemotron-benchmark.json` and `logs/nemotron-upgrade.log`. Health reports the
+selected streaming model. Startup failure restores the previous config.
+**Restore Moonshine.cmd** selects Moonshine again and restarts the server.
+
+For a personal comparison, record a mono PCM16 WAV at 16 kHz and run
+`.venv\Scripts\python.exe benchmark-streaming.py --audio sample.wav --backend nemotron --output logs/nemotron-sample.json`,
+then repeat with `--backend moonshine` and a different output filename. These
+reports include partial and final transcripts; recordings are supplied explicitly,
+and normal chat audio is not saved. Neither startup benchmark records your mic.
+
+The pinned English model export is maintained by sherpa-onnx:
+https://k2-fsa.github.io/sherpa/onnx/nemo/nemotron-streaming.html
+
 A copyable Windows speech-to-text service for Interfayce. It exposes the same
 `POST /v1/audio/transcriptions` shape as OpenAI, keeps the selected model warm,
 and can compare two local engines on the same recordings:

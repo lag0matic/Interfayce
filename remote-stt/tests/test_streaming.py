@@ -20,7 +20,7 @@ def test_stream_auth_order_bounds_and_final_cleanup():
     registry = app.extensions["stt_registry"]
     headers = {"Authorization": "Bearer test"}
     with patch.object(registry, "get", return_value=MoonshineBackend({}, Path("."))), \
-         patch("stt_server.streaming.MoonshineStream", Stream):
+         patch.object(MoonshineBackend, "create_stream", lambda self: Stream(self)):
         client = app.test_client()
         assert client.post("/v1/audio/streams").status_code == 401
         key = client.post("/v1/audio/streams", headers=headers).json["session"]

@@ -10,7 +10,9 @@ $stage = Join-Path $outRoot "stage"
 $cache = Join-Path $PSScriptRoot ".cache"
 $work = Join-Path $PSScriptRoot ".work"
 $protocolRoot = Join-Path $cache "solarxr-protocol"
-$protocolCommit = "00c38a6dc28070b30850a89c26b17928e56245d4"
+$protocolCommit = "7a5e15c28bb7a0a15b722a93077a7abf8d97a845"
+$legacyProtocolRoot = Join-Path $cache "solarxr-protocol-legacy"
+$legacyProtocolCommit = "00c38a6dc28070b30850a89c26b17928e56245d4"
 $nodeVersion = "24.15.0"
 $appVersion = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
 $parakeetModel = Join-Path $projectRoot "models\parakeet"
@@ -63,6 +65,26 @@ try {
         npm --prefix $protocolRoot run build
         if ($LASTEXITCODE -ne 0) { throw "Pinned SolarXR protocol build failed." }
     }
+    if ((git -C $protocolRoot rev-parse HEAD).Trim() -ne $protocolCommit) {
+        throw "SolarXR cache does not match the release pin; rerun without SkipProtocolRefresh."
+    }
+
+    if (-not (Test-Path -LiteralPath $legacyProtocolRoot)) {
+        git clone https://github.com/SlimeVR/SolarXR-Protocol.git $legacyProtocolRoot
+    }
+    if (-not $SkipProtocolRefresh) {
+        git -C $legacyProtocolRoot fetch --all --tags --prune
+        git -C $legacyProtocolRoot checkout --detach $legacyProtocolCommit
+        npm --prefix $legacyProtocolRoot ci
+        if ($LASTEXITCODE -ne 0) { throw "Legacy SolarXR build failed." }
+    }
+    if ((git -C $legacyProtocolRoot rev-parse HEAD).Trim() -ne $legacyProtocolCommit) {
+        throw "Legacy SolarXR cache does not match release pin."
+    }
+    $modelArchiveJson = python (Join-Path $PSScriptRoot "prepare_model_archive.py") $parakeetModel $cache
+    if ($LASTEXITCODE -ne 0) { throw "Model archive preparation failed." }
+    $modelArchiveInfo = $modelArchiveJson | ConvertFrom-Json
+    Write-Host "Model archive cache hit: $($modelArchiveInfo.cached)"
 
     $nodeArchive = Join-Path $cache "node-v$nodeVersion-win-x64.zip"
     $nodeExtract = Join-Path $cache "node-v$nodeVersion-win-x64"
@@ -82,35 +104,27 @@ try {
     Copy-Item native\build\bin\interfayce.vrmanifest $stage
     Copy-Item native\build\bin\assets $stage -Recurse
     Copy-Item (Join-Path $work "dist\InterfayceService") (Join-Path $stage "service") -Recurse
-    New-Item -ItemType Directory -Path (Join-Path $stage "tools\vendor\solarxr-protocol") -Force | Out-Null
-    Copy-Item tools\slimevr_probe.cjs,tools\slimevr_reset.cjs (Join-Path $stage "tools")
-    Copy-Item (Join-Path $protocolRoot "protocol\typescript\dist") `
-        (Join-Path $stage "tools\vendor\solarxr-protocol\protocol\typescript\dist") -Recurse
-    Copy-Item (Join-Path $protocolRoot "node_modules\flatbuffers") `
-        (Join-Path $stage "tools\vendor\solarxr-protocol\node_modules\flatbuffers") -Recurse
-    $protocolLicenses = @(
-        (Join-Path $protocolRoot "LICENSE-MIT"),
-        (Join-Path $protocolRoot "LICENSE-APACHE")
-    )
-    Copy-Item -LiteralPath $protocolLicenses `
-        -Destination (Join-Path $stage "tools\vendor\solarxr-protocol")
+    New-Item -ItemType Directory -Path (Join-Path $stage "tools") -Force | Out-Null
+    Copy-Item tools\slimevr_probe.cjs,tools\slimevr_reset.cjs,tools\slimevr_protocol.cjs,tools\slimevr_connection.cjs (Join-Path $stage "tools")
+    foreach ($source in @($protocolRoot, $legacyProtocolRoot)) {
+        $vendor = Join-Path $stage ("tools\vendor\" + (Split-Path $source -Leaf))
+        New-Item -ItemType Directory -Path $vendor -Force | Out-Null
+        Copy-Item (Join-Path $source "package.json") $vendor
+        Copy-Item (Join-Path $source "protocol\typescript\dist") (Join-Path $vendor "protocol\typescript\dist") -Recurse
+        Copy-Item (Join-Path $source "node_modules\flatbuffers") (Join-Path $vendor "node_modules\flatbuffers") -Recurse
+        Copy-Item (Join-Path $source "LICENSE-MIT"),(Join-Path $source "LICENSE-APACHE") $vendor
+    }
     New-Item -ItemType Directory -Path (Join-Path $stage "runtime") -Force | Out-Null
     Copy-Item (Join-Path $nodeExtract "node.exe"),(Join-Path $nodeExtract "LICENSE") `
         (Join-Path $stage "runtime")
     Copy-Item assets\branding\interfayce-icon-1024.png (Join-Path $stage "Interfayce.png")
     Copy-Item LICENSE (Join-Path $stage "LICENSE")
-    New-Item -ItemType Directory -Path (Join-Path $stage "models\parakeet") -Force | Out-Null
-    Copy-Item -LiteralPath ($parakeetFiles | ForEach-Object { Join-Path $parakeetModel $_ }) `
-        -Destination (Join-Path $stage "models\parakeet")
-    Copy-Item -LiteralPath (Join-Path $parakeetModel "MODEL-SOURCE.md") `
-        -Destination (Join-Path $stage "models\parakeet")
-
     $iscc = @(
         "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe",
         "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $iscc) { throw "Inno Setup 6 is required to build the installer." }
-    & $iscc "/DAppVersion=$appVersion" (Join-Path $PSScriptRoot "Interfayce.iss")
+    & $iscc "/DAppVersion=$appVersion" "/DModelUnpackedSize=$($modelArchiveInfo.unpacked_size)" (Join-Path $PSScriptRoot "Interfayce.iss")
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
 
     Get-FileHash (Join-Path $outRoot "installer\Interfayce-Setup-$appVersion.exe") -Algorithm SHA256

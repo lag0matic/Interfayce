@@ -301,8 +301,8 @@ std::string WideToUtf8(const std::wstring& text) {
     return result;
 }
 
-std::wstring RequestMusicVoiceCommand() {
-    const auto response = LocalHttpRequest("POST", "/listen/music", std::chrono::seconds(180));
+std::wstring RequestMusicVoiceCommand(const std::string& token) {
+    const auto response = LocalHttpRequest("POST", "/listen/music/result/" + token, std::chrono::seconds(180));
     return response ? Utf8ToWide(*response) : L"ERROR\t\tVoice service did not respond.";
 }
 
@@ -674,9 +674,12 @@ SlimeRigStatus ReadSlimeTrackerBatteries(const std::filesystem::path& projectRoo
         + (projectRoot / "tools" / "slimevr_probe.cjs").wstring() + L"\" --summary";
     if (const auto captured = RunHiddenAndCapture(
             std::move(command), projectRoot, std::chrono::milliseconds(6500))) {
-        status.received = true;
         const auto newline = captured->find_first_of("\r\n");
         const std::string line = captured->substr(0, newline);
+        if (std::count(line.begin(), line.end(), '\t') != 8) return status;
+        const auto guard = line.substr(line.rfind('\t') + 1);
+        if (guard != "MOUNT_OK" && guard != "MOUNT_WAIT") return status;
+        status.received = true;
         size_t start = 0;
         for (size_t index = 0; index < status.slots.size() && start <= line.size(); ++index) {
             const auto end = line.find('\t', start);
@@ -1173,8 +1176,9 @@ int main(int argc, char** argv) {
         // speech models on every app start without delaying the OpenVR input loop.
         LocalHttpRequest("POST", "/warm", std::chrono::milliseconds(150));
     }
-    bool slimeAvailable = SlimeAdapterAvailable(projectRoot)
+    bool slimeReachable = SlimeAdapterAvailable(projectRoot)
         && IsLocalTcpPortOpen(21110, std::chrono::milliseconds(150));
+    bool slimeAvailable = false; // Green only after a valid data-feed response.
     bool musicAvailable = (IsProcessRunning(L"Spotify.exe") || IsProcessRunning(L"YouTube Music.exe"));
     const std::wstring initialMusicLine = musicAvailable
         ? L"Loading music..." : L"Open your music player";
@@ -1498,6 +1502,7 @@ int main(int argc, char** argv) {
     auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
     bool commsMicHeld = false;
+    std::string musicMicHeldToken;
     std::array<std::wstring, 4> commsShortcuts;
     AssistantPanelState assistantState;
     std::future<std::optional<AssistantPanelState>> assistantCommand;
@@ -1597,7 +1602,13 @@ int main(int argc, char** argv) {
         }
         if (healthPoll.valid() && healthPoll.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             const auto [result, slimeHealthy] = healthPoll.get();
-            slimeAvailable = slimeHealthy;
+            if (slimeReachable != slimeHealthy) nextRigPoll = std::chrono::steady_clock::now();
+            slimeReachable = slimeHealthy;
+            if (!slimeReachable) {
+                slimeAvailable = false;
+                rigSlots.fill(L"");
+                mountReady = false;
+            }
             renderer.SetSlimeAvailable(slimeAvailable);
             renderer.SetServiceStatus(result ? Utf8ToWide(*result) : L"TTS\toffline\tLocal voice service unavailable\nSTT\toffline\tLocal voice service unavailable\nLLM\toffline\tLocal voice service unavailable\nSPOTIFY\tunknown\tLocal voice service unavailable");
             if (!rawPanel && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(), rigLine, rigSlots, mountReady, desktopPanel)) {
@@ -2161,6 +2172,17 @@ int main(int argc, char** argv) {
         }
         // Push-to-talk release belongs to the press that armed it, even if the
         // aiming dot has drifted away from the mic icon in the meantime.
+        if (!wristUiClick.bState && !musicMicHeldToken.empty()) {
+            const auto stopped = LocalHttpRequest("POST", "/listen/music/stop/" + musicMicHeldToken,
+                std::chrono::seconds(2));
+            musicMicHeldToken.clear();
+            renderer.SetMusicVoiceStatus(stopped ? L"PROCESSING..." : L"VOICE STOP ERROR", false);
+            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                    rigLine, rigSlots, mountReady, desktopPanel)) {
+                const auto updatedTexture = renderer.Texture();
+                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+            }
+        }
         if (wristUiClick.bChanged && !wristUiClick.bState && commsMicHeld) {
             commsMicHeld = false;
             if (const auto changed = RequestCommsState("POST", "/comms/stop")) {
@@ -2310,9 +2332,15 @@ int main(int argc, char** argv) {
                     LaunchVoiceService(directory, projectRoot);
                     renderer.SetMusicVoiceStatus(L"VOICE WARMING", false);
                 } else {
-                    renderer.SetMusicVoiceStatus(L"LISTENING...", true);
-                    musicVoiceCommand = std::async(
-                        std::launch::async, [] { return RequestMusicVoiceCommand(); });
+                    const auto token = LocalHttpRequest("POST", "/listen/music/start", std::chrono::seconds(2));
+                    if (token && token->size() == 32) {
+                        musicMicHeldToken = *token;
+                        renderer.SetMusicVoiceStatus(L"LISTENING...", true);
+                        musicVoiceCommand = std::async(std::launch::async,
+                            [captureToken = *token] { return RequestMusicVoiceCommand(captureToken); });
+                    } else {
+                        renderer.SetMusicVoiceStatus(L"VOICE BUSY / UNAVAILABLE", false);
+                    }
                 }
                 if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                         rigLine, rigSlots, mountReady, desktopPanel)) {
@@ -2721,6 +2749,7 @@ int main(int argc, char** argv) {
                 && musicVoiceCommand.wait_for(std::chrono::milliseconds(0))
                     == std::future_status::ready) {
                 const auto response = musicVoiceCommand.get();
+                musicMicHeldToken.clear();
                 std::wcout << L"music voice response: " << response << L'\n';
                 renderer.SetMusicVoiceStatus(VoiceStatusFromResponse(response), false);
                 nextMusicPoll = musicNow;
@@ -2993,7 +3022,7 @@ int main(int argc, char** argv) {
             controllerBatteries = updated;
             rigLine = ReadControllerBatteryLine(system);
         }
-        if (slimeAvailable && !slimeBatteryPoll.valid() && batteryNow >= nextRigPoll) {
+        if (slimeReachable && !slimeBatteryPoll.valid() && batteryNow >= nextRigPoll) {
             nextRigPoll = batteryNow + std::chrono::seconds(30);
             slimeBatteryPoll = std::async(std::launch::async,
                 [projectRoot] { return ReadSlimeTrackerBatteries(projectRoot); });
@@ -3001,12 +3030,22 @@ int main(int argc, char** argv) {
         if (slimeBatteryPoll.valid()
             && slimeBatteryPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             const auto updated = slimeBatteryPoll.get();
-            if (updated.received) {
+            const bool healthy = slimeReachable && updated.received;
+            batteryStateChanged = batteryStateChanged || slimeAvailable != healthy;
+            slimeAvailable = healthy;
+            renderer.SetSlimeAvailable(slimeAvailable);
+            if (healthy) {
                 batteryStateChanged = batteryStateChanged || updated.slots != rigSlots
                     || updated.mountReady != mountReady;
                 batterySampleReady = true;
                 rigSlots = updated.slots;
                 mountReady = updated.mountReady;
+            } else {
+                batteryStateChanged = true;
+                batterySampleReady = true;
+                rigSlots.fill(L"");
+                mountReady = false;
+                nextRigPoll = batteryNow + std::chrono::seconds(5);
             }
         }
         if (batterySampleReady) {

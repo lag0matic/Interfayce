@@ -21,6 +21,9 @@ class Backend(ABC):
     def transcribe(self, audio_path: Path, language: str | None = None) -> str:
         """Transcribe an audio file."""
 
+    def create_stream(self):
+        raise NotImplementedError("This model does not support live transcription.")
+
 
 class FasterWhisperBackend(Backend):
     def __init__(self, options: dict[str, Any], model_root: Path):
@@ -70,6 +73,10 @@ class FasterWhisperBackend(Backend):
 
 
 class MoonshineBackend(Backend):
+    def create_stream(self):
+        self.warm()
+        return MoonshineStream(self)
+
     def __init__(self, options: dict[str, Any], model_root: Path):
         super().__init__(options, model_root)
         self._model: Any = None
@@ -148,4 +155,7 @@ def create_backend(options: dict[str, Any], model_root: Path) -> Backend:
         return FasterWhisperBackend(options, model_root)
     if backend_name == "moonshine":
         return MoonshineBackend(options, model_root)
+    if backend_name == "nemotron":
+        from .nemotron import NemotronBackend
+        return NemotronBackend(options, model_root)
     raise ValueError(f"Unsupported STT backend: {backend_name!r}")

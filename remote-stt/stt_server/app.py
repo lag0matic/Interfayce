@@ -28,6 +28,7 @@ class ModelState:
     options: dict[str, Any]
     backend: Backend | None = None
     error: str = ""
+    ready: bool = False
 
 
 class ModelRegistry:
@@ -46,7 +47,7 @@ class ModelRegistry:
         return {
             name: {
                 "backend": state.options.get("backend", "unknown"),
-                "loaded": state.backend is not None and not state.error,
+                "loaded": state.ready and not state.error,
                 "error": state.error or None,
             }
             for name, state in self._states.items()
@@ -63,8 +64,10 @@ class ModelRegistry:
         try:
             backend.warm()
             state.error = ""
+            state.ready = True
             return backend
         except Exception as error:
+            state.ready = False
             state.error = str(error)
             raise
 
@@ -125,6 +128,7 @@ def create_app(config: dict[str, Any], root: Path) -> Flask:
             status="ok",
             started_at=started_at.isoformat(),
             default_model=config["default_model"],
+            streaming_model=config.get("streaming_model", "moonshine"),
             models=registry.status(),
         )
 

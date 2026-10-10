@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from interfayce.voice import (
     MusicIntentKind,
@@ -45,6 +45,23 @@ class FakeTranscriber:
 
 
 class VoiceIntentTests(unittest.TestCase):
+    def test_music_hold_to_talk_uses_release_event_and_releases_command_lock(self):
+        runtime = object.__new__(VoiceRuntime)
+        runtime.command_lock = threading.Lock()
+        runtime.transcriber = Mock()
+        runtime.transcriber.transcribe.side_effect = RuntimeError("test transcription failure")
+        stop = threading.Event()
+        stop.set()
+        with patch("interfayce.voice_service.capture_microphone_until", return_value="audio") as capture, \
+                patch("interfayce.voice_service.capture_microphone_with_cues") as legacy:
+            result = runtime.music_command(stop_event=stop)
+        self.assertTrue(result.startswith("ERROR\t"))
+        self.assertIs(capture.call_args.args[0], stop)
+        self.assertEqual(capture.call_args.kwargs["max_seconds"], 30.0)
+        legacy.assert_not_called()
+        runtime.transcriber.transcribe.assert_called_once_with("audio")
+        self.assertFalse(runtime.command_lock.locked())
+
     def test_recognizes_bounded_transport_commands(self) -> None:
         cases = {
             "pause music": MusicIntentKind.PAUSE,

@@ -23,9 +23,11 @@ from .battery_alerts import BatteryAlertMonitor
 from .kokoro import speak_in_background, synthesize
 from .local_service import get_or_create_token, request_is_authorized
 from .llm_client import LlmError, OpenAiCompatibleClient
+from .music_choices import MusicChoices
 from .music_conversation import run_music_request
 from .music_llm import MusicConversationMemory, MusicLlmValidationError
-from .parakeet_stt import ParakeetTranscriber, capture_microphone_once
+from .parakeet_stt import ParakeetTranscriber, capture_microphone_once, capture_microphone_until
+from .music_voice_capture import MusicVoiceCapture
 from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
@@ -125,7 +127,10 @@ class VoiceRuntime:
             if self.assistant_session.backend == "codex" else None)
         self._assistant_speech_cancel = threading.Event()
         self._answer_capture_lock = threading.Lock()
-        self.music_conversation = MusicConversationMemory()
+        self.music_conversations = {name: MusicConversationMemory(max_turns=5, max_age_seconds=300)
+                                    for name in ("spotify", "youtube")}
+        self.music_choices = MusicChoices()
+        self.music_capture = MusicVoiceCapture(self.music_command)
         self.chatbox = ChatboxCoordinator(
             song_enabled=lambda: load_settings().song_announce_enabled)
         self.comms = CommsDictation(
@@ -337,13 +342,16 @@ class VoiceRuntime:
         finally:
             self._warm_lock.release()
 
-    def music_command(self) -> str:
+    def music_command(self, *, stop_event=None) -> str:
         if not self.command_lock.acquire(blocking=False):
             return "BUSY\t\tVoice capture is already active."
         try:
             try:
                 LOGGER.info("Music microphone capture started")
-                audio = capture_microphone_with_cues()
+                audio = (capture_microphone_with_cues() if stop_event is None else
+                         capture_with_cues(capture_microphone_until, stop_event,
+                                           max_seconds=30.0, cue=play_capture_cue,
+                                           end_async=True))
                 LOGGER.info("Music microphone capture completed: rate=%s width=%s bytes=%s",
                     getattr(audio, "sample_rate", "?"), getattr(audio, "sample_width", "?"),
                     len(getattr(audio, "frame_data", b"")))
@@ -358,13 +366,15 @@ class VoiceRuntime:
             intent = parse_music_intent(transcript)
             LOGGER.info("Music transcript classified: chars=%s intent=%s",
                         len(transcript), intent.kind.value)
+            provider = load_settings().music_provider
+            conversation = self.music_conversations[provider]
             action = f"deterministic:{intent.kind.value}"
             if OpenAiCompatibleClient().configured:
                 try:
                     action = "llm:conversation"
-                    music_request = run_pear_request if load_settings().music_provider == "youtube" else run_music_request
+                    music_request = run_pear_request if provider == "youtube" else run_music_request
                     result = music_request(
-                        transcript, context=self.music_conversation.recent())
+                        transcript, context=conversation.recent(), choices=self.music_choices)
                 except (LlmError, MusicLlmValidationError) as error:
                     LOGGER.warning("LLM music fallback rejected: %s", error)
                     result = MusicCommandResult(False, "I couldn't understand that request. Could you phrase it another way?")
@@ -375,7 +385,7 @@ class VoiceRuntime:
                 result = asyncio.run(execute_music_intent(intent, self._song_media))
             LOGGER.info("Music command completed: succeeded=%s response_chars=%s",
                         result.succeeded, len(result.message))
-            self.music_conversation.remember(
+            conversation.remember(
                 transcript=transcript, action=action,
                 succeeded=result.succeeded, response=result.message)
             # In-headset failures are as important as successes; the user should
@@ -517,6 +527,14 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 return
             if self.path == "/listen/music":
                 self._reply(200, runtime.music_command())
+            elif self.path == "/listen/music/start":
+                token = runtime.music_capture.start()
+                self._reply(200 if token else 409, token or "busy")
+            elif self.path.startswith("/listen/music/stop/"):
+                stopped = runtime.music_capture.stop(self.path.rsplit("/", 1)[-1])
+                self._reply(200 if stopped else 409, "stopped" if stopped else "expired")
+            elif self.path.startswith("/listen/music/result/"):
+                self._reply(200, runtime.music_capture.result(self.path.rsplit("/", 1)[-1]))
             elif self.path == "/warm":
                 threading.Thread(
                     target=runtime.warm, name="InterfayceVoiceWarm", daemon=True
