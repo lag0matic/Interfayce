@@ -1,5 +1,30 @@
 # Interfayce build status
 
+## Installed 1.2.37 — keyboard microphone dictation
+
+Added a mic key beside Space on the independent desktop keyboard. Tap to start,
+tap again to stop; the final cleaned transcript is inserted once into the original
+focused field with Unicode input, without clipboard changes or Enter. Uses COMMS'
+configured streaming STT backend and whole-recording fallback; no LLM or OSC.
+Capture is bounded to 30 seconds and shares the global microphone lock. HTTP runs
+asynchronously off the overlay loop. Target window/control changes, desktop clicks,
+other keyboard keys, close/hide and shutdown cancel and discard pending output.
+Status appears in the keyboard header and the mic glows while listening. Native
+focus checks cannot identify browser DOM fields changed without a desktop click
+or native focus event. Discord insertion and headset ergonomics need user trial.
+
+Validation: 241 Python tests pass (2 skipped), including six new recording tests.
+Six isolated native scenarios pass: insertion once, changed focus, cancellation,
+stop during startup, unavailable service, and failed polling. Tests inject no real
+keystrokes, microphone audio, or remote requests. Chatbox behavior stays reverted.
+
+Installed/restarted October 10: 1.2.37, health 200 ready, one overlay/service.
+All four executable hashes match staging; settings and protected key unchanged.
+Installed dictation status endpoint verified using an expired token (no recording).
+Installer SHA256: 20431FB0705F7666932C1A62BA8D100CC05775AE78FAB759C7E620406FEF7CCA.
+Native build and installer succeeded. Local checkpoint only; no GitHub push.
+
+
 ## Installed 1.2.35 — cached model archive and dual SlimeVR support
 
 Model ZIP cache is keyed by all five source files' contents, with an archive

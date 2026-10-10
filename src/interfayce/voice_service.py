@@ -28,6 +28,7 @@ from .music_conversation import run_music_request
 from .music_llm import MusicConversationMemory, MusicLlmValidationError
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once, capture_microphone_until
 from .music_voice_capture import MusicVoiceCapture
+from .keyboard_dictation import KeyboardDictation
 from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
@@ -131,6 +132,8 @@ class VoiceRuntime:
                                     for name in ("spotify", "youtube")}
         self.music_choices = MusicChoices()
         self.music_capture = MusicVoiceCapture(self.music_command)
+        self.keyboard_dictation = KeyboardDictation(
+            self.transcriber, self.command_lock, cue=play_capture_cue)
         self.chatbox = ChatboxCoordinator(
             song_enabled=lambda: load_settings().song_announce_enabled)
         self.comms = CommsDictation(
@@ -535,6 +538,18 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200 if stopped else 409, "stopped" if stopped else "expired")
             elif self.path.startswith("/listen/music/result/"):
                 self._reply(200, runtime.music_capture.result(self.path.rsplit("/", 1)[-1]))
+            elif self.path == "/keyboard/dictation/start":
+                token = runtime.keyboard_dictation.start()
+                self._reply(200 if token else 409, token or "busy")
+            elif self.path.startswith("/keyboard/dictation/"):
+                operation, token = self.path.rsplit("/", 2)[-2:]
+                if operation == "status":
+                    self._reply(200, runtime.keyboard_dictation.status(token))
+                elif operation in {"stop", "cancel"}:
+                    ok = runtime.keyboard_dictation.control(token, cancel=operation == "cancel")
+                    self._reply(200 if ok else 409, "ok" if ok else "expired")
+                else:
+                    self._reply(404, "Not found")
             elif self.path == "/warm":
                 threading.Thread(
                     target=runtime.warm, name="InterfayceVoiceWarm", daemon=True

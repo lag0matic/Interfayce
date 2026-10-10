@@ -25,7 +25,7 @@ constexpr UINT kKeyboardHeight = 440;
 constexpr float kFrameAspectRatio = 128.0F;
 constexpr float kGlowAspectRatio = 16.0F;
 
-enum class KeyboardCommand { None, Copy, Paste };
+enum class KeyboardCommand { None, Copy, Paste, Dictate };
 
 struct KeyboardKeyDefinition {
     D2D1_RECT_F bounds{};
@@ -61,11 +61,13 @@ std::vector<KeyboardKeyDefinition> KeyboardLayout(bool shifted) {
     keys.push_back({D2D1::RectF(994, 272, 1176, 330), L"SHIFT", 0, 0, true});
     keys.push_back({D2D1::RectF(24, 340, 114, 420), L"CTRL", 0, 0, false, true});
     keys.push_back({D2D1::RectF(126, 340, 216, 420), L"ALT", 0, 0, false, false, true});
-    keys.push_back({D2D1::RectF(228, 340, 920, 420), L"SPACE", L' '});
+    keys.push_back({D2D1::RectF(228, 340, 790, 420), L"SPACE", L' '});
     keys.push_back({D2D1::RectF(932, 340, 1050, 420), L"", 0, 0,
         false, false, false, KeyboardCommand::Copy});
     keys.push_back({D2D1::RectF(1058, 340, 1176, 420), L"", 0, 0,
         false, false, false, KeyboardCommand::Paste});
+    keys.push_back({D2D1::RectF(802, 340, 920, 420), L"MIC", 0, 0,
+        false, false, false, KeyboardCommand::Dictate});
     return keys;
 }
 
@@ -444,7 +446,7 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
     drawText(L"KEYBOARD", titleFormat_.Get(), D2D1::RectF(24, 14, 260, 54), textBrush_.Get());
     const std::wstring targetLine = targetLabel.empty()
         ? L"Target: click a captured surface first" : L"Target: " + targetLabel;
-    drawText(targetLine, detailFormat_.Get(), D2D1::RectF(280, 22, 1176, 54),
+    drawText(keyboardVoiceStatus_.empty() ? targetLine : keyboardVoiceStatus_, detailFormat_.Get(), D2D1::RectF(280, 22, 1176, 54),
         targetLabel.empty() ? mutedBrush_.Get() : violetBrush_.Get());
     context_->DrawLine(D2D1::Point2F(24, 60), D2D1::Point2F(1176, 60),
         violetBrush_.Get(), 2.0F);
@@ -453,7 +455,9 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
     for (size_t index = 0; index < keys.size(); ++index) {
         const auto& key = keys[index];
         const bool pressed = pressedKey && *pressedKey == index;
-        const bool modifierSelected = (key.togglesShift && shifted)
+        const bool modifierSelected = (key.command == KeyboardCommand::Dictate
+                && keyboardVoiceStatus_.find(L"LISTENING") == 0)
+            || (key.togglesShift && shifted)
             || (key.togglesControl && controlled) || (key.togglesAlt && altered);
         context_->FillRoundedRectangle(D2D1::RoundedRect(key.bounds, 8, 8),
             (modifierSelected || pressed) ? activeFillBrush_.Get() : surfaceBrush_.Get());
@@ -469,6 +473,18 @@ bool DesktopPickerTexture::RenderKeyboard(const std::wstring& targetLabel, bool 
             context_->DrawRoundedRectangle(D2D1::RoundedRect(
                 D2D1::RectF(centerX - 10, key.bounds.top + 13,
                     centerX + 24, key.bounds.bottom - 22), 3, 3), brush, 2.2F);
+        } else if (key.command == KeyboardCommand::Dictate) {
+            auto* brush = modifierSelected ? cyanBrush_.Get() : textBrush_.Get();
+            const float x = (key.bounds.left + key.bounds.right) * 0.5F;
+            const float y = key.bounds.top;
+            context_->DrawRoundedRectangle(D2D1::RoundedRect(
+                D2D1::RectF(x - 9, y + 14, x + 9, y + 44), 9, 9), brush, 2.5F);
+            context_->DrawLine(D2D1::Point2F(x - 17, y + 34), D2D1::Point2F(x - 17, y + 47), brush, 2.5F);
+            context_->DrawLine(D2D1::Point2F(x + 17, y + 34), D2D1::Point2F(x + 17, y + 47), brush, 2.5F);
+            context_->DrawLine(D2D1::Point2F(x - 17, y + 47), D2D1::Point2F(x, y + 54), brush, 2.5F);
+            context_->DrawLine(D2D1::Point2F(x + 17, y + 47), D2D1::Point2F(x, y + 54), brush, 2.5F);
+            context_->DrawLine(D2D1::Point2F(x, y + 54), D2D1::Point2F(x, y + 65), brush, 2.5F);
+            context_->DrawLine(D2D1::Point2F(x - 10, y + 65), D2D1::Point2F(x + 10, y + 65), brush, 2.5F);
         } else if (key.command == KeyboardCommand::Paste) {
             auto* brush = pressed ? cyanBrush_.Get() : textBrush_.Get();
             const float centerX = (key.bounds.left + key.bounds.right) * 0.5F;
@@ -987,6 +1003,8 @@ bool DesktopSurfaceRegistry::AssignSource(uint64_t id, const DesktopSource& sour
 
 bool DesktopSurfaceRegistry::SendPointerEvent(const DesktopSurfaceHit& hit,
                                               DesktopPointerEvent event) {
+    if (event == DesktopPointerEvent::PrimaryDown || event == DesktopPointerEvent::SecondaryDown)
+        dictation_.Cancel();
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [&hit](const auto& surface) { return surface.id == hit.id; });
     if (found == surfaces_.end() || !found->capture || !found->assignedSource
@@ -1043,6 +1061,7 @@ void DesktopSurfaceRegistry::RememberFocusedSurface(uint64_t id) {
 }
 
 void DesktopSurfaceRegistry::ForgetFocusedSurface(uint64_t id) {
+    if (focusedSurfaceId_ && *focusedSurfaceId_ == id) dictation_.Cancel();
     focusHistory_.erase(std::remove(focusHistory_.begin(), focusHistory_.end(), id),
         focusHistory_.end());
     if (!focusedSurfaceId_ || *focusedSurfaceId_ != id) return;
@@ -1093,6 +1112,11 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
     const auto keys = KeyboardLayout(keyboard->keyboardShifted);
     if (*hit.keyIndex >= keys.size()) return false;
     const auto& key = keys[*hit.keyIndex];
+    if (key.command == KeyboardCommand::Dictate && dictation_.Active()) {
+        dictation_.Toggle();
+        return true;
+    }
+    if (key.command != KeyboardCommand::Dictate) dictation_.Cancel();
     if (key.togglesShift) {
         keyboard->keyboardShifted = !keyboard->keyboardShifted;
         keyboard->hoveredKey.reset();
@@ -1114,7 +1138,13 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
         if (source.kind == DesktopSource::Kind::Window && source.window != nullptr) {
             PrepareWindowForInput(source.window);
         }
-        if (!InjectKeyboardKey(key, keyboard->keyboardControlled, keyboard->keyboardAltered)) {
+        if (key.command == KeyboardCommand::Dictate) {
+            if (source.kind == DesktopSource::Kind::Window
+                && GetForegroundWindow() != source.window) return false;
+            keyboard->keyboardControlled = false;
+            keyboard->keyboardAltered = false;
+            dictation_.Toggle();
+        } else if (!InjectKeyboardKey(key, keyboard->keyboardControlled, keyboard->keyboardAltered)) {
             return false;
         }
         if (keyboard->keyboardShifted && key.character != 0) keyboard->keyboardShifted = false;
@@ -1129,6 +1159,7 @@ bool DesktopSurfaceRegistry::ActivateKeyboardHit(const KeyboardSurfaceHit& hit) 
             [this](const auto& surface) { return surface.id == *focusedSurfaceId_; });
         if (target != surfaces_.end() && target->capture) targetLabel = target->label;
     }
+    keyboard->texture->SetKeyboardVoiceStatus(dictation_.Label());
     return keyboard->texture->RenderKeyboard(
         targetLabel, keyboard->keyboardShifted, keyboard->keyboardControlled,
         keyboard->keyboardAltered, keyboard->hoveredKey, keyboard->pressedKey);
@@ -1206,6 +1237,7 @@ void DesktopSurfaceRegistry::SetHoveredFrame(std::optional<uint64_t> id) {
 }
 
 void DesktopSurfaceRegistry::SetDeckVisible(bool visible) {
+    if (!visible) dictation_.Cancel();
     if (deckVisible_ == visible) return;
     deckVisible_ = visible;
     for (auto& grab : activeGrabs_) grab.reset();
@@ -1228,12 +1260,16 @@ void DesktopSurfaceRegistry::SetDeckVisible(bool visible) {
 
 void DesktopSurfaceRegistry::Update() {
     privateWindows_.Tick();
+    dictation_.Tick();
+    const bool voiceChanged = renderedVoiceLabel_ != dictation_.Label();
     // Keep Windows capture sessions alive for instant restoration, but do not
     // copy frames or update OpenVR textures while the Desk deck is parked.
     if (!deckVisible_) return;
+    renderedVoiceLabel_ = dictation_.Label();
     for (auto& surface : surfaces_) {
-        if (surface.keyboard && surface.pressedKey
-            && std::chrono::steady_clock::now() >= surface.keyFlashUntil) {
+        if (surface.keyboard && (voiceChanged
+            || (surface.pressedKey && std::chrono::steady_clock::now() >= surface.keyFlashUntil))) {
+            surface.texture->SetKeyboardVoiceStatus(dictation_.Label());
             surface.pressedKey.reset();
             std::wstring targetLabel;
             if (focusedSurfaceId_) {
@@ -1410,6 +1446,7 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
 }
 
 bool DesktopSurfaceRegistry::Close(uint64_t id) {
+    dictation_.Cancel();
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end()) return false;
@@ -1553,6 +1590,7 @@ void DesktopSurfaceRegistry::ReleasePointerInput(Surface& surface) {
 }
 
 void DesktopSurfaceRegistry::Shutdown() {
+    dictation_.Shutdown();
     for (auto& surface : surfaces_) ReleasePointerInput(surface);
     privateWindows_.RecoverAll();
     for (auto& grab : activeGrabs_) grab.reset();
