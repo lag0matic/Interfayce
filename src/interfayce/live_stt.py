@@ -28,12 +28,13 @@ def caption_tail(text, limit=144):
 
 
 class LiveCaptionPublisher:
-    def __init__(self, publish, clock=time.monotonic):
+    def __init__(self, publish, clock=time.monotonic, *, preserve_full=False):
         self.publish = publish
         self.clock = clock
         self.previous = []
         self.last = ""
         self.next_update = 0.0
+        self.preserve_full = preserve_full
 
     def update(self, text, final=False):
         words = clean_transcript(text).split()
@@ -47,7 +48,7 @@ class LiveCaptionPublisher:
                 count += 1
             settled = words[:count]
         self.previous = words
-        caption = caption_tail(" ".join(settled))
+        caption = " ".join(settled) if self.preserve_full else caption_tail(" ".join(settled))
         if caption and (final or (caption != self.last and self.clock() >= self.next_update)):
             self.publish(caption)
             self.last = caption
