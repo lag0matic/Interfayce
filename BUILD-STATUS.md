@@ -1,26 +1,5 @@
 # Interfayce build status
 
-## Installed 1.2.36 — buffered speech captions with adaptive reading time
-
-COMMS appends new dictation to the current 144-character page and queues overflow
-at word boundaries. Each new page starts with 30 seconds. Newly visible growth
-adds one second per 15 characters, with a minimum remaining time of 3 seconds plus
-that addition's reading time, capped at 30 seconds remaining. A page-length
-high-water mark prevents repeated hypotheses/corrections from stacking time;
-queued-only growth does not extend the visible page. Live and fallback paths
-retain full transcripts. Page consumption follows corrections without replaying
-already-read text. Clear invalidates pending words and late callbacks; shortcuts
-replace the queue. Song announcements wait behind all speech pages. No server
-update or model change required. Headset reading/pacing still needs user trial.
-
-
-Validation: 252 Python tests passed, 2 skipped; native Release and installer
-builds passed. Installed/restarted October 10: version 1.2.36, health 200 ready,
-one overlay/service, four binary hashes match staging, settings and protected
-LLM key unchanged. Installer SHA256:
-8DE573DA0272384D43CA81A151E73FB6CEDB5D4661720CCCA8EF692EEDF5C696.
-Local checkpoint only; no GitHub push for this change.
-
 ## Installed 1.2.35 — cached model archive and dual SlimeVR support
 
 Model ZIP cache is keyed by all five source files' contents, with an archive

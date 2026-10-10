@@ -139,28 +139,19 @@ class CommsDictation:
         LOGGER.info("Comms push-to-talk capture started")
         live = None
         publisher = None
-        caption_session = None
-        last_caption = ""
 
         def publish(text):
-            nonlocal last_caption
             with self._publish_lock:
                 if not self._suppress_live:
-                    last_caption = text
-                    if caption_session is not None:
-                        self._osc.update_dictation(caption_session, text)
-                    else:
-                        self._osc.send_chatbox_message(text)
-                    self._set_snapshot("TRANSCRIBING" if self._stop.is_set() else "LISTENING", fit_chatbox_text(text))
+                    self._osc.send_chatbox_message(text)
+                    self._set_snapshot("TRANSCRIBING" if self._stop.is_set() else "LISTENING", text)
 
         try:
             if hasattr(self._osc, "set_busy"):
                 self._osc.set_busy(True)
-            if hasattr(self._osc, "begin_dictation"):
-                caption_session = self._osc.begin_dictation()
             self._set_typing(True)
             if hasattr(self._transcriber, "start_stream"):
-                publisher = LiveCaptionPublisher(publish, preserve_full=caption_session is not None)
+                publisher = LiveCaptionPublisher(publish)
                 try:
                     live = self._transcriber.start_stream(publisher.update)
                 except Exception:
@@ -191,20 +182,14 @@ class CommsDictation:
                 if transcript:
                     if publisher is not None:
                         transcript = publisher.update(transcript, final=True)
-                    elif caption_session is not None:
-                        publish(transcript)
                     else:
                         transcript = fit_chatbox_text(transcript)
                         self._osc.send_chatbox_message(transcript)
                     LOGGER.info("Comms transcript sent: chars=%s release_to_send=%.3fs live=%s",
                                 len(transcript), time.monotonic() - released, live is not None)
-                    queued = caption_session is not None and self._osc.dictation_queued()
-                    self._set_snapshot("QUEUED" if queued else "SENT", fit_chatbox_text(transcript))
+                    self._set_snapshot("SENT", transcript)
                 else:
-                    last_caption = ""
-                    if caption_session is not None:
-                        self._osc.update_dictation(caption_session, "", final=True)
-                    elif publisher is not None and publisher.last:
+                    if publisher is not None and publisher.last:
                         self._osc.clear_chatbox()
                     self._set_snapshot("IDLE")
             if self._result_cue is not None:
@@ -214,13 +199,6 @@ class CommsDictation:
             LOGGER.exception("Comms push-to-talk failed")
             self._set_snapshot("ERROR", str(error))
         finally:
-            if caption_session is not None:
-                with self._publish_lock:
-                    if not self._suppress_live:
-                        try:
-                            self._osc.update_dictation(caption_session, last_caption, final=True)
-                        except Exception:
-                            LOGGER.exception("Could not finalize buffered captions")
             if live is not None:
                 live.close()
             self._set_typing(False)
