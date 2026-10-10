@@ -1,5 +1,29 @@
 # Interfayce build status
 
+## Installed 1.2.35 — cached model archive and dual SlimeVR support
+
+Model ZIP cache is keyed by all five source files' contents, with an archive
+checksum checked before reuse. Changed sources/corrupt cache rebuild atomically.
+Installer embeds it uncompressed and extracts through Inno's archive support;
+the installed model paths and offline single-file distribution stay the same.
+Compiler stage measured 48.015 seconds versus 205.438 for 1.2.34; verified cache
+reuse measured 0.585 seconds. These are packaging-stage timings, not full builds.
+
+Both former legacy and v22 SolarXR definitions are pinned/bundled. A common
+read-only guard poll identifies the response layout before requesting data or
+issuing resets. Resets stay on that same confirmed connection. No saved protocol
+choice; switching servers is detected on the next query. Legacy body-role IDs,
+mounting guards and reset completion format retained separately from v22.
+235 Python tests and 13 Node adapter checks pass; native and installer build pass.
+Live beta detection passed; legacy detection/encoding tested with simulated
+connections using its actual pinned schema, not a live downgraded server.
+Installed/launched October 10; health 200 ready, version 1.2.35, one overlay and
+service. Settings/key unchanged; four executable hashes and six adapter/bundle
+files match staging. All five extracted model files match source hashes. Installed
+live beta probe succeeds. No live reset dispatched. Installer 559,005,988 bytes
+versus 523,088,666 previously (about 6.9% larger).
+Installer SHA256: 4EB238337D70FDEFB5C44BA054A8FC79C30CA83DECECA0643C5D14F7C4B421E7.
+
 ## Installed 1.2.34 — SlimeVR 22 server compatibility
 
 SolarXR pinned to 7a5e15c28bb7a0a15b722a93077a7abf8d97a845 for the v22 rewrite.
