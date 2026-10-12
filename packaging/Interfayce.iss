@@ -1,6 +1,6 @@
 #define AppName "Interfayce"
 #ifndef AppVersion
-#define AppVersion "1.2.37"
+#define AppVersion "1.2.38"
 #endif
 #define AppPublisher "Lag0Matic"
 

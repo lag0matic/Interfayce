@@ -33,7 +33,7 @@ from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
                        desktop_favorites_wire_text, load_settings, record_desktop_recent,
-                       settings_wire_text, toggle_song_announce, toggle_tts_mute,
+                       settings_wire_text, toggle_song_announce, toggle_tts_mute, toggle_playspace_acceleration,
                        set_music_provider)
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
@@ -650,6 +650,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, settings_wire_text(adjust_tts_volume(-0.1)))
             elif self.path == "/settings/tts/mute/toggle":
                 self._reply(200, settings_wire_text(toggle_tts_mute()))
+            elif self.path == "/settings/playspace/acceleration/toggle":
+                self._reply(200, settings_wire_text(toggle_playspace_acceleration()))
             elif self.path == "/settings/song-announce/toggle":
                 self._reply(200, settings_wire_text(toggle_song_announce()))
             elif self.path == "/settings/broadcast/gain/up":

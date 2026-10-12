@@ -1,3 +1,4 @@
+#include "drag_acceleration.h"
 #include "panel_layout.h"
 #include "performance_monitor.h"
 #include "local_service_client.h"
@@ -520,6 +521,8 @@ struct TtsSettingsState {
     float playspaceTravelLimitMeters{10.0F};
     bool songAnnounceEnabled{true};
     bool youtubeMusic{};
+    bool dragAccelerated{};
+    float dragMaxBoost{4.0F};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
@@ -550,6 +553,8 @@ std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
             std::clamp(std::stof(fields[12]), 1.0F, 50.0F);
         if (fields.size() > 13) state.songAnnounceEnabled = fields[13] != "0";
         if (fields.size() > 14) state.youtubeMusic = fields[14] == "youtube";
+        if (fields.size() > 15) state.dragAccelerated = fields[15] == "1";
+        if (fields.size() > 16) state.dragMaxBoost = std::clamp(std::stof(fields[16]), 1.0F, 6.0F);
         return state;
     } catch (...) {
         return std::nullopt;
@@ -719,7 +724,7 @@ std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand ha
     }
     std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
     system->GetDeviceToAbsoluteTrackingPose(
-        vr::TrackingUniverseStanding, 0.0F, poses.data(), static_cast<uint32_t>(poses.size()));
+        vr::TrackingUniverseRawAndUncalibrated, 0.0F, poses.data(), static_cast<uint32_t>(poses.size()));
     const auto& pose = poses[index];
     if (!pose.bDeviceIsConnected || !pose.bPoseIsValid
         || pose.eTrackingResult != vr::TrackingResult_Running_OK) {
@@ -1263,6 +1268,7 @@ int main(int argc, char** argv) {
     renderer.SetBroadcastGainDb(static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
     broadcast.SetGainDb(ttsSettings.broadcastGainDb);
     renderer.SetMusicProvider(ttsSettings.youtubeMusic);
+    renderer.SetDragAccelerated(ttsSettings.dragAccelerated);
     if (ttsSettings.youtubeMusic) {
         broadcast.SetSource(interfayce::BroadcastSource::YouTubeMusic);
         renderer.SetMusicBroadcastSource(2);
@@ -1470,6 +1476,8 @@ int main(int argc, char** argv) {
     bool printedInputDiagnostics = false;
     DragHand activeDragHand = DragHand::None;
     std::optional<Vector3> lastDragPosition;
+    interfayce::DragAcceleration dragAcceleration;
+    auto lastDragSample = std::chrono::steady_clock::now();
     Vector3 previewOffset{};
     std::optional<vr::HmdMatrix34_t> temporaryBaseline;
     std::optional<vr::HmdMatrix34_t> sessionBaseline;
@@ -1763,6 +1771,7 @@ int main(int argc, char** argv) {
 
         vr::VROverlayIntersectionResults_t panelHit{};
         bool restoreButtonHit = false;
+        bool dragModeHit = false;
         bool rigFullResetHit = false;
         bool rigMountResetHit = false;
         bool desktopNewSurfaceHit = false;
@@ -1846,6 +1855,7 @@ int main(int argc, char** argv) {
                     return dx * dx + dy * dy <= radius * radius;
                 };
                 desktopInputBlockHit = selectedDeck == 1 && interfayce::DesktopBlockButton::Contains(x, y);
+                dragModeHit = selectedDeck == 2 && interfayce::panel::DragMode.Contains(x, y);
                 const auto restoreX = x - 199.0F;
                 const auto restoreY = y - 250.0F;
                 restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
@@ -1996,7 +2006,7 @@ int main(int argc, char** argv) {
         else highlightedSurface = desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit;
         desktopSurfaces.SetHoveredFrame(highlightedSurface);
         const bool panelActionable = (panelHitFound && panelY <= 82.0F)
-            || restoreButtonHit || rigFullResetHit
+            || restoreButtonHit || dragModeHit || rigFullResetHit
             || (rigMountResetHit && mountReady)
             || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
             || desktopFavoriteHit || desktopListBackHit || desktopBringAllHit
@@ -2623,6 +2633,17 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && dragModeHit) {
+            if (const auto changed = ChangeTtsSetting("/settings/playspace/acceleration/toggle")) {
+                ttsSettings = *changed;
+                dragAcceleration.Reset();
+                renderer.SetDragAccelerated(ttsSettings.dragAccelerated);
+                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                        rigLine, rigSlots, mountReady, desktopPanel)) {
+                    const auto texture = renderer.Texture();
+                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
+                }
+            }
         } else if (wristUiClick.bChanged && wristUiClick.bState && restoreButtonHit && selectedDeck == 2) {
             restoreHoldActive = true;
             restoreHoldStarted = std::chrono::steady_clock::now();
@@ -2977,6 +2998,8 @@ int main(int argc, char** argv) {
                     || loaded->muted != ttsSettings.muted
                     || loaded->broadcastGainDb != ttsSettings.broadcastGainDb
                     || loaded->songAnnounceEnabled != ttsSettings.songAnnounceEnabled;
+                const bool dragModeChanged = loaded->dragAccelerated != ttsSettings.dragAccelerated;
+                renderer.SetDragAccelerated(loaded->dragAccelerated);
                 const bool wristPlacementChanged = WristPlacementChanged(*loaded, ttsSettings);
                 ttsSettings = *loaded;
                 renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
@@ -2985,7 +3008,8 @@ int main(int argc, char** argv) {
                     wristTransform = ConfiguredWristTransform(ttsSettings);
                     wristAttached = attachWristOverlay();
                 }
-                if ((selectedDeck == 4 && wristDisplayChanged) || broadcastSourceChanged) {
+                if ((selectedDeck == 4 && wristDisplayChanged) || broadcastSourceChanged
+                    || (selectedDeck == 2 && dragModeChanged)) {
                     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
                     renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
                     renderer.SetBroadcastGainDb(
@@ -3228,6 +3252,8 @@ int main(int argc, char** argv) {
                           << " drag released: x=" << previewOffset.x
                           << " y=" << previewOffset.y << " z=" << previewOffset.z << '\n';
             }
+            dragAcceleration.Reset();
+            lastDragSample = std::chrono::steady_clock::now();
             activeDragHand = desiredHand;
             if (activeDragHand != DragHand::None) {
                 if (!sessionDrag) {
@@ -3263,11 +3289,26 @@ int main(int argc, char** argv) {
         if ((dragPreview || temporaryDrag || sessionDrag)
             && activeDragHand != DragHand::None && !dragFaulted) {
             const auto currentPosition = ReadControllerPosition(system, activeDragHand);
+            const auto sampleTime = std::chrono::steady_clock::now();
             if (currentPosition && lastDragPosition) {
-                previewOffset.x += currentPosition->x - lastDragPosition->x;
-                previewOffset.y += currentPosition->y - lastDragPosition->y;
-                previewOffset.z += currentPosition->z - lastDragPosition->z;
-            }
+                const float raw[3]{currentPosition->x - lastDragPosition->x,
+                    currentPosition->y - lastDragPosition->y, currentPosition->z - lastDragPosition->z};
+                const float gain = dragAcceleration.Gain(
+                    std::sqrt(raw[0]*raw[0] + raw[1]*raw[1] + raw[2]*raw[2]),
+                    std::chrono::duration<float>(sampleTime - lastDragSample).count(),
+                    ttsSettings.dragAccelerated, ttsSettings.dragMaxBoost);
+                const auto& baseline = sessionDrag ? sessionBaseline : temporaryBaseline;
+                float delta[3]{raw[0], raw[1], raw[2]};
+                if (baseline) {
+                    for (int axis = 0; axis < 3; ++axis)
+                        delta[axis] = baseline->m[0][axis] * raw[0]
+                            + baseline->m[1][axis] * raw[1] + baseline->m[2][axis] * raw[2];
+                }
+                previewOffset.x += delta[0] * gain;
+                previewOffset.y += delta[1] * gain;
+                previewOffset.z += delta[2] * gain;
+            } else dragAcceleration.Reset();
+            lastDragSample = sampleTime;
             lastDragPosition = currentPosition;
             const bool adjustedNow = std::abs(previewOffset.x) > 0.002F
                 || std::abs(previewOffset.y) > 0.002F || std::abs(previewOffset.z) > 0.002F;

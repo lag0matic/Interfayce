@@ -1036,10 +1036,15 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(playspaceAdjusted_ ? L"ADJUSTED" : L"BASELINE", titleFormat_.Get(),
             D2D1::RectF(390, 214, 710, 266),
             playspaceAdjusted_ ? accentBrush_.Get() : textBrush_.Get());
-        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(405, 298), 7, 7),
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(405, 280), 7, 7),
             stateBrush);
         drawText(playspaceAdjusted_ ? L"HOLD ICON TO RESTORE" : L"NO SESSION OFFSET",
-            labelFormat_.Get(), D2D1::RectF(426, 285, 720, 326), mutedTextBrush_.Get());
+            labelFormat_.Get(), D2D1::RectF(426, 267, 720, 298), mutedTextBrush_.Get());
+        const auto& mode = panel::DragMode;
+        d2dContext_->DrawRectangle(D2D1::RectF(mode.left, mode.top, mode.right, mode.bottom),
+            dragAccelerated_ ? accentBrush_.Get() : structureBrush_.Get(), 1.5F);
+        drawText(dragAccelerated_ ? L"DRAG: ACCELERATED" : L"DRAG: NORMAL", bodyFormat_.Get(),
+            D2D1::RectF(mode.left + 12, mode.top + 10, mode.right - 8, mode.bottom), textBrush_.Get());
     } else if (deck == 5) {
         const auto stateBrush = commsActive_ ? accentBrush_.Get() : structureBrush_.Get();
         drawText(commsTranscript_.empty() ? L"Voice transcription will appear here"

@@ -33,6 +33,7 @@ public:
                     const std::array<std::wstring, 8>& rigSlots = {}, bool mountReady = false,
                     const DesktopPanelState& desktop = {});
     void SetPlayspaceAdjusted(bool adjusted);
+    void SetDragAccelerated(bool enabled) { dragAccelerated_ = enabled; }
     void SetPlayspaceHoldProgress(float progress);
     void SetSlimeAvailable(bool available);
     void SetMusicVoiceStatus(const std::wstring& status, bool active);
@@ -107,6 +108,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Bitmap> playspaceResetArt_;
     Microsoft::WRL::ComPtr<ID2D1Bitmap> holoGlyphAtlas_;
     HANDLE sharedTextureHandle_{};
+    bool dragAccelerated_{};
     bool playspaceAdjusted_{};
     float playspaceHoldProgress_{};
     bool slimeAvailable_{};

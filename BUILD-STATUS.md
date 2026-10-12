@@ -1,5 +1,29 @@
 # Interfayce build status
 
+## Installed 1.2.38 — optional accelerated space dragging
+
+SPACE panel toggles Normal/Accelerated; desktop settings expose the same switch
+and maximum boost (1-6x, default 4x). Defaults to Normal for existing installations.
+A smooth speed curve ramps from 1x below 0.15 m/s to max at 1 m/s, with 60 ms rise
+smoothing and immediate precision when slowing. No momentum after release.
+Physical controller samples use raw tracking coordinates, converted through the
+saved baseline rotation for the existing origin translation; applied playspace
+offsets cannot feed back into speed. Tracking loss, hand changes, implausible
+samples and stalls reset the speed filter. Existing travel limit/restore retained.
+
+242 Python tests pass (2 skipped). Native checks cover precision, boost, stopping,
+reset, nonfinite/jump/stall samples, and consistent travel at 72/90/144 Hz.
+Headset feel and travel still need user testing; no live playspace manipulation
+was performed during automated validation.
+
+Installed/restarted October 12: 1.2.38, health 200 ready, one overlay/service,
+four executable hashes match staging, settings and protected key unchanged.
+Installed settings endpoint returns the new fields. SPACE production render
+visually checked; General settings now scroll and build correctly off-screen.
+Installer SHA256: FF403EA306A55B10993B5079CEADBDF24B6AD559A3EA85248E6D6EC13FB496D3.
+Local checkpoint only; no GitHub push.
+
+
 ## Installed 1.2.37 — keyboard microphone dictation
 
 Added a mic key beside Space on the independent desktop keyboard. Tap to start,

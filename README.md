@@ -348,3 +348,5 @@ Additional project references:
 - [`TECHNICAL-NOTES.md`](TECHNICAL-NOTES.md) — implementation notes and architecture details
 - [`PROJECT-NORTH-STAR.md`](PROJECT-NORTH-STAR.md) — product direction and design principles
 - [`remote-stt/README.md`](remote-stt/README.md) — portable Windows Faster-Whisper service
+
+SPACE panel: tap **DRAG: NORMAL / ACCELERATED** to toggle speed-sensitive dragging. Slow movement stays 1:1; faster sweeps ramp to the maximum multiplier configured in desktop settings (default 4x, range 1-6x). Release stops immediately. The existing travel limit and Restore remain in effect.
