@@ -19,9 +19,20 @@ int main() {
         Check(curve.Gain(.001F,.01F,true,4) == 1); // Precision returns immediately.
         Check(curve.Gain(0,.01F,true,4) == 1); // No momentum.
         Check(curve.Gain(1,.01F,true,4) == 0);
-        Check(curve.Gain(.01F,.5F,true,4) == 0);
+        Check(curve.Gain(.01F,.5F,true,4) == 1);
+        Check(curve.Gain(.01F,.5F,false,4) == 1);
+        Check(curve.Gain(.06F,.001F,false,4) == 1);
         Check(curve.Gain(std::numeric_limits<float>::quiet_NaN(),.01F,true,4) == 0);
         Check(curve.Gain(.01F,0,true,4) == 0);
+        // Identical physical motion with a cached pose every other iteration.
+        interfayce::DragAcceleration regular, cached;
+        float regularTravel = 0, cachedTravel = 0;
+        for (int i=0; i<100; ++i) {
+            regularTravel += .01F * regular.Gain(.01F,.02F,true,4);
+            cached.Gain(0,.019F,true,4);
+            cachedTravel += .01F * cached.Gain(.01F,.001F,true,4);
+        }
+        Check(std::abs(regularTravel - cachedTravel) < .001F);
         curve.Reset();
         Check(curve.Gain(.001F,.01F,true,4) == 1);
         Check(std::abs(Travel(72)-Travel(144)) < .035F);

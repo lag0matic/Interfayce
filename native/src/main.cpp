@@ -715,7 +715,8 @@ void LaunchSlimeReset(const std::filesystem::path& projectRoot, const wchar_t* k
     }
 }
 
-std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand hand) {
+std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand hand,
+                                               bool physicalMotion = false) {
     const auto role = hand == DragHand::Left ? vr::TrackedControllerRole_LeftHand
                                              : vr::TrackedControllerRole_RightHand;
     const auto index = system->GetTrackedDeviceIndexForControllerRole(role);
@@ -724,14 +725,28 @@ std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand ha
     }
     std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> poses{};
     system->GetDeviceToAbsoluteTrackingPose(
-        vr::TrackingUniverseRawAndUncalibrated, 0.0F, poses.data(), static_cast<uint32_t>(poses.size()));
+        vr::TrackingUniverseStanding, 0.0F, poses.data(), static_cast<uint32_t>(poses.size()));
     const auto& pose = poses[index];
     if (!pose.bDeviceIsConnected || !pose.bPoseIsValid
         || pose.eTrackingResult != vr::TrackingResult_Running_OK) {
         return std::nullopt;
     }
     const auto& matrix = pose.mDeviceToAbsoluteTracking;
-    return Vector3{matrix.m[0][3], matrix.m[1][3], matrix.m[2][3]};
+    Vector3 position{matrix.m[0][3], matrix.m[1][3], matrix.m[2][3]};
+    if (physicalMotion) {
+        // Use calibrated standing poses, undoing the current universe transform.
+        // Driver-raw poses are not guaranteed to share a calibrated coordinate frame.
+        const auto origin = system->GetRawZeroPoseToStandingAbsoluteTrackingPose();
+        const float relative[3]{position.x - origin.m[0][3],
+            position.y - origin.m[1][3], position.z - origin.m[2][3]};
+        position = {
+            origin.m[0][0]*relative[0] + origin.m[1][0]*relative[1] + origin.m[2][0]*relative[2],
+            origin.m[0][1]*relative[0] + origin.m[1][1]*relative[1] + origin.m[2][1]*relative[2],
+            origin.m[0][2]*relative[0] + origin.m[1][2]*relative[1] + origin.m[2][2]*relative[2]};
+    }
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+        return std::nullopt;
+    return position;
 }
 
 std::optional<vr::HmdMatrix34_t> ReadControllerPose(vr::IVRSystem* system, DragHand hand) {
@@ -1477,6 +1492,8 @@ int main(int argc, char** argv) {
     DragHand activeDragHand = DragHand::None;
     std::optional<Vector3> lastDragPosition;
     interfayce::DragAcceleration dragAcceleration;
+    bool lastDragAccelerated = ttsSettings.dragAccelerated;
+    float lastDragBoost = ttsSettings.dragMaxBoost;
     auto lastDragSample = std::chrono::steady_clock::now();
     Vector3 previewOffset{};
     std::optional<vr::HmdMatrix34_t> temporaryBaseline;
@@ -1531,6 +1548,7 @@ int main(int argc, char** argv) {
     auto nextCommsShortcutPoll = std::chrono::steady_clock::now();
     std::future<std::optional<CommsState>> commsPoll;
     std::future<std::optional<TtsSettingsState>> settingsPoll;
+    bool discardSettingsPoll = false;
     std::future<decltype(RequestCommsShortcutLabels())> shortcutPoll;
     std::future<decltype(RequestDesktopFavorites())> favoritesPoll;
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
@@ -2635,6 +2653,7 @@ int main(int argc, char** argv) {
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && dragModeHit) {
             if (const auto changed = ChangeTtsSetting("/settings/playspace/acceleration/toggle")) {
+                discardSettingsPoll = settingsPoll.valid();
                 ttsSettings = *changed;
                 dragAcceleration.Reset();
                 renderer.SetDragAccelerated(ttsSettings.dragAccelerated);
@@ -2968,7 +2987,13 @@ int main(int argc, char** argv) {
         }
         if (settingsPoll.valid() && settingsPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             nextRuntimeSettingsPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-            if (const auto loaded = settingsPoll.get()) {
+            auto loaded = settingsPoll.get();
+            if (discardSettingsPoll) {
+                loaded.reset();
+                discardSettingsPoll = false;
+                nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+            }
+            if (loaded) {
                 const bool providerChanged = loaded->youtubeMusic != ttsSettings.youtubeMusic;
                 const bool broadcastSourceChanged = initialBroadcastSourcePending || providerChanged
                     || (musicProviderSwitchPending && loaded->youtubeMusic == requestedMusicYoutube);
@@ -3260,7 +3285,7 @@ int main(int argc, char** argv) {
                     previewOffset = {};
                 }
                 dragFaulted = false;
-                lastDragPosition = ReadControllerPosition(system, activeDragHand);
+                lastDragPosition = ReadControllerPosition(system, activeDragHand, ttsSettings.dragAccelerated);
                 if (temporaryDrag) {
                     vr::HmdMatrix34_t baseline{};
                     if (!chaperone->GetWorkingStandingZeroPoseToRawTrackingPose(&baseline)) {
@@ -3288,18 +3313,25 @@ int main(int argc, char** argv) {
         }
         if ((dragPreview || temporaryDrag || sessionDrag)
             && activeDragHand != DragHand::None && !dragFaulted) {
-            const auto currentPosition = ReadControllerPosition(system, activeDragHand);
+            if (lastDragAccelerated != ttsSettings.dragAccelerated
+                || lastDragBoost != ttsSettings.dragMaxBoost) {
+                lastDragPosition.reset();
+                dragAcceleration.Reset();
+                lastDragAccelerated = ttsSettings.dragAccelerated;
+                lastDragBoost = ttsSettings.dragMaxBoost;
+            }
+            const auto currentPosition = ReadControllerPosition(system, activeDragHand, ttsSettings.dragAccelerated);
             const auto sampleTime = std::chrono::steady_clock::now();
             if (currentPosition && lastDragPosition) {
                 const float raw[3]{currentPosition->x - lastDragPosition->x,
                     currentPosition->y - lastDragPosition->y, currentPosition->z - lastDragPosition->z};
-                const float gain = dragAcceleration.Gain(
+                const float gain = !ttsSettings.dragAccelerated ? 1.0F : dragAcceleration.Gain(
                     std::sqrt(raw[0]*raw[0] + raw[1]*raw[1] + raw[2]*raw[2]),
                     std::chrono::duration<float>(sampleTime - lastDragSample).count(),
                     ttsSettings.dragAccelerated, ttsSettings.dragMaxBoost);
                 const auto& baseline = sessionDrag ? sessionBaseline : temporaryBaseline;
                 float delta[3]{raw[0], raw[1], raw[2]};
-                if (baseline) {
+                if (ttsSettings.dragAccelerated && baseline) {
                     for (int axis = 0; axis < 3; ++axis)
                         delta[axis] = baseline->m[0][axis] * raw[0]
                             + baseline->m[1][axis] * raw[1] + baseline->m[2][axis] * raw[2];

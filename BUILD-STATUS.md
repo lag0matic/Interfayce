@@ -1,5 +1,28 @@
 # Interfayce build status
 
+## Installed 1.2.39 — drag jitter and toggle correction
+
+User reported jitter even when Normal was selected. Saved settings and the live
+service both reported acceleration off. Normal now restores the pre-acceleration
+standing-pose delta path and bypasses all new gain/filter/coordinate conversion.
+Accelerated sampling uses calibrated standing poses with the current universe
+transform removed, rather than driver-raw poses. Repeated/cached pose samples
+accumulate elapsed time so a fresh pose is not interpreted as a speed spike;
+long frame stalls retain unboosted motion instead of dropping it. Changing mode
+or strength discards the prior sample and resets the gain filter. In-flight
+settings polls started before a wrist toggle are discarded to prevent rollback.
+
+242 Python tests pass, 2 skipped. Native acceleration tests include repeated poses
+with 19 ms cached + 1 ms fresh samples and unchanged Normal gain through stalls
+and rapid samples. The previous code fails these cases. Headset confirmation of
+the reported jitter remains necessary; no live playspace movement was automated.
+
+Installed/restarted October 12: version 1.2.39, health 200 ready, one overlay
+and service. Four executable hashes match staging; settings/key unchanged.
+Installer SHA256: 320E4691135ED18C58C190726E0E26C281450453365EB65727E0ACE6D7437216.
+Native Release/installer builds passed. Local checkpoint only; no GitHub push.
+
+
 ## Installed 1.2.38 — optional accelerated space dragging
 
 SPACE panel toggles Normal/Accelerated; desktop settings expose the same switch
