@@ -122,3 +122,34 @@ def test_worker_resamples_in_order_and_sends_final_tail():
     assert chunks[-1][1].endswith("final=1")
     assert abs(sum(len(r[2]) for r in chunks) - 32000) <= 2
     assert "sequence=0" in chunks[0][1]
+
+
+def test_close_unblocks_finish_while_network_request_is_stalled():
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    def request(self, method, url, body=None):
+        if method == 'POST':
+            entered.set()
+            release.wait(2)
+            return {'session': 'fake'}
+        return {}
+    with patch.object(RemoteLiveSession, '_request', request):
+        session = RemoteLiveSession('http://localhost/v1/audio/transcriptions', {}, lambda t: None)
+        assert entered.wait(1)
+        def finish():
+            try:
+                session.finish()
+            except RuntimeError as error:
+                errors.append(str(error))
+            finally:
+                finished.set()
+        worker = threading.Thread(target=finish)
+        worker.start()
+        try:
+            session.close()
+            assert finished.wait(.5), 'Cancellation waited for the stalled network request'
+            assert errors == ['Streaming transcription cancelled']
+        finally:
+            release.set()
+            worker.join(2)
+            session.worker.join(2)

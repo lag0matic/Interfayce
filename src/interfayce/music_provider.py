@@ -12,6 +12,12 @@ class SelectedMusicMedia:
     def selected(self):
         return self.youtube if load_settings().music_provider == "youtube" else self.spotify
 
+    async def current_snapshot(self):
+        media = self.selected()
+        provider = "youtube" if media is self.youtube else "spotify"
+        track, playing, art = await media.current_snapshot()
+        return provider, track, playing, art
+
     async def current_track(self):
         return await self.selected().current_track()
 

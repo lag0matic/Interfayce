@@ -72,12 +72,33 @@ class WindowsSpotifyMedia:
         playback = session.get_playback_info().playback_status
         return track, _is_playing_status(playback)
 
+    async def current_snapshot(self):
+        session = await self._spotify_session()
+        if session is None:
+            return None, False, b""
+        properties = await session.try_get_media_properties_async()
+        artist, title = properties.artist.strip(), properties.title.strip()
+        if not artist or not title:
+            return None, False, b""
+        track = MediaTrack(artist=artist, title=title,
+                           source_id=session.source_app_user_model_id)
+        playing = _is_playing_status(session.get_playback_info().playback_status)
+        try:
+            art = await self._art_bytes(properties)
+        except Exception:
+            art = b""  # Missing artwork must not hide valid track metadata.
+        return track, playing, art or b""
+
     async def current_art_bytes(self) -> bytes | None:
         """Return Spotify's current Windows media-session thumbnail, if supplied."""
         session = await self._spotify_session()
         if session is None:
             return None
         properties = await session.try_get_media_properties_async()
+        return await self._art_bytes(properties)
+
+    @staticmethod
+    async def _art_bytes(properties):
         thumbnail = properties.thumbnail
         if thumbnail is None:
             return None

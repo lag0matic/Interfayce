@@ -408,6 +408,17 @@ class VoiceRuntime:
         finally:
             self.command_lock.release()
 
+    def music_snapshot(self) -> bytes:
+        try:
+            provider, track, playing, art = asyncio.run(self._song_media.current_snapshot())
+            header = (f"{provider}\t{'PLAYING' if playing else 'PAUSED'}\t"
+                      f"{_safe_field(track.artist) if track else ''}\t"
+                      f"{_safe_field(track.title) if track else ''}\n")
+            return header.encode("utf-8") + (art or b"")
+        except Exception:
+            LOGGER.exception("Music snapshot query failed")
+            return b""
+
     def current_music(self) -> str:
         try:
             track, playing = asyncio.run(self._song_media.current_track_and_playback())
@@ -506,6 +517,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, "ready")
             elif self.path == "/services/status":
                 self._reply(200, runtime.health.wire())
+            elif self.path == "/music/snapshot":
+                self._reply_bytes(200, runtime.music_snapshot(), "application/octet-stream")
             elif self.path == "/music/current":
                 self._reply(200, runtime.current_music())
             elif self.path == "/music/art":

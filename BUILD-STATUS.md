@@ -1,5 +1,35 @@
 # Interfayce build status
 
+## Built 1.2.40 — review fixes and GitHub checkpoint
+
+Music microphone start/stop, transport, COMMS controls, and wrist settings now
+queue HTTP work off the VR input thread. Completions apply on the UI thread;
+FIFO ordering preserves a quick press/release while start is pending. Tab
+changes use cached state and schedule existing background polls. Settings and
+COMMS discard polls predating queued changes; health uses the existing worker.
+
+Keyboard dictation cancellation closes the streaming session, wakes its final
+wait immediately, and does not start whole-recording fallback after cancellation.
+An already-running whole-recording fallback remains bounded by its existing
+backend timeout; it is not forcibly interrupted while decoding.
+
+Music metadata and cover bytes now come from one provider-pinned snapshot.
+Spotify reads one media-properties object; Pear reads one song response. The
+wire response carries provider identity so a stale provider response is ignored.
+Artwork failure retains title/playback information with an empty cover.
+
+Validation: 248 Python tests passed, 2 skipped, followed by the additional
+snapshot binary-framing test passing (249 total passing tests). Native Release
+build and asynchronous FIFO/nonblocking/UI-completion, drag acceleration,
+keyboard dictation, and artwork-cache checks passed. No real microphone,
+keyboard injection, playspace movement, or playback commands used in tests.
+The previous 1.2.39 drag fix was confirmed by the user as much better.
+
+This checkpoint also includes keyboard dictation and accelerated dragging since
+1.2.35. Caption append/buffering remains reverted. Installer built for 1.2.40;
+not installed or restarted during this pass. Installed baseline remains 1.2.39.
+Installer SHA256: 3CB26476C5B2785544DA9843F547C1266ABAF5C021B765311C79D224681A56F1.
+
 ## Installed 1.2.39 â€” drag jitter and toggle correction
 
 User reported jitter even when Normal was selected. Saved settings and the live

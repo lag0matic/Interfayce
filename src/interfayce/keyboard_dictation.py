@@ -22,7 +22,7 @@ class KeyboardDictation:
             if not self.command_lock.acquire(blocking=False):
                 return None
             session = dict(token=uuid4().hex, stop=threading.Event(), cancelled=False,
-                           state='LISTENING', text='')
+                           state='LISTENING', text='', stream=None)
             self.session = session
             try:
                 threading.Thread(target=self._run, args=(session,), daemon=True,
@@ -42,7 +42,10 @@ class KeyboardDictation:
             elif s['state'] == 'LISTENING':
                 s['state'] = 'PROCESSING'
             s['stop'].set()
-            return True
+            stream = s['stream'] if cancel else None
+        if stream:
+            stream.close()
+        return True
 
     def status(self, token):
         with self.lock:
@@ -63,6 +66,11 @@ class KeyboardDictation:
                 stream = self.transcriber.start_stream(lambda text: None)
             except Exception:
                 pass  # Same whole-recording fallback as COMMS.
+            with self.lock:
+                s['stream'] = stream
+                cancelled = s['cancelled']
+            if cancelled:
+                return
             audio = capture_with_cues(self.capture, s['stop'], max_seconds=30.0,
                                      cue=self.cue, end_async=True,
                                      **({'on_chunk': stream.push} if stream else {}))
@@ -76,6 +84,8 @@ class KeyboardDictation:
                     text = stream.finish()
                 except Exception:
                     stream.close()
+                    if s['cancelled']:
+                        return
                     text = self.transcriber.transcribe(audio)
             else:
                 text = self.transcriber.transcribe(audio)

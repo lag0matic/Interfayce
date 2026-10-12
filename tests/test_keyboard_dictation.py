@@ -90,3 +90,28 @@ def test_empty_capture_and_failure_release_lock():
     assert next_token != token
     assert service.status(token).startswith('ERROR')
     assert wait_finished(service, next_token).startswith('ERROR')
+
+
+def test_cancel_during_stream_final_never_starts_fallback():
+    entered, closed = threading.Event(), threading.Event()
+    class Stream:
+        def push(self, *a): pass
+        def finish(self):
+            entered.set()
+            assert closed.wait(1)
+            raise RuntimeError('cancelled')
+        def close(self): closed.set()
+    class Live(Transcriber):
+        fallback_called = False
+        def start_stream(self, callback): return Stream()
+        def transcribe(self, audio):
+            self.fallback_called = True
+            return 'must not be requested'
+    backend = Live()
+    service = KeyboardDictation(backend, threading.Lock(), capture=lambda *a, **k: Audio())
+    token = service.start()
+    assert entered.wait(1)
+    service.control(token, cancel=True)
+    assert wait_finished(service, token) == 'CANCELLED\t'
+    assert closed.is_set()
+    assert not backend.fallback_called

@@ -164,3 +164,7 @@ target_link_libraries(InterfayceKeyboardDictationTests PRIVATE user32)
 add_executable(InterfayceDragAccelerationTests tests/drag_acceleration_tests.cpp)
 target_include_directories(InterfayceDragAccelerationTests PRIVATE src)
 target_compile_features(InterfayceDragAccelerationTests PRIVATE cxx_std_20)
+
+add_executable(InterfayceAsyncActionsTests tests/async_actions_tests.cpp)
+target_include_directories(InterfayceAsyncActionsTests PRIVATE src)
+target_compile_features(InterfayceAsyncActionsTests PRIVATE cxx_std_20)
