@@ -1,6 +1,7 @@
 #pragma once
 
 #include "desktop_capture.h"
+#include "keyboard_dictation.h"
 #include "desktop_input_router.h"
 #include "desktop_click_filter.h"
 #include "desktop_surface_manager.h"
@@ -61,6 +62,7 @@ public:
                         bool altered = false,
                         std::optional<size_t> hoveredKey = std::nullopt,
                         std::optional<size_t> pressedKey = std::nullopt);
+    void SetKeyboardVoiceStatus(const std::wstring& status) { keyboardVoiceStatus_ = status; }
     vr::Texture_t Texture() const;
 
 private:
@@ -81,6 +83,7 @@ private:
     std::vector<std::wstring> iconSourceIds_;
     std::vector<Microsoft::WRL::ComPtr<ID2D1Bitmap>> sourceIcons_;
     HANDLE sharedHandle_{};
+    std::wstring keyboardVoiceStatus_;
 };
 
 class DesktopSurfaceRegistry {
@@ -194,6 +197,8 @@ private:
     DesktopClickFilter desktopPrimaryClick_;
     DesktopClickFilter desktopSecondaryClick_;
     PrivateWindowManager privateWindows_;
+    KeyboardDictation dictation_;
+    std::wstring renderedVoiceLabel_;
 };
 
 }  // namespace interfayce

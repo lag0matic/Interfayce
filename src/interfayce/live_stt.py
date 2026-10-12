@@ -64,6 +64,7 @@ class RemoteLiveSession:
         self.queue = queue.Queue(maxsize=2048)
         self.cancelled = threading.Event()
         self.done = threading.Event()
+        self.finished_or_cancelled = threading.Event()
         self.error = None
         self.text = ""
         self.worker = threading.Thread(target=self._run, daemon=True, name="InterfayceLiveSTT")
@@ -89,15 +90,18 @@ class RemoteLiveSession:
                 self.queue.put_nowait(None)
             except queue.Full:
                 self.cancelled.set()
-            if not self.done.wait(6.0):
+            if not self.finished_or_cancelled.wait(6.0):
                 self.cancelled.set()
                 raise TimeoutError("Streaming finalization timed out")
+        if self.cancelled.is_set():
+            raise RuntimeError("Streaming transcription cancelled")
         if self.error:
             raise self.error
         return self.text
 
     def close(self):
         self.cancelled.set()
+        self.finished_or_cancelled.set()
 
     def _run(self):
         import audioop
@@ -140,6 +144,7 @@ class RemoteLiveSession:
         finally:
             # Unblock release promptly; cleanup may take another network timeout.
             self.done.set()
+            self.finished_or_cancelled.set()
             if session_url:
                 try:
                     self._request("DELETE", session_url)

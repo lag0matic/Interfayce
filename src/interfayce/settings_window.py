@@ -100,6 +100,8 @@ class SettingsWindow:
         self.tts_output = tk.StringVar(value=current.tts_output)
         self.haptic = tk.DoubleVar(value=round(current.haptic_strength * 100))
         self.broadcast_gain = tk.DoubleVar(value=current.broadcast_gain_db)
+        self.playspace_accelerated = tk.BooleanVar(value=current.playspace_accelerated)
+        self.playspace_max_boost = tk.DoubleVar(value=current.playspace_max_boost)
         self.playspace_travel_limit = tk.DoubleVar(
             value=current.playspace_travel_limit_meters)
         self.tts_endpoint = tk.StringVar(value=current.tts_endpoint)
@@ -231,7 +233,20 @@ class SettingsWindow:
         notebook.add(desktop, text="DESKTOP")
         notebook.add(wrist, text="WRIST")
         notebook.add(diagnostics, text="DIAGNOSTICS")
-        self._build_general(general)
+        general.columnconfigure(0, weight=1)
+        general.rowconfigure(0, weight=1)
+        general_canvas = tk.Canvas(general, background=self.PANEL, highlightthickness=0)
+        general_scroll = ttk.Scrollbar(general, orient="vertical", command=general_canvas.yview)
+        general_canvas.configure(yscrollcommand=general_scroll.set)
+        general_canvas.grid(row=0, column=0, sticky="nsew")
+        general_scroll.grid(row=0, column=1, sticky="ns")
+        general_content = ttk.Frame(general_canvas, style="Panel.TFrame")
+        general_item = general_canvas.create_window((0, 0), window=general_content, anchor="nw")
+        general_content.bind("<Configure>", lambda _event:
+            general_canvas.configure(scrollregion=general_canvas.bbox("all")))
+        general_canvas.bind("<Configure>", lambda event:
+            general_canvas.itemconfigure(general_item, width=event.width))
+        self._build_general(general_content)
         self._build_voice(voice)
         self._build_integrations(integrations)
         self._build_ask(ask)
@@ -296,6 +311,13 @@ class SettingsWindow:
         ttk.Scale(panel, from_=-24, to=24, variable=self.broadcast_gain,
                   command=lambda _value: self._update_labels()).grid(
                       row=row, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        row += 1
+        ttk.Checkbutton(panel, text="Accelerated space dragging",
+                        variable=self.playspace_accelerated).grid(row=row, column=0, columnspan=2, sticky="w")
+        row += 1
+        ttk.Label(panel, text="Maximum drag multiplier", style="Panel.TLabel").grid(row=row, column=0, sticky="w")
+        ttk.Spinbox(panel, from_=1, to=6, increment=0.5, textvariable=self.playspace_max_boost,
+                    width=8).grid(row=row, column=1, sticky="e")
         row += 1
         ttk.Label(panel, text="Playspace travel limit", style="Panel.TLabel").grid(
             row=row, column=0, sticky="w", pady=(10, 0))
@@ -768,6 +790,8 @@ class SettingsWindow:
             haptic_strength=self.haptic.get() / 100.0,
             broadcast_gain_db=round(self.broadcast_gain.get()),
             playspace_travel_limit_meters=self.playspace_travel_limit.get(),
+            playspace_accelerated=self.playspace_accelerated.get(),
+            playspace_max_boost=self.playspace_max_boost.get(),
             spotify_client_id=self.spotify_client_id.get(),
             music_provider="youtube" if self.music_provider.get() == "YouTube Music (Pear)" else "spotify",
             llm_enabled=self.llm_enabled.get(),

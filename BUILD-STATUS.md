@@ -1,5 +1,107 @@
 # Interfayce build status
 
+## Built 1.2.40 � review fixes and GitHub checkpoint
+
+Music microphone start/stop, transport, COMMS controls, and wrist settings now
+queue HTTP work off the VR input thread. Completions apply on the UI thread;
+FIFO ordering preserves a quick press/release while start is pending. Tab
+changes use cached state and schedule existing background polls. Settings and
+COMMS discard polls predating queued changes; health uses the existing worker.
+
+Keyboard dictation cancellation closes the streaming session, wakes its final
+wait immediately, and does not start whole-recording fallback after cancellation.
+An already-running whole-recording fallback remains bounded by its existing
+backend timeout; it is not forcibly interrupted while decoding.
+
+Music metadata and cover bytes now come from one provider-pinned snapshot.
+Spotify reads one media-properties object; Pear reads one song response. The
+wire response carries provider identity so a stale provider response is ignored.
+Artwork failure retains title/playback information with an empty cover.
+
+Validation: 248 Python tests passed, 2 skipped, followed by the additional
+snapshot binary-framing test passing (249 total passing tests). Native Release
+build and asynchronous FIFO/nonblocking/UI-completion, drag acceleration,
+keyboard dictation, and artwork-cache checks passed. No real microphone,
+keyboard injection, playspace movement, or playback commands used in tests.
+The previous 1.2.39 drag fix was confirmed by the user as much better.
+
+This checkpoint also includes keyboard dictation and accelerated dragging since
+1.2.35. Caption append/buffering remains reverted. Installer built for 1.2.40;
+not installed or restarted during this pass. Installed baseline remains 1.2.39.
+Installer SHA256: 3CB26476C5B2785544DA9843F547C1266ABAF5C021B765311C79D224681A56F1.
+
+## Installed 1.2.39 — drag jitter and toggle correction
+
+User reported jitter even when Normal was selected. Saved settings and the live
+service both reported acceleration off. Normal now restores the pre-acceleration
+standing-pose delta path and bypasses all new gain/filter/coordinate conversion.
+Accelerated sampling uses calibrated standing poses with the current universe
+transform removed, rather than driver-raw poses. Repeated/cached pose samples
+accumulate elapsed time so a fresh pose is not interpreted as a speed spike;
+long frame stalls retain unboosted motion instead of dropping it. Changing mode
+or strength discards the prior sample and resets the gain filter. In-flight
+settings polls started before a wrist toggle are discarded to prevent rollback.
+
+242 Python tests pass, 2 skipped. Native acceleration tests include repeated poses
+with 19 ms cached + 1 ms fresh samples and unchanged Normal gain through stalls
+and rapid samples. The previous code fails these cases. Headset confirmation of
+the reported jitter remains necessary; no live playspace movement was automated.
+
+Installed/restarted October 12: version 1.2.39, health 200 ready, one overlay
+and service. Four executable hashes match staging; settings/key unchanged.
+Installer SHA256: 320E4691135ED18C58C190726E0E26C281450453365EB65727E0ACE6D7437216.
+Native Release/installer builds passed. Local checkpoint only; no GitHub push.
+
+
+## Installed 1.2.38 — optional accelerated space dragging
+
+SPACE panel toggles Normal/Accelerated; desktop settings expose the same switch
+and maximum boost (1-6x, default 4x). Defaults to Normal for existing installations.
+A smooth speed curve ramps from 1x below 0.15 m/s to max at 1 m/s, with 60 ms rise
+smoothing and immediate precision when slowing. No momentum after release.
+Physical controller samples use raw tracking coordinates, converted through the
+saved baseline rotation for the existing origin translation; applied playspace
+offsets cannot feed back into speed. Tracking loss, hand changes, implausible
+samples and stalls reset the speed filter. Existing travel limit/restore retained.
+
+242 Python tests pass (2 skipped). Native checks cover precision, boost, stopping,
+reset, nonfinite/jump/stall samples, and consistent travel at 72/90/144 Hz.
+Headset feel and travel still need user testing; no live playspace manipulation
+was performed during automated validation.
+
+Installed/restarted October 12: 1.2.38, health 200 ready, one overlay/service,
+four executable hashes match staging, settings and protected key unchanged.
+Installed settings endpoint returns the new fields. SPACE production render
+visually checked; General settings now scroll and build correctly off-screen.
+Installer SHA256: FF403EA306A55B10993B5079CEADBDF24B6AD559A3EA85248E6D6EC13FB496D3.
+Local checkpoint only; no GitHub push.
+
+
+## Installed 1.2.37 — keyboard microphone dictation
+
+Added a mic key beside Space on the independent desktop keyboard. Tap to start,
+tap again to stop; the final cleaned transcript is inserted once into the original
+focused field with Unicode input, without clipboard changes or Enter. Uses COMMS'
+configured streaming STT backend and whole-recording fallback; no LLM or OSC.
+Capture is bounded to 30 seconds and shares the global microphone lock. HTTP runs
+asynchronously off the overlay loop. Target window/control changes, desktop clicks,
+other keyboard keys, close/hide and shutdown cancel and discard pending output.
+Status appears in the keyboard header and the mic glows while listening. Native
+focus checks cannot identify browser DOM fields changed without a desktop click
+or native focus event. Discord insertion and headset ergonomics need user trial.
+
+Validation: 241 Python tests pass (2 skipped), including six new recording tests.
+Six isolated native scenarios pass: insertion once, changed focus, cancellation,
+stop during startup, unavailable service, and failed polling. Tests inject no real
+keystrokes, microphone audio, or remote requests. Chatbox behavior stays reverted.
+
+Installed/restarted October 10: 1.2.37, health 200 ready, one overlay/service.
+All four executable hashes match staging; settings and protected key unchanged.
+Installed dictation status endpoint verified using an expired token (no recording).
+Installer SHA256: 20431FB0705F7666932C1A62BA8D100CC05775AE78FAB759C7E620406FEF7CCA.
+Native build and installer succeeded. Local checkpoint only; no GitHub push.
+
+
 ## Installed 1.2.35 — cached model archive and dual SlimeVR support
 
 Model ZIP cache is keyed by all five source files' contents, with an archive

@@ -13,6 +13,7 @@ struct Bounds {
         return x >= left && x <= right && y >= top && y <= bottom;
     }
 };
+inline constexpr Bounds DragMode{390, 302, 714, 346};
 inline constexpr Bounds MusicPlayer{42, 181, 242, 221};
 inline constexpr Bounds MusicBroadcastSource{254, 181, 482, 221};
 static_assert(MusicPlayer.Contains(140, 200));

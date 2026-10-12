@@ -53,7 +53,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(saved.stt_microphone, "Beyond Microphone")
             self.assertAlmostEqual(saved.haptic_strength, 0.37)
             self.assertEqual(settings_wire_text(saved),
-                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0\t10.0\t1\tspotify")
+                "42\t1\t1.00\t0.37\t12.0\tleft\t0.000\t0.000\t0.000\t0.0\t0.0\t0.0\t10.0\t1\tspotify\t0\t4.00")
 
     def test_complete_desktop_configuration_round_trip(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -241,3 +241,19 @@ class BroadcastAttenuationTests(unittest.TestCase):
             self.assertEqual(load_settings().broadcast_gain_db, -3)
             self.assertEqual(adjust_broadcast_gain(-100).broadcast_gain_db, -24)
             self.assertEqual(adjust_broadcast_gain(100).broadcast_gain_db, 24)
+
+
+def test_drag_settings_roundtrip_toggle_and_legacy_defaults():
+    from interfayce.settings import toggle_playspace_acceleration
+    with TemporaryDirectory() as directory, patch.dict(os.environ, {
+        "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+    }):
+        Path(os.environ['INTERFAYCE_SETTINGS_PATH']).write_text('{}')
+        assert not load_settings().playspace_accelerated
+        assert load_settings().playspace_max_boost == 4
+        save_settings(AppSettings(playspace_max_boost=100, spotify_client_id='keep'))
+        assert load_settings().playspace_max_boost == 6
+        assert toggle_playspace_acceleration().playspace_accelerated
+        assert load_settings().spotify_client_id == 'keep'
+        assert settings_wire_text().endswith('\t1\t6.00')
+        assert not toggle_playspace_acceleration().playspace_accelerated
