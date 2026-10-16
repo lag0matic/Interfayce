@@ -16,7 +16,9 @@ int wmain(int argc, wchar_t** argv) {
     renderer.SetBatteryEstimate(L"4h 20m", 65);
     renderer.SetPerformance({L"32%", L"91%", L"12.0/16 GB", L"24.0/64 GB"});
     renderer.SetClockText(L"8:42 PM");
-    renderer.SetSlimeAvailable(true);
+    renderer.SetSlimeAvailable(!(argc == 4 && std::wstring(argv[3]) == L"cetra-offline"));
+    renderer.SetCetraBatteries({interfayce::CetraBattery{93, false}, {66, false}, {13, true}});
+    if (argc == 4 && std::wstring(argv[3]) == L"cetra-disconnected") renderer.SetCetraBatteries({});
     renderer.SetMusicPlaying(true);
     if (argc == 4 && std::wstring(argv[3]) == L"youtube") {
         renderer.SetMusicBroadcastSource(2);

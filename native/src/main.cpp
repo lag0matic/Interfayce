@@ -1,5 +1,6 @@
 #include "drag_acceleration.h"
 #include "async_actions.h"
+#include "cetra_battery.h"
 #include "panel_layout.h"
 #include "performance_monitor.h"
 #include "local_service_client.h"
@@ -1580,6 +1581,9 @@ int main(int argc, char** argv) {
     std::future<std::optional<std::string>> batteryStatusPost;
     auto nextControllerBatteryPoll = std::chrono::steady_clock::now();
     std::array<bool, 2> controllerCharging{};
+    interfayce::CetraBatteries cetraBatteries{};
+    std::future<interfayce::CetraBatteries> cetraBatteryPoll;
+    auto nextCetraBatteryPoll = std::chrono::steady_clock::now();
     std::array<int, 2> controllerBatteries{-1, -1};
     static constexpr std::array<const char*, 10> batteryNames{
         "Left hand", "Right hand", "Left elbow", "Right elbow", "Chest",
@@ -3052,6 +3056,18 @@ int main(int argc, char** argv) {
             vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
         }
         const auto batteryNow = std::chrono::steady_clock::now();
+        bool cetraChanged = false;
+        if (cetraBatteryPoll.valid()
+            && cetraBatteryPoll.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            const auto updated = cetraBatteryPoll.get();
+            cetraChanged = updated != cetraBatteries;
+            cetraBatteries = updated;
+            renderer.SetCetraBatteries(updated);
+            nextCetraBatteryPoll = batteryNow + std::chrono::minutes(3);
+        }
+        if (!cetraBatteryPoll.valid() && batteryNow >= nextCetraBatteryPoll) {
+            cetraBatteryPoll = std::async(std::launch::async, interfayce::ReadCetraBatteries);
+        }
         bool batteryStateChanged = false;
         bool batterySampleReady = false;
         bool batteryHeaderChanged = false;
@@ -3148,7 +3164,8 @@ int main(int argc, char** argv) {
                 });
             }
         }
-        if ((batteryHeaderChanged || (batteryStateChanged && selectedDeck == 3))
+        if ((batteryHeaderChanged || (cetraChanged && (selectedDeck == 0 || selectedDeck == 3))
+             || (batteryStateChanged && selectedDeck == 3))
             && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                 rigLine, rigSlots, mountReady, desktopPanel)) {
             const auto updatedTexture = renderer.Texture();

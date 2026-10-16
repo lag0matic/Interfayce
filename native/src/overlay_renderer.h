@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include "holo_glyph.h"
+#include "cetra_battery.h"
 
 #include "desktop_surface_registry.h"
 
@@ -56,6 +57,7 @@ public:
     bool SetStatusHover(int index) { if (statusHover_ == index) return false; statusHover_ = index; return true; }
     void SetPerformance(const std::array<std::wstring, 4>& text) { performanceText_ = text; }
     void SetClockText(const std::wstring& text);
+    void SetCetraBatteries(const CetraBatteries& batteries);
     void SetControllerCharging(const std::array<bool, 2>& charging);
     void SetBatteryEstimate(const std::wstring& text, int lowestPercent);
     void SetPressFeedback(float x, float y, bool active);
@@ -151,6 +153,8 @@ private:
     std::wstring batteryEstimateText_;
     int lowestBatteryPercent_{-1};
     std::array<bool, 2> controllerCharging_{};
+    CetraBatteries cetraBatteries_{};
+    bool cetraVisible_{};
     D2D1_POINT_2F pressFeedbackCenter_{};
     bool pressFeedbackActive_{};
     std::wstring rigBodyArtPath_;

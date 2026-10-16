@@ -68,6 +68,12 @@ Basic transport and track status use the Windows media session and do not requir
 - Tracker battery levels, mount readiness, reset/mount controls, and a compact body scanner view.
 - Estimated remaining tracker runtime after enough battery history has been observed.
 - Deduplicated spoken low- and critical-battery warnings.
+- Cetra Open Wireless left/right/case percentages on MUSIC and RIG, read directly
+  from the USB receiver at startup and every three minutes. Green means charging;
+  yellow/red mean low/critical. Missing readings show `--`. Gear Link need not
+  stay open. The readout appears after the receiver supplies a valid reading.
+  Case information is whatever the receiver reports, which may be its last known
+  case state; Bluetooth-only connections and other Cetra models are not supported.
 - Session-only playspace movement with a configurable travel limit.
 - Restores the startup playspace baseline rather than rewriting SteamVR's room calibration.
 

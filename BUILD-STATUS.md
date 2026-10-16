@@ -1,5 +1,29 @@
 # Interfayce build status
 
+## Built 1.2.41 - Cetra Open Wireless battery readout
+
+Compact left/right/case readout on MUSIC and labelled readings on RIG. Both
+share one asynchronous USB HID poll at startup and every THREE MINUTES, per
+user preference. No browser or Gear Link dependency. After initial detection,
+unavailable readings show --. Charging green, <=20% yellow, <=10% red. Tracker
+runtime estimates and voice alerts are unchanged.
+
+Live receiver verified: VID 0B05 PID 1CAC, usage FF00/1. Direct query returned
+left 93%, right 66%, case 13% with case charging. ASUS Gear Link O701 v1.00.23
+public plugin defines report CC, GET 12 with index 00 00: connection key 01,
+battery key 12, charging key 11. Only these read-only queries are sent. Shared
+handles, background I/O, timeout/cancellation cleanup, invalid values rejected.
+Source: https://gearlink.asus.com/view/7340/manifest.json
+Case information may be the receiver's last reported case state. Other Cetra
+models and Bluetooth-only connections are unsupported.
+
+Validation: 249 Python tests passed, 2 skipped; native battery tests passed for
+charging/full/empty, partial disconnect, malformed and unknown readings. Release
+build passed. Production MUSIC/RIG renders checked with Slime online/offline.
+Hardware probe did not change playback. Installer 1.2.41 built; not installed
+or restarted during this pass. No GitHub update requested for this addition.
+Installer SHA256: B1031A7324A2155902FF64B6DFCCC972F764ED6FAA6F6F94CDEF3D590C6FF8FA.
+
 ## Built 1.2.40 — review fixes and GitHub checkpoint
 
 Music microphone start/stop, transport, COMMS controls, and wrist settings now
