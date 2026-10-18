@@ -34,6 +34,8 @@ class LiveCaptionPublisher:
         self.previous = []
         self.last = ""
         self.next_update = 0.0
+        self.rollover_at = None
+        self.pending_rollover = False
 
     def update(self, text, final=False):
         words = clean_transcript(text).split()
@@ -47,7 +49,26 @@ class LiveCaptionPublisher:
                 count += 1
             settled = words[:count]
         self.previous = words
-        caption = caption_tail(" ".join(settled))
+        text = " ".join(settled)
+        caption = caption_tail(text)
+        now = self.clock()
+        self.pending_rollover = False
+        if len(text) > 144 and caption != self.last:
+            if self.rollover_at is None:
+                self.rollover_at = now + 3.0
+            if now < self.rollover_at:
+                self.pending_rollover = True
+                if not self.last:
+                    # A large first result still gets a readable opening before
+                    # the rolling tail takes over.
+                    head = text[:144]
+                    caption = head.rsplit(" ", 1)[0] if " " in head else head
+                else:
+                    return self.last
+            else:
+                self.rollover_at = now + 3.0
+        elif len(text) <= 144:
+            self.rollover_at = None
         if caption and (final or (caption != self.last and self.clock() >= self.next_update)):
             self.publish(caption)
             self.last = caption

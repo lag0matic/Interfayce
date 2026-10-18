@@ -175,14 +175,25 @@ class CommsDictation:
             else:
                 transcript = self._transcriber.transcribe(audio)
             transcript = clean_transcript(transcript)
+            if transcript and publisher is not None:
+                # Keep the reading pause on release too. Never sleep holding
+                # the publish lock: clear/shortcuts must suppress this flush.
+                while True:
+                    with self._publish_lock:
+                        if self._suppress_live:
+                            break
+                        displayed = publisher.update(transcript, final=True)
+                        pending = publisher.pending_rollover
+                    if not pending:
+                        transcript = displayed
+                        break
+                    time.sleep(0.05)
             with self._publish_lock:
                 if self._suppress_live:
                     self._set_snapshot("CLEARED")
                     return
                 if transcript:
-                    if publisher is not None:
-                        transcript = publisher.update(transcript, final=True)
-                    else:
+                    if publisher is None:
                         transcript = fit_chatbox_text(transcript)
                         self._osc.send_chatbox_message(transcript)
                     LOGGER.info("Comms transcript sent: chars=%s release_to_send=%.3fs live=%s",

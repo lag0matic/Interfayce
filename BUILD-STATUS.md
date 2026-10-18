@@ -494,3 +494,12 @@ prevents promising absolute privacy.
 Build runtime is Python 3.12; audioop requires attention before Python 3.13+.
 Native orchestration remains concentrated in main.cpp and should be split gradually
 as features change. In-headset testing remains essential.
+
+## 1.2.42 - caption reading pause
+
+Live captions hold for three seconds before dropping older words on overflow.
+Further rollovers are spaced three seconds apart; release respects the pause.
+Clear and shortcuts suppress pending text. No queue of 30-second pages.
+Validation: 252 Python tests passed, 2 skipped, including rollover timing,
+release flushing and clear during the final pause. Panel previews also support
+shareable production renders with supplied music/status and sample chat content.

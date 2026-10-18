@@ -48,6 +48,81 @@ class Osc:
         self.messages.append("<clear>")
 
 
+def test_overflow_waits_three_seconds_even_on_release():
+    sent, now = [], [0.0]
+    publisher = LiveCaptionPublisher(sent.append, lambda: now[0])
+    opening = " ".join(f"word{i}" for i in range(20))
+    publisher.update(opening, final=True)
+    long = opening + " and some more words that overflow the caption"
+    now[0] = 1.0
+    assert publisher.update(long, final=True) == opening
+    assert publisher.pending_rollover
+    now[0] = 3.9
+    publisher.update(long, final=True)
+    assert sent == [opening]
+    now[0] = 4.0
+    publisher.update(long, final=True)
+    assert sent[-1] == caption_tail(long)
+    assert not publisher.pending_rollover
+    now[0] = 5.0
+    publisher.update(long + " more", final=True)
+    assert len(sent) == 2
+    now[0] = 7.0
+    publisher.update(long + " more", final=True)
+    assert sent[-1].endswith(" more")
+
+
+def test_first_large_result_shows_opening_before_tail():
+    sent, now = [], [0.0]
+    publisher = LiveCaptionPublisher(sent.append, lambda: now[0])
+    text = " ".join(f"word{i}" for i in range(50))
+    publisher.update(text, final=True)
+    assert sent[0].startswith("word0 ")
+    assert len(sent[0]) <= 144
+    assert publisher.pending_rollover
+    now[0] = 3.0
+    publisher.update(text, final=True)
+    assert sent[-1] == caption_tail(text)
+    assert not publisher.pending_rollover
+
+
+def test_release_waits_for_rollover_and_clear_can_cancel_it():
+    text = " ".join(f"word{i}" for i in range(50))
+    class Stream:
+        def push(self, *args):
+            pass
+        def finish(self):
+            return text
+        def close(self):
+            pass
+    class Transcriber:
+        def start_stream(self, callback):
+            return Stream()
+    for clear in (False, True):
+        first = threading.Event()
+        class SignallingOsc(Osc):
+            def send_chatbox_message(self, message):
+                super().send_chatbox_message(message)
+                first.set()
+        osc = SignallingOsc()
+        comms = CommsDictation(Transcriber(), threading.Lock(),
+                              capture=lambda *a, **k: object(), osc=osc)
+        comms.start()
+        assert first.wait(1)
+        assert osc.messages[0].startswith("word0 ")
+        assert comms._thread.is_alive()
+        if clear:
+            comms.clear()
+        comms._thread.join(4)
+        assert not comms._thread.is_alive()
+        if clear:
+            assert osc.messages[-1] == "<clear>"
+            assert comms.snapshot().state == "CLEARED"
+        else:
+            assert osc.messages[-1] == caption_tail(text)
+            assert comms.snapshot().state == "SENT"
+
+
 def test_stream_shows_text_before_release_and_clear_suppresses_late_results():
     active = threading.Event()
     class Stream:

@@ -178,3 +178,6 @@ target_link_libraries(InterfayceCetraBatteryProbe PRIVATE interfayce_cetra_batte
 target_link_libraries(InterfayceOverlay PRIVATE interfayce_cetra_battery)
 add_executable(InterfayceCetraBatteryTests tests/cetra_battery_tests.cpp)
 target_link_libraries(InterfayceCetraBatteryTests PRIVATE interfayce_cetra_battery)
+
+target_sources(InterfaycePanelPreview PRIVATE src/performance_monitor.cpp)
+target_link_libraries(InterfaycePanelPreview PRIVATE interfayce_cetra_battery)
