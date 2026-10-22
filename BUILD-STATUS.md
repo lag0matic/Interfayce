@@ -503,3 +503,13 @@ Clear and shortcuts suppress pending text. No queue of 30-second pages.
 Validation: 252 Python tests passed, 2 skipped, including rollover timing,
 release flushing and clear during the final pause. Panel previews also support
 shareable production renders with supplied music/status and sample chat content.
+
+## 1.2.43 - preserve captions during early transcript revisions
+
+The live publisher holds the displayed caption when a partial revision reduces
+its settled prefix below the previously published word count. This prevents an
+early wording or punctuation correction from collapsing the chatbox to a short
+prefix. A settled replacement and authoritative final result can still update;
+three-second overflow timing remains intact. Validation: 251 application tests
+passed, including early corrections, shorter final corrections and overflow
+reading-deadline preservation.

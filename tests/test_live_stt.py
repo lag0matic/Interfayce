@@ -37,6 +37,43 @@ def test_partial_corrections_settle_and_final_flushes():
     assert sent[-1] == "We like cuddles today."
 
 
+def test_early_revision_does_not_collapse_visible_caption():
+    sent, now = [], [0.0]
+    publisher = LiveCaptionPublisher(sent.append, lambda: now[0])
+    first = "Well I think we should go watch a movie"
+    publisher.update(first)
+    publisher.update(first)
+    now[0] = 2.0
+    revised = "Well I thought we should go watch a movie."
+    publisher.update(revised)
+    assert sent == [first]
+    publisher.update(revised)
+    assert sent[-1] == revised
+    now[0] = 4.0
+    publisher.update("Well I thought")
+    publisher.update("Well I thought")
+    assert sent[-1] == revised
+    publisher.update("Well I thought.", final=True)
+    assert sent[-1] == "Well I thought."
+
+
+def test_revision_preserves_overflow_reading_deadline():
+    sent, now = [], [0.0]
+    publisher = LiveCaptionPublisher(sent.append, lambda: now[0])
+    first = " ".join(f"word{i}" for i in range(35))
+    publisher.update(first)
+    publisher.update(first)
+    deadline = publisher.rollover_at
+    now[0] = 1.0
+    revised = first.replace("word1 ", "word1, ")
+    publisher.update(revised)
+    assert len(sent) == 1
+    assert publisher.rollover_at == deadline
+    now[0] = 3.0
+    publisher.update(revised)
+    assert sent[-1] == caption_tail(revised)
+
+
 class Osc:
     def __init__(self):
         self.messages = []

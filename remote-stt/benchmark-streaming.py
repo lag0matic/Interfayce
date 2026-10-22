@@ -9,7 +9,7 @@ import wave
 from stt_server.backends import create_backend
 
 
-def benchmark(model_root, wav_path, options):
+def benchmark(model_root, wav_path, options, repeat_seconds=None):
     backend = create_backend(options, model_root)
     started = time.perf_counter()
     backend.warm()
@@ -18,6 +18,9 @@ def benchmark(model_root, wav_path, options):
         if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate()) != (1, 2, 16000):
             raise ValueError("Use a mono PCM16, 16 kHz WAV recording.")
         pcm = audio.readframes(audio.getnframes())
+    if repeat_seconds and pcm:
+        size = int(repeat_seconds * 32000)
+        pcm = (pcm * (size // len(pcm) + 1))[:size]
     duration = len(pcm) / 32000
     if duration < 2:
         raise ValueError("Use at least two seconds of test speech.")
@@ -48,13 +51,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-root", type=Path, default=Path(__file__).parent / "models")
     parser.add_argument("--audio", type=Path)
-    parser.add_argument("--backend", choices=["nemotron", "moonshine"], default="nemotron")
+    parser.add_argument("--backend", choices=["nemotron", "moonshine", "faster-whisper"], default="nemotron")
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--repeat-seconds", type=float)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--require-realtime", action="store_true")
     args = parser.parse_args()
     audio = args.audio or args.model_root / "nemotron-en-560ms" / "0.wav"
-    result = benchmark(args.model_root, audio, {"backend": args.backend, "num_threads": 4,
-                                               "language": "en", "model_arch": 5})
+    options = {"backend": args.backend, "num_threads": 4, "language": "en", "model_arch": 5}
+    if args.config:
+        options = json.loads(args.config.read_text(encoding="utf-8-sig"))["models"]["whisper-turbo"]
+    result = benchmark(args.model_root, audio, options, args.repeat_seconds)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")

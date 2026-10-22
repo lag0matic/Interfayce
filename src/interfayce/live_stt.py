@@ -36,6 +36,7 @@ class LiveCaptionPublisher:
         self.next_update = 0.0
         self.rollover_at = None
         self.pending_rollover = False
+        self.published_words = 0
 
     def update(self, text, final=False):
         words = clean_transcript(text).split()
@@ -49,6 +50,12 @@ class LiveCaptionPublisher:
                 count += 1
             settled = words[:count]
         self.previous = words
+        # A revised word or punctuation mark near the beginning can make the
+        # common prefix tiny. That is uncertainty, not a request to replace a
+        # readable caption with that tiny prefix. Wait for the revision to
+        # settle; the final result may still legitimately shorten the text.
+        if not final and len(settled) < self.published_words:
+            return self.last
         text = " ".join(settled)
         caption = caption_tail(text)
         now = self.clock()
@@ -72,6 +79,7 @@ class LiveCaptionPublisher:
         if caption and (final or (caption != self.last and self.clock() >= self.next_update)):
             self.publish(caption)
             self.last = caption
+            self.published_words = len(settled)
             self.next_update = self.clock() + 1.0
         return caption
 
