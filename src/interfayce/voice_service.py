@@ -28,11 +28,12 @@ from .music_conversation import run_music_request
 from .music_llm import MusicConversationMemory, MusicLlmValidationError
 from .parakeet_stt import ParakeetTranscriber, capture_microphone_once, capture_microphone_until
 from .music_voice_capture import MusicVoiceCapture
+from .keyboard_dictation import KeyboardDictation
 from .remote_stt import RemoteSttTranscriber
 from .osc import VrchatOscClient
 from .settings import (adjust_broadcast_gain, adjust_tts_volume, comms_shortcut_labels,
                        desktop_favorites_wire_text, load_settings, record_desktop_recent,
-                       settings_wire_text, toggle_song_announce, toggle_tts_mute,
+                       settings_wire_text, toggle_song_announce, toggle_tts_mute, toggle_playspace_acceleration,
                        set_music_provider)
 from .song_announcer import ResidentSongAnnouncer
 from .spotify_oauth import SpotifyOAuthError
@@ -131,6 +132,8 @@ class VoiceRuntime:
                                     for name in ("spotify", "youtube")}
         self.music_choices = MusicChoices()
         self.music_capture = MusicVoiceCapture(self.music_command)
+        self.keyboard_dictation = KeyboardDictation(
+            self.transcriber, self.command_lock, cue=play_capture_cue)
         self.chatbox = ChatboxCoordinator(
             song_enabled=lambda: load_settings().song_announce_enabled)
         self.comms = CommsDictation(
@@ -405,6 +408,17 @@ class VoiceRuntime:
         finally:
             self.command_lock.release()
 
+    def music_snapshot(self) -> bytes:
+        try:
+            provider, track, playing, art = asyncio.run(self._song_media.current_snapshot())
+            header = (f"{provider}\t{'PLAYING' if playing else 'PAUSED'}\t"
+                      f"{_safe_field(track.artist) if track else ''}\t"
+                      f"{_safe_field(track.title) if track else ''}\n")
+            return header.encode("utf-8") + (art or b"")
+        except Exception:
+            LOGGER.exception("Music snapshot query failed")
+            return b""
+
     def current_music(self) -> str:
         try:
             track, playing = asyncio.run(self._song_media.current_track_and_playback())
@@ -503,6 +517,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, "ready")
             elif self.path == "/services/status":
                 self._reply(200, runtime.health.wire())
+            elif self.path == "/music/snapshot":
+                self._reply_bytes(200, runtime.music_snapshot(), "application/octet-stream")
             elif self.path == "/music/current":
                 self._reply(200, runtime.current_music())
             elif self.path == "/music/art":
@@ -535,6 +551,18 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200 if stopped else 409, "stopped" if stopped else "expired")
             elif self.path.startswith("/listen/music/result/"):
                 self._reply(200, runtime.music_capture.result(self.path.rsplit("/", 1)[-1]))
+            elif self.path == "/keyboard/dictation/start":
+                token = runtime.keyboard_dictation.start()
+                self._reply(200 if token else 409, token or "busy")
+            elif self.path.startswith("/keyboard/dictation/"):
+                operation, token = self.path.rsplit("/", 2)[-2:]
+                if operation == "status":
+                    self._reply(200, runtime.keyboard_dictation.status(token))
+                elif operation in {"stop", "cancel"}:
+                    ok = runtime.keyboard_dictation.control(token, cancel=operation == "cancel")
+                    self._reply(200 if ok else 409, "ok" if ok else "expired")
+                else:
+                    self._reply(404, "Not found")
             elif self.path == "/warm":
                 threading.Thread(
                     target=runtime.warm, name="InterfayceVoiceWarm", daemon=True
@@ -635,6 +663,8 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, settings_wire_text(adjust_tts_volume(-0.1)))
             elif self.path == "/settings/tts/mute/toggle":
                 self._reply(200, settings_wire_text(toggle_tts_mute()))
+            elif self.path == "/settings/playspace/acceleration/toggle":
+                self._reply(200, settings_wire_text(toggle_playspace_acceleration()))
             elif self.path == "/settings/song-announce/toggle":
                 self._reply(200, settings_wire_text(toggle_song_announce()))
             elif self.path == "/settings/broadcast/gain/up":

@@ -151,8 +151,24 @@ class PearMedia:
     async def current_track(self):
         return (await self.current_track_and_playback())[0]
 
+    async def current_snapshot(self):
+        song = self.api.song()
+        title, artist = str(song.get("title") or "").strip(), str(song.get("artist") or "").strip()
+        if not title:
+            return None, False, b""
+        track = MediaTrack(artist=artist, title=title,
+                           source_id="youtube-music:" + str(song.get("videoId") or ""))
+        try:
+            art = self._song_art(song)
+        except Exception:
+            art = b""
+        return track, not song.get("isPaused", True), art
+
     async def current_art_bytes(self):
-        url = self.api.song().get("imageSrc") or ""
+        return self._song_art(self.api.song())
+
+    def _song_art(self, song):
+        url = song.get("imageSrc") or ""
         parsed = urlsplit(url)
         if parsed.scheme != "https" or not any((parsed.hostname or "").endswith("." + host)
             or parsed.hostname == host for host in ("ytimg.com", "googleusercontent.com", "ggpht.com")):

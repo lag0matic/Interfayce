@@ -47,6 +47,7 @@ add_executable(InterfayceOverlay
     src/desktop_capture.cpp
     src/desktop_surface_manager.cpp
     src/desktop_surface_registry.cpp
+    src/keyboard_dictation.cpp
     src/desktop_input_router.cpp
     src/desktop_input_blocking.cpp
     src/overlay_renderer.cpp
@@ -154,3 +155,29 @@ target_compile_features(InterfayceDesktopClickTests PRIVATE cxx_std_20)
 add_executable(InterfaycePerformanceProbe tests/performance_probe.cpp src/performance_monitor.cpp)
 target_include_directories(InterfaycePerformanceProbe PRIVATE src)
 target_compile_features(InterfaycePerformanceProbe PRIVATE cxx_std_20)
+
+add_executable(InterfayceKeyboardDictationTests tests/keyboard_dictation_tests.cpp src/keyboard_dictation.cpp)
+target_include_directories(InterfayceKeyboardDictationTests PRIVATE src)
+target_compile_features(InterfayceKeyboardDictationTests PRIVATE cxx_std_20)
+target_link_libraries(InterfayceKeyboardDictationTests PRIVATE user32)
+
+add_executable(InterfayceDragAccelerationTests tests/drag_acceleration_tests.cpp)
+target_include_directories(InterfayceDragAccelerationTests PRIVATE src)
+target_compile_features(InterfayceDragAccelerationTests PRIVATE cxx_std_20)
+
+add_executable(InterfayceAsyncActionsTests tests/async_actions_tests.cpp)
+target_include_directories(InterfayceAsyncActionsTests PRIVATE src)
+target_compile_features(InterfayceAsyncActionsTests PRIVATE cxx_std_20)
+
+add_library(interfayce_cetra_battery STATIC src/cetra_battery.cpp)
+target_include_directories(interfayce_cetra_battery PUBLIC src)
+target_compile_features(interfayce_cetra_battery PUBLIC cxx_std_20)
+target_link_libraries(interfayce_cetra_battery PUBLIC hid setupapi)
+add_executable(InterfayceCetraBatteryProbe tests/cetra_battery_probe.cpp)
+target_link_libraries(InterfayceCetraBatteryProbe PRIVATE interfayce_cetra_battery)
+target_link_libraries(InterfayceOverlay PRIVATE interfayce_cetra_battery)
+add_executable(InterfayceCetraBatteryTests tests/cetra_battery_tests.cpp)
+target_link_libraries(InterfayceCetraBatteryTests PRIVATE interfayce_cetra_battery)
+
+target_sources(InterfaycePanelPreview PRIVATE src/performance_monitor.cpp)
+target_link_libraries(InterfaycePanelPreview PRIVATE interfayce_cetra_battery)

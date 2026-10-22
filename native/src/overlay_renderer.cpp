@@ -219,6 +219,15 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                               ID2D1Brush* brush) {
         d2dContext_->DrawText(text.data(), static_cast<UINT32>(text.size()), format, rect, brush);
     };
+    const auto drawCetraValue = [&](size_t index, const D2D1_RECT_F rect) {
+        const auto& battery = cetraBatteries_[index];
+        auto* brush = battery.percent < 0 ? mutedTextBrush_.Get()
+            : battery.charging ? chargingBrush_.Get()
+            : battery.percent <= 10 ? criticalBrush_.Get()
+            : battery.percent <= 20 ? warningBrush_.Get() : accentBrush_.Get();
+        drawText(battery.percent < 0 ? L"--" : std::to_wstring(battery.percent) + L"%",
+            labelFormat_.Get(), rect, brush);
+    };
     const auto drawCornerFrame = [&](const D2D1_RECT_F rect, ID2D1Brush* brush, float stroke = 2.0F) {
         constexpr float corner = 16.0F;
         constexpr float segment = 36.0F;
@@ -529,6 +538,16 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
     if (deck == 0 && albumArt) d2dContext_->DrawBitmap(albumArt.Get(), D2D1::RectF(570.0F, 108.0F, 720.0F, 258.0F));
     d2dContext_->SetTransform(D2D1::Matrix3x2F::Translation(0, panel::ContentOffset));
     if (deck == 0) {
+        if (cetraVisible_) {
+            drawText(L"CETRA", labelFormat_.Get(), D2D1::RectF(42, 88, 118, 113), mutedTextBrush_.Get());
+            const wchar_t* labels[]{L"L", L"R", L"CASE"};
+            const float positions[]{128, 238, 348};
+            for (size_t i=0; i<3; ++i) {
+                const float x=positions[i];
+                drawText(labels[i], labelFormat_.Get(), D2D1::RectF(x, 88, x+50, 113), mutedTextBrush_.Get());
+                drawCetraValue(i, D2D1::RectF(x+50, 88, x+112, 113));
+            }
+        }
         // Orbital transport controls: no text boxes, only clear geometric controls.
         const std::array<D2D1_POINT_2F, 3> centers{
             D2D1::Point2F(140, 287), D2D1::Point2F(384, 287), D2D1::Point2F(628, 287)};
@@ -817,11 +836,20 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
                 : desktop.inputBlockingAvailable ? L"BLOCK GAME INPUT: ON" : L"BLOCK GAME: UNAVAILABLE",
             labelFormat_.Get(), D2D1::RectF(434, 350, 720, 374), blockBrush);
     } else if (deck == 3) {
+        if (cetraVisible_) {
+            drawText(L"CETRA", labelFormat_.Get(), D2D1::RectF(54, 112, 220, 139), mutedTextBrush_.Get());
+            const wchar_t* labels[]{L"LEFT", L"RIGHT", L"CASE"};
+            for (size_t i=0; i<3; ++i) {
+                const float y=144.0F+29.0F*static_cast<float>(i);
+                drawText(labels[i], labelFormat_.Get(), D2D1::RectF(54, y, 140, y+26), mutedTextBrush_.Get());
+                drawCetraValue(i, D2D1::RectF(150, y, 224, y+26));
+            }
+        }
         if (!slimeAvailable_) {
-            d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(92, 242), 9, 9),
+            d2dContext_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(284, 242), 9, 9),
                 structureDimBrush_.Get(), 2.0F);
-            drawText(L"SLIMEVR OFFLINE FOR THIS SESSION", bodyFormat_.Get(),
-                D2D1::RectF(122, 224, 650, 262), mutedTextBrush_.Get());
+            drawText(L"SLIMEVR OFFLINE", bodyFormat_.Get(),
+                D2D1::RectF(308, 224, 714, 262), mutedTextBrush_.Get());
         } else {
         // Orbital diagnostic figure: location carries the label, leaving only battery values.
         const auto center = D2D1::Point2F(384, 226);
@@ -1036,10 +1064,15 @@ bool OverlayRenderer::Render(int deck, const std::wstring& musicLine, const std:
         drawText(playspaceAdjusted_ ? L"ADJUSTED" : L"BASELINE", titleFormat_.Get(),
             D2D1::RectF(390, 214, 710, 266),
             playspaceAdjusted_ ? accentBrush_.Get() : textBrush_.Get());
-        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(405, 298), 7, 7),
+        d2dContext_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(405, 280), 7, 7),
             stateBrush);
         drawText(playspaceAdjusted_ ? L"HOLD ICON TO RESTORE" : L"NO SESSION OFFSET",
-            labelFormat_.Get(), D2D1::RectF(426, 285, 720, 326), mutedTextBrush_.Get());
+            labelFormat_.Get(), D2D1::RectF(426, 267, 720, 298), mutedTextBrush_.Get());
+        const auto& mode = panel::DragMode;
+        d2dContext_->DrawRectangle(D2D1::RectF(mode.left, mode.top, mode.right, mode.bottom),
+            dragAccelerated_ ? accentBrush_.Get() : structureBrush_.Get(), 1.5F);
+        drawText(dragAccelerated_ ? L"DRAG: ACCELERATED" : L"DRAG: NORMAL", bodyFormat_.Get(),
+            D2D1::RectF(mode.left + 12, mode.top + 10, mode.right - 8, mode.bottom), textBrush_.Get());
     } else if (deck == 5) {
         const auto stateBrush = commsActive_ ? accentBrush_.Get() : structureBrush_.Get();
         drawText(commsTranscript_.empty() ? L"Voice transcription will appear here"
@@ -1380,6 +1413,12 @@ void OverlayRenderer::SetRigHoldProgress(float resetProgress, float mountProgres
 
 void OverlayRenderer::SetClockText(const std::wstring& text) {
     clockText_ = text;
+}
+
+void OverlayRenderer::SetCetraBatteries(const CetraBatteries& batteries) {
+    cetraBatteries_ = batteries;
+    cetraVisible_ = cetraVisible_ || std::any_of(batteries.begin(), batteries.end(),
+        [](const auto& battery) { return battery.percent >= 0; });
 }
 
 void OverlayRenderer::SetControllerCharging(const std::array<bool, 2>& charging) {

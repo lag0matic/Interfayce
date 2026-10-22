@@ -36,6 +36,8 @@ class AppSettings:
     haptic_strength: float = 0.22
     broadcast_gain_db: float = 12.0
     playspace_travel_limit_meters: float = 10.0
+    playspace_accelerated: bool = False
+    playspace_max_boost: float = 4.0
     spotify_client_id: str = ""
     music_provider: str = "spotify"
     song_announce_enabled: bool = True
@@ -157,6 +159,8 @@ def _clamp(settings: AppSettings) -> AppSettings:
         broadcast_gain_db=max(-24.0, min(24.0, float(settings.broadcast_gain_db))),
         playspace_travel_limit_meters=max(
             1.0, min(50.0, float(settings.playspace_travel_limit_meters))),
+        playspace_accelerated=bool(settings.playspace_accelerated),
+        playspace_max_boost=max(1.0, min(6.0, float(settings.playspace_max_boost))),
         spotify_client_id=str(settings.spotify_client_id).strip(),
         music_provider="youtube" if settings.music_provider == "youtube" else "spotify",
         song_announce_enabled=bool(settings.song_announce_enabled),
@@ -199,6 +203,8 @@ def load_settings() -> AppSettings:
                 broadcast_gain_db=data.get("broadcast_gain_db", 12.0),
                 playspace_travel_limit_meters=data.get(
                     "playspace_travel_limit_meters", 10.0),
+                playspace_accelerated=data.get("playspace_accelerated", False),
+                playspace_max_boost=data.get("playspace_max_boost", 4.0),
                 spotify_client_id=data.get("spotify_client_id", ""),
                 music_provider=data.get("music_provider", "spotify"),
                 song_announce_enabled=data.get("song_announce_enabled", True),
@@ -359,6 +365,8 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               stt_endpoint: str | None = None,
                               stt_model: str | None = None,
                               playspace_travel_limit_meters: float | None = None,
+                              playspace_accelerated: bool | None = None,
+                              playspace_max_boost: float | None = None,
                               codex_model: str | None = None,
                               music_provider: str | None = None,
                               baseline: AppSettings | None = None) -> AppSettings:
@@ -380,6 +388,8 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         broadcast_gain_db=broadcast_gain_db,
         playspace_travel_limit_meters=(current.playspace_travel_limit_meters
             if playspace_travel_limit_meters is None else playspace_travel_limit_meters),
+        playspace_accelerated=current.playspace_accelerated if playspace_accelerated is None else playspace_accelerated,
+        playspace_max_boost=current.playspace_max_boost if playspace_max_boost is None else playspace_max_boost,
         spotify_client_id=spotify_client_id,
         music_provider=current.music_provider if music_provider is None else music_provider,
         llm_enabled=llm_enabled,
@@ -446,4 +456,11 @@ def settings_wire_text(settings: AppSettings | None = None) -> str:
             f"{current.wrist_offset_z:.3f}\t{current.wrist_pitch:.1f}\t"
             f"{current.wrist_yaw:.1f}\t{current.wrist_roll:.1f}\t"
             f"{current.playspace_travel_limit_meters:.1f}\t"
-            f"{int(current.song_announce_enabled)}\t{current.music_provider}")
+            f"{int(current.song_announce_enabled)}\t{current.music_provider}\t"
+            f"{int(current.playspace_accelerated)}\t{current.playspace_max_boost:.2f}")
+
+
+@transactional
+def toggle_playspace_acceleration() -> AppSettings:
+    current = load_settings()
+    return save_settings(replace(current, playspace_accelerated=not current.playspace_accelerated))

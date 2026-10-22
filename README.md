@@ -27,7 +27,7 @@ Interfayce is developed with substantial AI assistance. Lag0Matic supplies the o
 - Capture a physical display or a filtered list of visible applications.
 - Move a surface with one grip and resize it by stretching with two grips.
 - Left-click, drag, and scroll captured applications from VR.
-- Spawn an independent, ambidextrous QWERTY keyboard with key glow, haptic feedback, copy, and paste.
+- Spawn an independent, ambidextrous QWERTY keyboard with key glow, haptic feedback, copy, paste, and microphone dictation. Click a text field, tap the mic, speak after the cue, then tap again to insert the finished transcript. Dictation never presses Enter; switching fields, typing another key, or closing/hiding the desktop cancels it. Capture stops automatically after 30 seconds.
 - Lock, close, return to source selection, or bring a lost surface back into view.
 - Configure three application favorites; unused slots are filled by a bounded, deduplicated recent-app history.
 - Desk surfaces hide when leaving the Desk panel and return when it is selected again.
@@ -68,6 +68,12 @@ Basic transport and track status use the Windows media session and do not requir
 - Tracker battery levels, mount readiness, reset/mount controls, and a compact body scanner view.
 - Estimated remaining tracker runtime after enough battery history has been observed.
 - Deduplicated spoken low- and critical-battery warnings.
+- Cetra Open Wireless left/right/case percentages on MUSIC and RIG, read directly
+  from the USB receiver at startup and every three minutes. Green means charging;
+  yellow/red mean low/critical. Missing readings show `--`. Gear Link need not
+  stay open. The readout appears after the receiver supplies a valid reading.
+  Case information is whatever the receiver reports, which may be its last known
+  case state; Bluetooth-only connections and other Cetra models are not supported.
 - Session-only playspace movement with a configurable travel limit.
 - Restores the startup playspace baseline rather than rewriting SteamVR's room calibration.
 
@@ -348,3 +354,5 @@ Additional project references:
 - [`TECHNICAL-NOTES.md`](TECHNICAL-NOTES.md) — implementation notes and architecture details
 - [`PROJECT-NORTH-STAR.md`](PROJECT-NORTH-STAR.md) — product direction and design principles
 - [`remote-stt/README.md`](remote-stt/README.md) — portable Windows Faster-Whisper service
+
+SPACE panel: tap **DRAG: NORMAL / ACCELERATED** to toggle speed-sensitive dragging. Slow movement stays 1:1; faster sweeps ramp to the maximum multiplier configured in desktop settings (default 4x, range 1-6x). Release stops immediately. The existing travel limit and Restore remain in effect.

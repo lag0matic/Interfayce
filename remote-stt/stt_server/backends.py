@@ -26,6 +26,11 @@ class Backend(ABC):
 
 
 class FasterWhisperBackend(Backend):
+    def create_stream(self):
+        self.warm()
+        from .whisper_stream import WhisperStream
+        return WhisperStream(self)
+
     def __init__(self, options: dict[str, Any], model_root: Path):
         super().__init__(options, model_root)
         self._model: Any = None

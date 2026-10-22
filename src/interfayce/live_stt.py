@@ -34,6 +34,9 @@ class LiveCaptionPublisher:
         self.previous = []
         self.last = ""
         self.next_update = 0.0
+        self.rollover_at = None
+        self.pending_rollover = False
+        self.published_words = 0
 
     def update(self, text, final=False):
         words = clean_transcript(text).split()
@@ -47,10 +50,36 @@ class LiveCaptionPublisher:
                 count += 1
             settled = words[:count]
         self.previous = words
-        caption = caption_tail(" ".join(settled))
+        # A revised word or punctuation mark near the beginning can make the
+        # common prefix tiny. That is uncertainty, not a request to replace a
+        # readable caption with that tiny prefix. Wait for the revision to
+        # settle; the final result may still legitimately shorten the text.
+        if not final and len(settled) < self.published_words:
+            return self.last
+        text = " ".join(settled)
+        caption = caption_tail(text)
+        now = self.clock()
+        self.pending_rollover = False
+        if len(text) > 144 and caption != self.last:
+            if self.rollover_at is None:
+                self.rollover_at = now + 3.0
+            if now < self.rollover_at:
+                self.pending_rollover = True
+                if not self.last:
+                    # A large first result still gets a readable opening before
+                    # the rolling tail takes over.
+                    head = text[:144]
+                    caption = head.rsplit(" ", 1)[0] if " " in head else head
+                else:
+                    return self.last
+            else:
+                self.rollover_at = now + 3.0
+        elif len(text) <= 144:
+            self.rollover_at = None
         if caption and (final or (caption != self.last and self.clock() >= self.next_update)):
             self.publish(caption)
             self.last = caption
+            self.published_words = len(settled)
             self.next_update = self.clock() + 1.0
         return caption
 
@@ -64,6 +93,7 @@ class RemoteLiveSession:
         self.queue = queue.Queue(maxsize=2048)
         self.cancelled = threading.Event()
         self.done = threading.Event()
+        self.finished_or_cancelled = threading.Event()
         self.error = None
         self.text = ""
         self.worker = threading.Thread(target=self._run, daemon=True, name="InterfayceLiveSTT")
@@ -89,15 +119,18 @@ class RemoteLiveSession:
                 self.queue.put_nowait(None)
             except queue.Full:
                 self.cancelled.set()
-            if not self.done.wait(6.0):
+            if not self.finished_or_cancelled.wait(6.0):
                 self.cancelled.set()
                 raise TimeoutError("Streaming finalization timed out")
+        if self.cancelled.is_set():
+            raise RuntimeError("Streaming transcription cancelled")
         if self.error:
             raise self.error
         return self.text
 
     def close(self):
         self.cancelled.set()
+        self.finished_or_cancelled.set()
 
     def _run(self):
         import audioop
@@ -140,6 +173,7 @@ class RemoteLiveSession:
         finally:
             # Unblock release promptly; cleanup may take another network timeout.
             self.done.set()
+            self.finished_or_cancelled.set()
             if session_url:
                 try:
                     self._request("DELETE", session_url)

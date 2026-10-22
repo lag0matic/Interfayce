@@ -1,3 +1,6 @@
+#include "drag_acceleration.h"
+#include "async_actions.h"
+#include "cetra_battery.h"
 #include "panel_layout.h"
 #include "performance_monitor.h"
 #include "local_service_client.h"
@@ -472,37 +475,31 @@ void RecordDesktopRecent(const interfayce::DesktopSource& source) {
     }).detach();
 }
 
-void LaunchMusicControl(const std::filesystem::path& projectRoot, const wchar_t* operation) {
-    static_cast<void>(projectRoot);
-    std::string operationPath;
-    for (const auto* character = operation; *character; ++character) {
-        operationPath.push_back(static_cast<char>(*character));
-    }
-    LocalHttpRequest("POST", "/music/control/" + operationPath,
-        std::chrono::milliseconds(750));
-}
-
 struct MusicPlaybackState {
     std::wstring line;
     bool playing{};
     std::optional<std::string> artwork;
+    std::optional<bool> youtube;
 };
 
 MusicPlaybackState ReadMusicNowPlaying(const std::filesystem::path& projectRoot) {
     static_cast<void>(projectRoot);
-    const auto response = LocalHttpRequest("GET", "/music/current", std::chrono::seconds(2));
+    const auto response = LocalHttpRequest("GET", "/music/snapshot", std::chrono::seconds(5));
     if (!response || response->empty()) return {L"No track from selected player", false, std::string{}};
-    const auto statusEnd = response->find('\t');
-    const auto artistEnd = statusEnd == std::string::npos
-        ? std::string::npos : response->find('\t', statusEnd + 1);
-    if (statusEnd == std::string::npos || artistEnd == std::string::npos) {
-        return {Utf8ToWide(*response), false};
-    }
+    const auto headerEnd = response->find('\n');
+    const auto providerEnd = response->find('\t');
+    const auto statusEnd = response->find('\t', providerEnd + 1);
+    const auto artistEnd = response->find('\t', statusEnd + 1);
+    if (headerEnd == std::string::npos || providerEnd == std::string::npos
+        || statusEnd == std::string::npos || artistEnd == std::string::npos || artistEnd >= headerEnd)
+        return {L"No track from selected player", false, std::string{}};
+    const auto provider = response->substr(0, providerEnd);
+    if (provider != "youtube" && provider != "spotify") return {};
     const auto artist = response->substr(statusEnd + 1, artistEnd - statusEnd - 1);
-    const auto title = response->substr(artistEnd + 1);
-    const auto artwork = LocalHttpRequest("GET", "/music/art", std::chrono::seconds(3));
-    return {Utf8ToWide(artist + " - " + title),
-        response->substr(0, statusEnd) == "PLAYING", artwork};
+    const auto title = response->substr(artistEnd + 1, headerEnd - artistEnd - 1);
+    return {title.empty() ? L"No track from selected player" : Utf8ToWide(artist + " - " + title),
+        response->substr(providerEnd + 1, statusEnd - providerEnd - 1) == "PLAYING",
+        response->substr(headerEnd + 1), provider == "youtube"};
 }
 
 struct TtsSettingsState {
@@ -520,6 +517,8 @@ struct TtsSettingsState {
     float playspaceTravelLimitMeters{10.0F};
     bool songAnnounceEnabled{true};
     bool youtubeMusic{};
+    bool dragAccelerated{};
+    float dragMaxBoost{4.0F};
 };
 
 std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
@@ -550,6 +549,8 @@ std::optional<TtsSettingsState> ParseTtsSettings(const std::string& response) {
             std::clamp(std::stof(fields[12]), 1.0F, 50.0F);
         if (fields.size() > 13) state.songAnnounceEnabled = fields[13] != "0";
         if (fields.size() > 14) state.youtubeMusic = fields[14] == "youtube";
+        if (fields.size() > 15) state.dragAccelerated = fields[15] == "1";
+        if (fields.size() > 16) state.dragMaxBoost = std::clamp(std::stof(fields[16]), 1.0F, 6.0F);
         return state;
     } catch (...) {
         return std::nullopt;
@@ -710,7 +711,8 @@ void LaunchSlimeReset(const std::filesystem::path& projectRoot, const wchar_t* k
     }
 }
 
-std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand hand) {
+std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand hand,
+                                               bool physicalMotion = false) {
     const auto role = hand == DragHand::Left ? vr::TrackedControllerRole_LeftHand
                                              : vr::TrackedControllerRole_RightHand;
     const auto index = system->GetTrackedDeviceIndexForControllerRole(role);
@@ -726,7 +728,21 @@ std::optional<Vector3> ReadControllerPosition(vr::IVRSystem* system, DragHand ha
         return std::nullopt;
     }
     const auto& matrix = pose.mDeviceToAbsoluteTracking;
-    return Vector3{matrix.m[0][3], matrix.m[1][3], matrix.m[2][3]};
+    Vector3 position{matrix.m[0][3], matrix.m[1][3], matrix.m[2][3]};
+    if (physicalMotion) {
+        // Use calibrated standing poses, undoing the current universe transform.
+        // Driver-raw poses are not guaranteed to share a calibrated coordinate frame.
+        const auto origin = system->GetRawZeroPoseToStandingAbsoluteTrackingPose();
+        const float relative[3]{position.x - origin.m[0][3],
+            position.y - origin.m[1][3], position.z - origin.m[2][3]};
+        position = {
+            origin.m[0][0]*relative[0] + origin.m[1][0]*relative[1] + origin.m[2][0]*relative[2],
+            origin.m[0][1]*relative[0] + origin.m[1][1]*relative[1] + origin.m[2][1]*relative[2],
+            origin.m[0][2]*relative[0] + origin.m[1][2]*relative[1] + origin.m[2][2]*relative[2]};
+    }
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+        return std::nullopt;
+    return position;
 }
 
 std::optional<vr::HmdMatrix34_t> ReadControllerPose(vr::IVRSystem* system, DragHand hand) {
@@ -1263,6 +1279,7 @@ int main(int argc, char** argv) {
     renderer.SetBroadcastGainDb(static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
     broadcast.SetGainDb(ttsSettings.broadcastGainDb);
     renderer.SetMusicProvider(ttsSettings.youtubeMusic);
+    renderer.SetDragAccelerated(ttsSettings.dragAccelerated);
     if (ttsSettings.youtubeMusic) {
         broadcast.SetSource(interfayce::BroadcastSource::YouTubeMusic);
         renderer.SetMusicBroadcastSource(2);
@@ -1470,6 +1487,10 @@ int main(int argc, char** argv) {
     bool printedInputDiagnostics = false;
     DragHand activeDragHand = DragHand::None;
     std::optional<Vector3> lastDragPosition;
+    interfayce::DragAcceleration dragAcceleration;
+    bool lastDragAccelerated = ttsSettings.dragAccelerated;
+    float lastDragBoost = ttsSettings.dragMaxBoost;
+    auto lastDragSample = std::chrono::steady_clock::now();
     Vector3 previewOffset{};
     std::optional<vr::HmdMatrix34_t> temporaryBaseline;
     std::optional<vr::HmdMatrix34_t> sessionBaseline;
@@ -1499,7 +1520,6 @@ int main(int argc, char** argv) {
     bool musicProviderSwitchPending{};
     bool requestedMusicYoutube{};
     std::future<std::wstring> musicVoiceCommand;
-    auto nextVoiceHealthPoll = std::chrono::steady_clock::now();
     CommsState commsState;
     bool commsMicHeld = false;
     std::string musicMicHeldToken;
@@ -1523,16 +1543,47 @@ int main(int argc, char** argv) {
     auto nextCommsShortcutPoll = std::chrono::steady_clock::now();
     std::future<std::optional<CommsState>> commsPoll;
     std::future<std::optional<TtsSettingsState>> settingsPoll;
+    bool discardSettingsPoll = false;
     std::future<decltype(RequestCommsShortcutLabels())> shortcutPoll;
     std::future<decltype(RequestDesktopFavorites())> favoritesPoll;
     auto nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
     auto nextDesktopFavoritePoll = std::chrono::steady_clock::now();
+    interfayce::AsyncActions<std::optional<TtsSettingsState>> settingActions;
+    interfayce::AsyncActions<std::optional<CommsState>> commsActions;
+    interfayce::AsyncActions<std::optional<std::string>> musicMicActions;
+    interfayce::AsyncActions<std::optional<std::string>> musicTransport;
+    bool musicMicReleased = true;
+    bool serviceUiDirty = false;
+    bool discardCommsPoll = false;
+    const auto queueComms = [&](std::string path) {
+        discardCommsPoll = commsPoll.valid();
+        commsActions.Submit([path] { return RequestCommsState("POST", path); },
+            [&](auto changed) {
+                commsState = changed.value_or(CommsState{L"COMMS ERROR", L"Voice service did not respond", false});
+                renderer.SetCommsStatus(commsState.status, commsState.transcript, commsState.active);
+                nextCommsPoll = std::chrono::steady_clock::now();
+                serviceUiDirty = true;
+            });
+    };
+    const auto stopMusicMic = [&] {
+        const auto token = std::exchange(musicMicHeldToken, {});
+        musicMicActions.Submit([token] {
+            return LocalHttpRequest("POST", "/listen/music/stop/" + token, std::chrono::seconds(2));
+        }, [&](auto stopped) {
+            if (musicVoiceCommand.valid())
+                renderer.SetMusicVoiceStatus(stopped ? L"PROCESSING..." : L"VOICE STOP ERROR", false);
+            serviceUiDirty = true;
+        });
+    };
     std::vector<PendingFavoriteCapture> pendingFavoriteCaptures;
     auto nextRigPoll = std::chrono::steady_clock::now();
     std::future<SlimeRigStatus> slimeBatteryPoll;
     std::future<std::optional<std::string>> batteryStatusPost;
     auto nextControllerBatteryPoll = std::chrono::steady_clock::now();
     std::array<bool, 2> controllerCharging{};
+    interfayce::CetraBatteries cetraBatteries{};
+    std::future<interfayce::CetraBatteries> cetraBatteryPoll;
+    auto nextCetraBatteryPoll = std::chrono::steady_clock::now();
     std::array<int, 2> controllerBatteries{-1, -1};
     static constexpr std::array<const char*, 10> batteryNames{
         "Left hand", "Right hand", "Left elbow", "Right elbow", "Chest",
@@ -1602,6 +1653,10 @@ int main(int argc, char** argv) {
         }
         if (healthPoll.valid() && healthPoll.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
             const auto [result, slimeHealthy] = healthPoll.get();
+            if (!voiceServiceAvailable && result && !musicVoiceCommand.valid() && !musicMicActions.Busy()) {
+                renderer.SetMusicVoiceStatus(L"VOICE READY", false);
+            }
+            voiceServiceAvailable = result.has_value();
             if (slimeReachable != slimeHealthy) nextRigPoll = std::chrono::steady_clock::now();
             slimeReachable = slimeHealthy;
             if (!slimeReachable) {
@@ -1763,6 +1818,7 @@ int main(int argc, char** argv) {
 
         vr::VROverlayIntersectionResults_t panelHit{};
         bool restoreButtonHit = false;
+        bool dragModeHit = false;
         bool rigFullResetHit = false;
         bool rigMountResetHit = false;
         bool desktopNewSurfaceHit = false;
@@ -1846,6 +1902,7 @@ int main(int argc, char** argv) {
                     return dx * dx + dy * dy <= radius * radius;
                 };
                 desktopInputBlockHit = selectedDeck == 1 && interfayce::DesktopBlockButton::Contains(x, y);
+                dragModeHit = selectedDeck == 2 && interfayce::panel::DragMode.Contains(x, y);
                 const auto restoreX = x - 199.0F;
                 const auto restoreY = y - 250.0F;
                 restoreButtonHit = selectedDeck == 2 && playspaceAdjusted
@@ -1854,7 +1911,7 @@ int main(int argc, char** argv) {
                 musicBroadcastHit = selectedDeck == 0 && !musicProviderSwitchPending && circleHit(520, 145, 35);
                 musicBroadcastSourceHit = selectedDeck == 0 && !musicProviderSwitchPending && interfayce::panel::MusicBroadcastSource.Contains(x, y);
                 musicProviderHit = selectedDeck == 0 && interfayce::panel::MusicPlayer.Contains(x, y)
-                    && !musicProviderSwitchPending && !musicProviderChange.valid() && !musicVoiceCommand.valid();
+                    && !musicProviderSwitchPending && !musicProviderChange.valid() && !musicVoiceCommand.valid() && !musicMicActions.Busy() && !musicTransport.Busy();
                 musicPreviousHit = selectedDeck == 0 && musicAvailable && !musicProviderSwitchPending && circleHit(140, 287, 39);
                 musicToggleHit = selectedDeck == 0 && musicAvailable && !musicProviderSwitchPending && circleHit(384, 287, 49);
                 musicNextHit = selectedDeck == 0 && musicAvailable && !musicProviderSwitchPending && circleHit(628, 287, 39);
@@ -1996,7 +2053,7 @@ int main(int argc, char** argv) {
         else highlightedSurface = desktopFrameHit ? desktopFrameHit : leftDesktopFrameHit;
         desktopSurfaces.SetHoveredFrame(highlightedSurface);
         const bool panelActionable = (panelHitFound && panelY <= 82.0F)
-            || restoreButtonHit || rigFullResetHit
+            || restoreButtonHit || dragModeHit || rigFullResetHit
             || (rigMountResetHit && mountReady)
             || desktopNewSurfaceHit || desktopKeyboardSpawnHit || desktopSurfaceListHit
             || desktopFavoriteHit || desktopListBackHit || desktopBringAllHit
@@ -2172,24 +2229,17 @@ int main(int argc, char** argv) {
         }
         // Push-to-talk release belongs to the press that armed it, even if the
         // aiming dot has drifted away from the mic icon in the meantime.
-        if (!wristUiClick.bState && !musicMicHeldToken.empty()) {
-            const auto stopped = LocalHttpRequest("POST", "/listen/music/stop/" + musicMicHeldToken,
-                std::chrono::seconds(2));
-            musicMicHeldToken.clear();
-            renderer.SetMusicVoiceStatus(stopped ? L"PROCESSING..." : L"VOICE STOP ERROR", false);
-            if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                    rigLine, rigSlots, mountReady, desktopPanel)) {
-                const auto updatedTexture = renderer.Texture();
-                vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-            }
+        if (!wristUiClick.bState) {
+            musicMicReleased = true;
+            if (!musicMicHeldToken.empty()) stopMusicMic();
         }
+        musicMicActions.Tick();
+        musicTransport.Tick();
+        commsActions.Tick();
+        settingActions.Tick();
         if (wristUiClick.bChanged && !wristUiClick.bState && commsMicHeld) {
             commsMicHeld = false;
-            if (const auto changed = RequestCommsState("POST", "/comms/stop")) {
-                commsState = *changed;
-            } else {
-                commsState = {L"COMMS ERROR", L"Voice service did not respond", false};
-            }
+            queueComms("/comms/stop");
             renderer.SetCommsStatus(
                 commsState.status, commsState.transcript, commsState.active);
             nextCommsPoll = std::chrono::steady_clock::now();
@@ -2217,46 +2267,24 @@ int main(int argc, char** argv) {
             if (requestedDeck == 1) {
                 desktopPanel.showSurfaceList = false;
                 desktopPanel.surfaces = desktopSurfaces.Summaries();
-                if (const auto favorites = RequestDesktopFavorites()) {
-                    desktopFavorites = *favorites;
-                    for (size_t index = 0; index < favorites->size(); ++index) {
-                        desktopPanel.favorites[index] = (*favorites)[index].label;
-                    }
-                }
+                nextDesktopFavoritePoll = std::chrono::steady_clock::now();
                 desktopLine = DesktopSurfaceLine(desktopPanel.surfaces.size());
             }
             if (requestedDeck == 3) {
                 rigLine = ReadControllerBatteryLine(system);
             }
             if (requestedDeck == 4) {
-                if (const auto loaded = ReadTtsSettings()) ttsSettings = *loaded;
+                nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
                 renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
                 renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
                 renderer.SetBroadcastGainDb(
                     static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
             }
             if (requestedDeck == 5) {
-                if (const auto labels = RequestCommsShortcutLabels()) {
-                    commsShortcuts = *labels;
-                    renderer.SetCommsShortcuts(commsShortcuts);
-                }
-                if (const auto current = RequestCommsState("GET", "/comms/status")) {
-                    commsState = *current;
-                    renderer.SetCommsStatus(
-                        commsState.status, commsState.transcript, commsState.active);
-                }
                 nextCommsPoll = std::chrono::steady_clock::now();
-                nextCommsShortcutPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+                nextCommsShortcutPoll = std::chrono::steady_clock::now();
             }
-            if (requestedDeck == 6) {
-                if (const auto current = RequestAssistantState("GET", "/assistant/status")) {
-                    assistantState = *current;
-                    renderer.SetAssistantChoices(assistantState.choices, assistantState.canDictate, assistantState.decisionToken);
-            renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
-                        assistantState.response, assistantState.active);
-                }
-                nextAssistantPoll = std::chrono::steady_clock::now();
-            }
+            if (requestedDeck == 6) nextAssistantPoll = std::chrono::steady_clock::now();
             if (requestedDeck != selectedDeck && renderer.Initialize(
                     system, requestedDeck, requestedDeck == 1 ? desktopLine : musicLine,
                     requestedDeck == 0 && !musicAvailable ? L"" : musicArtPath.wstring(),
@@ -2326,21 +2354,25 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && musicMicHit) {
-            if (!musicVoiceCommand.valid() && !musicProviderChange.valid() && !musicProviderSwitchPending) {
-                voiceServiceAvailable = VoiceServiceAvailable();
+            if (!musicVoiceCommand.valid() && !musicMicActions.Busy() && !musicProviderChange.valid() && !musicProviderSwitchPending) {
                 if (!voiceServiceAvailable) {
                     LaunchVoiceService(directory, projectRoot);
                     renderer.SetMusicVoiceStatus(L"VOICE WARMING", false);
                 } else {
-                    const auto token = LocalHttpRequest("POST", "/listen/music/start", std::chrono::seconds(2));
-                    if (token && token->size() == 32) {
-                        musicMicHeldToken = *token;
-                        renderer.SetMusicVoiceStatus(L"LISTENING...", true);
-                        musicVoiceCommand = std::async(std::launch::async,
-                            [captureToken = *token] { return RequestMusicVoiceCommand(captureToken); });
-                    } else {
-                        renderer.SetMusicVoiceStatus(L"VOICE BUSY / UNAVAILABLE", false);
-                    }
+                    musicMicReleased = false;
+                    renderer.SetMusicVoiceStatus(L"STARTING MIC...", false);
+                    musicMicActions.Submit([] {
+                        return LocalHttpRequest("POST", "/listen/music/start", std::chrono::seconds(2));
+                    }, [&](auto token) {
+                        if (token && token->size() == 32) {
+                            musicMicHeldToken = *token;
+                            renderer.SetMusicVoiceStatus(L"LISTENING...", true);
+                            musicVoiceCommand = std::async(std::launch::async,
+                                [captureToken = *token] { return RequestMusicVoiceCommand(captureToken); });
+                            if (musicMicReleased) stopMusicMic();
+                        } else renderer.SetMusicVoiceStatus(L"VOICE BUSY / UNAVAILABLE", false);
+                        serviceUiDirty = true;
+                    });
                 }
                 if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                         rigLine, rigSlots, mountReady, desktopPanel)) {
@@ -2350,11 +2382,7 @@ int main(int argc, char** argv) {
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && commsShortcutHit) {
             const auto path = "/comms/shortcut/" + std::to_string(*commsShortcutHit);
-            if (const auto changed = RequestCommsState("POST", path)) {
-                commsState = *changed;
-            } else {
-                commsState = {L"COMMS ERROR", L"Shortcut service did not respond", false};
-            }
+            queueComms(path);
             renderer.SetCommsStatus(
                 commsState.status, commsState.transcript, commsState.active);
             nextCommsPoll = std::chrono::steady_clock::now();
@@ -2364,16 +2392,12 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && commsMicHit) {
-            voiceServiceAvailable = VoiceServiceAvailable();
             if (!voiceServiceAvailable) {
                 LaunchVoiceService(directory, projectRoot);
                 commsState = {L"VOICE WARMING", L"", false};
-            } else if (const auto changed = RequestCommsState(
-                    "POST", "/comms/start")) {
-                commsState = *changed;
-                commsMicHeld = commsState.active;
             } else {
-                commsState = {L"COMMS ERROR", L"Voice service did not respond", false};
+                commsMicHeld = true;
+                queueComms("/comms/start");
             }
             renderer.SetCommsStatus(
                 commsState.status, commsState.transcript, commsState.active);
@@ -2384,14 +2408,11 @@ int main(int argc, char** argv) {
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState && commsClearHit) {
-            voiceServiceAvailable = VoiceServiceAvailable();
             if (!voiceServiceAvailable) {
                 LaunchVoiceService(directory, projectRoot);
                 commsState = {L"VOICE WARMING", L"", false};
-            } else if (const auto changed = RequestCommsState("POST", "/comms/clear")) {
-                commsState = *changed;
             } else {
-                commsState = {L"COMMS ERROR", L"Voice service did not respond", false};
+                queueComms("/comms/clear");
             }
             renderer.SetCommsStatus(
                 commsState.status, commsState.transcript, commsState.active);
@@ -2439,54 +2460,66 @@ int main(int argc, char** argv) {
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && songAnnounceHit) {
-            if (const auto changed = ChangeTtsSetting("/settings/song-announce/toggle")) {
-                ttsSettings = *changed;
-                renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
-                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                        rigLine, rigSlots, mountReady, desktopPanel)) {
-                    const auto updatedTexture = renderer.Texture();
-                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-                }
-            }
+            discardSettingsPoll = settingsPoll.valid();
+            settingActions.Submit([path = std::string("/settings/song-announce/toggle")] { return ChangeTtsSetting(path); },
+                [&](auto changed) {
+                    if (!changed) return;
+                    ttsSettings = *changed;
+                    renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
+                    if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                            rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                    nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+            });
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (broadcastGainDownHit || broadcastGainUpHit)) {
             const auto path = broadcastGainDownHit
                 ? "/settings/broadcast/gain/down" : "/settings/broadcast/gain/up";
-            if (const auto changed = ChangeTtsSetting(path)) {
-                const bool restartBroadcast = broadcast.Enabled();
-                if (restartBroadcast) broadcast.Stop();
-                ttsSettings = *changed;
-                broadcast.SetGainDb(ttsSettings.broadcastGainDb);
-                renderer.SetBroadcastGainDb(
-                    static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
-                if (restartBroadcast) {
-                    std::wstring error;
-                    if (!broadcast.Start(error)) {
-                        std::wcerr << L"Broadcast gain restart failed: " << error << L'\n';
+            discardSettingsPoll = settingsPoll.valid();
+            settingActions.Submit([path = std::string(path)] { return ChangeTtsSetting(path); },
+                [&](auto changed) {
+                    if (!changed) return;
+                    const bool restartBroadcast = broadcast.Enabled();
+                    if (restartBroadcast) broadcast.Stop();
+                    ttsSettings = *changed;
+                    broadcast.SetGainDb(ttsSettings.broadcastGainDb);
+                    renderer.SetBroadcastGainDb(
+                        static_cast<int>(std::lround(ttsSettings.broadcastGainDb)));
+                    if (restartBroadcast) {
+                        std::wstring error;
+                        if (!broadcast.Start(error)) {
+                            std::wcerr << L"Broadcast gain restart failed: " << error << L'\n';
+                        }
                     }
-                }
-                renderer.SetMusicBroadcastState(
-                    broadcast.Enabled(), broadcast.StatusText());
-                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                        rigLine, rigSlots, mountReady, desktopPanel)) {
-                    const auto updatedTexture = renderer.Texture();
-                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-                }
-            }
+                    renderer.SetMusicBroadcastState(
+                        broadcast.Enabled(), broadcast.StatusText());
+                    if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                            rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                    nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+            });
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (ttsVolumeDownHit || ttsMuteHit || ttsVolumeUpHit)) {
             const auto path = ttsVolumeDownHit ? "/settings/tts/volume/down"
                 : ttsVolumeUpHit ? "/settings/tts/volume/up"
                 : "/settings/tts/mute/toggle";
-            if (const auto changed = ChangeTtsSetting(path)) {
-                ttsSettings = *changed;
-                renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
-                if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                        rigLine, rigSlots, mountReady, desktopPanel)) {
-                    const auto updatedTexture = renderer.Texture();
-                    vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-                }
-            }
+            discardSettingsPoll = settingsPoll.valid();
+            settingActions.Submit([path = std::string(path)] { return ChangeTtsSetting(path); },
+                [&](auto changed) {
+                    if (!changed) return;
+                    ttsSettings = *changed;
+                    renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
+                    if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                            rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto updatedTexture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
+                    }
+                    nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+            });
         } else if (wristUiClick.bChanged && wristUiClick.bState && desktopInputBlockHit) {
             desktopInputBlocking.Toggle();
             nextInputBlockingPoll = std::chrono::steady_clock::now();
@@ -2506,13 +2539,16 @@ int main(int argc, char** argv) {
             }
         } else if (wristUiClick.bChanged && wristUiClick.bState
                    && (musicPreviousHit || musicToggleHit || musicNextHit)) {
-            if (musicPreviousHit) {
-                LaunchMusicControl(projectRoot, L"previous");
-            } else if (musicToggleHit) {
-                LaunchMusicControl(projectRoot, L"toggle");
-            } else if (musicNextHit) {
-                LaunchMusicControl(projectRoot, L"next");
-            }
+            const std::string operation = musicPreviousHit ? "previous" : musicToggleHit ? "toggle" : "next";
+            musicTransport.Submit([operation] {
+                return LocalHttpRequest("POST", "/music/control/" + operation, std::chrono::milliseconds(750));
+            }, [&](auto result) {
+                nextMusicPoll = std::chrono::steady_clock::now();
+                if (!result) {
+                    renderer.SetMusicVoiceStatus(L"PLAYER DID NOT RESPOND", false);
+                    serviceUiDirty = true;
+                }
+            });
         } else if (wristUiClick.bChanged && wristUiClick.bState && desktopFavoriteHit) {
             const auto& favorite = desktopFavorites[*desktopFavoriteHit];
             const auto sources = desktopSourceManager.EnumerateSources();
@@ -2623,6 +2659,21 @@ int main(int argc, char** argv) {
                 const auto updatedTexture = renderer.Texture();
                 vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
             }
+        } else if (wristUiClick.bChanged && wristUiClick.bState && dragModeHit) {
+            discardSettingsPoll = settingsPoll.valid();
+            settingActions.Submit([path = std::string("/settings/playspace/acceleration/toggle")] { return ChangeTtsSetting(path); },
+                [&](auto changed) {
+                    if (!changed) return;
+                    ttsSettings = *changed;
+                    dragAcceleration.Reset();
+                    renderer.SetDragAccelerated(ttsSettings.dragAccelerated);
+                    if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                            rigLine, rigSlots, mountReady, desktopPanel)) {
+                        const auto texture = renderer.Texture();
+                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
+                    }
+                    nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+            });
         } else if (wristUiClick.bChanged && wristUiClick.bState && restoreButtonHit && selectedDeck == 2) {
             restoreHoldActive = true;
             restoreHoldStarted = std::chrono::steady_clock::now();
@@ -2759,23 +2810,12 @@ int main(int argc, char** argv) {
                     vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
                 }
             }
-            if (!voiceServiceAvailable && musicNow >= nextVoiceHealthPoll) {
-                nextVoiceHealthPoll = musicNow + std::chrono::seconds(1);
-                voiceServiceAvailable = VoiceServiceAvailable();
-                if (voiceServiceAvailable) {
-                    renderer.SetMusicVoiceStatus(L"VOICE READY", false);
-                    if (renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
-                            rigLine, rigSlots, mountReady, desktopPanel)) {
-                        const auto updatedTexture = renderer.Texture();
-                        vr::VROverlay()->SetOverlayTexture(wristOverlay, &updatedTexture);
-                    }
-                }
-            }
             if (musicPoll.valid()
                 && musicPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
                 const auto updatedMusic = musicPoll.get();
                 nextMusicPoll = musicNow + std::chrono::seconds(2);
-                if (musicPollYoutube == ttsSettings.youtubeMusic) {
+                if (musicPollYoutube == ttsSettings.youtubeMusic
+                    && (!updatedMusic.youtube || *updatedMusic.youtube == ttsSettings.youtubeMusic)) {
                     const bool trackChanged = updatedMusic.line != musicLine;
                     bool artChanged = false;
                     if (updatedMusic.artwork) {
@@ -2816,12 +2856,14 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (selectedDeck == 5 && !commsPoll.valid() && std::chrono::steady_clock::now() >= nextCommsPoll) {
+        if (selectedDeck == 5 && !commsActions.Busy() && !commsPoll.valid() && std::chrono::steady_clock::now() >= nextCommsPoll) {
             commsPoll = std::async(std::launch::async, [] { return RequestCommsState("GET", "/comms/status"); });
         }
         if (commsPoll.valid() && commsPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             nextCommsPoll = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
-            if (const auto current = commsPoll.get()) {
+            auto current = commsPoll.get();
+            if (std::exchange(discardCommsPoll, false)) current.reset();
+            if (current) {
                 if (current->status != commsState.status
                     || current->transcript != commsState.transcript) {
                     commsState = *current;
@@ -2942,12 +2984,18 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        if (!settingsPoll.valid() && std::chrono::steady_clock::now() >= nextRuntimeSettingsPoll) {
+        if (!settingActions.Busy() && !settingsPoll.valid() && std::chrono::steady_clock::now() >= nextRuntimeSettingsPoll) {
             settingsPoll = std::async(std::launch::async, ReadTtsSettings);
         }
         if (settingsPoll.valid() && settingsPoll.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             nextRuntimeSettingsPoll = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-            if (const auto loaded = settingsPoll.get()) {
+            auto loaded = settingsPoll.get();
+            if (discardSettingsPoll) {
+                loaded.reset();
+                discardSettingsPoll = false;
+                nextRuntimeSettingsPoll = std::chrono::steady_clock::now();
+            }
+            if (loaded) {
                 const bool providerChanged = loaded->youtubeMusic != ttsSettings.youtubeMusic;
                 const bool broadcastSourceChanged = initialBroadcastSourcePending || providerChanged
                     || (musicProviderSwitchPending && loaded->youtubeMusic == requestedMusicYoutube);
@@ -2977,6 +3025,8 @@ int main(int argc, char** argv) {
                     || loaded->muted != ttsSettings.muted
                     || loaded->broadcastGainDb != ttsSettings.broadcastGainDb
                     || loaded->songAnnounceEnabled != ttsSettings.songAnnounceEnabled;
+                const bool dragModeChanged = loaded->dragAccelerated != ttsSettings.dragAccelerated;
+                renderer.SetDragAccelerated(loaded->dragAccelerated);
                 const bool wristPlacementChanged = WristPlacementChanged(*loaded, ttsSettings);
                 ttsSettings = *loaded;
                 renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
@@ -2985,7 +3035,8 @@ int main(int argc, char** argv) {
                     wristTransform = ConfiguredWristTransform(ttsSettings);
                     wristAttached = attachWristOverlay();
                 }
-                if ((selectedDeck == 4 && wristDisplayChanged) || broadcastSourceChanged) {
+                if ((selectedDeck == 4 && wristDisplayChanged) || broadcastSourceChanged
+                    || (selectedDeck == 2 && dragModeChanged)) {
                     renderer.SetTtsSettings(ttsSettings.volumePercent, ttsSettings.muted);
                     renderer.SetSongAnnounceEnabled(ttsSettings.songAnnounceEnabled);
                     renderer.SetBroadcastGainDb(
@@ -2998,7 +3049,25 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (std::exchange(serviceUiDirty, false)
+            && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
+                rigLine, rigSlots, mountReady, desktopPanel)) {
+            const auto texture = renderer.Texture();
+            vr::VROverlay()->SetOverlayTexture(wristOverlay, &texture);
+        }
         const auto batteryNow = std::chrono::steady_clock::now();
+        bool cetraChanged = false;
+        if (cetraBatteryPoll.valid()
+            && cetraBatteryPoll.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            const auto updated = cetraBatteryPoll.get();
+            cetraChanged = updated != cetraBatteries;
+            cetraBatteries = updated;
+            renderer.SetCetraBatteries(updated);
+            nextCetraBatteryPoll = batteryNow + std::chrono::minutes(3);
+        }
+        if (!cetraBatteryPoll.valid() && batteryNow >= nextCetraBatteryPoll) {
+            cetraBatteryPoll = std::async(std::launch::async, interfayce::ReadCetraBatteries);
+        }
         bool batteryStateChanged = false;
         bool batterySampleReady = false;
         bool batteryHeaderChanged = false;
@@ -3095,7 +3164,8 @@ int main(int argc, char** argv) {
                 });
             }
         }
-        if ((batteryHeaderChanged || (batteryStateChanged && selectedDeck == 3))
+        if ((batteryHeaderChanged || (cetraChanged && (selectedDeck == 0 || selectedDeck == 3))
+             || (batteryStateChanged && selectedDeck == 3))
             && renderer.Initialize(system, selectedDeck, musicLine, musicArtPath.wstring(),
                 rigLine, rigSlots, mountReady, desktopPanel)) {
             const auto updatedTexture = renderer.Texture();
@@ -3228,13 +3298,15 @@ int main(int argc, char** argv) {
                           << " drag released: x=" << previewOffset.x
                           << " y=" << previewOffset.y << " z=" << previewOffset.z << '\n';
             }
+            dragAcceleration.Reset();
+            lastDragSample = std::chrono::steady_clock::now();
             activeDragHand = desiredHand;
             if (activeDragHand != DragHand::None) {
                 if (!sessionDrag) {
                     previewOffset = {};
                 }
                 dragFaulted = false;
-                lastDragPosition = ReadControllerPosition(system, activeDragHand);
+                lastDragPosition = ReadControllerPosition(system, activeDragHand, ttsSettings.dragAccelerated);
                 if (temporaryDrag) {
                     vr::HmdMatrix34_t baseline{};
                     if (!chaperone->GetWorkingStandingZeroPoseToRawTrackingPose(&baseline)) {
@@ -3262,12 +3334,34 @@ int main(int argc, char** argv) {
         }
         if ((dragPreview || temporaryDrag || sessionDrag)
             && activeDragHand != DragHand::None && !dragFaulted) {
-            const auto currentPosition = ReadControllerPosition(system, activeDragHand);
-            if (currentPosition && lastDragPosition) {
-                previewOffset.x += currentPosition->x - lastDragPosition->x;
-                previewOffset.y += currentPosition->y - lastDragPosition->y;
-                previewOffset.z += currentPosition->z - lastDragPosition->z;
+            if (lastDragAccelerated != ttsSettings.dragAccelerated
+                || lastDragBoost != ttsSettings.dragMaxBoost) {
+                lastDragPosition.reset();
+                dragAcceleration.Reset();
+                lastDragAccelerated = ttsSettings.dragAccelerated;
+                lastDragBoost = ttsSettings.dragMaxBoost;
             }
+            const auto currentPosition = ReadControllerPosition(system, activeDragHand, ttsSettings.dragAccelerated);
+            const auto sampleTime = std::chrono::steady_clock::now();
+            if (currentPosition && lastDragPosition) {
+                const float raw[3]{currentPosition->x - lastDragPosition->x,
+                    currentPosition->y - lastDragPosition->y, currentPosition->z - lastDragPosition->z};
+                const float gain = !ttsSettings.dragAccelerated ? 1.0F : dragAcceleration.Gain(
+                    std::sqrt(raw[0]*raw[0] + raw[1]*raw[1] + raw[2]*raw[2]),
+                    std::chrono::duration<float>(sampleTime - lastDragSample).count(),
+                    ttsSettings.dragAccelerated, ttsSettings.dragMaxBoost);
+                const auto& baseline = sessionDrag ? sessionBaseline : temporaryBaseline;
+                float delta[3]{raw[0], raw[1], raw[2]};
+                if (ttsSettings.dragAccelerated && baseline) {
+                    for (int axis = 0; axis < 3; ++axis)
+                        delta[axis] = baseline->m[0][axis] * raw[0]
+                            + baseline->m[1][axis] * raw[1] + baseline->m[2][axis] * raw[2];
+                }
+                previewOffset.x += delta[0] * gain;
+                previewOffset.y += delta[1] * gain;
+                previewOffset.z += delta[2] * gain;
+            } else dragAcceleration.Reset();
+            lastDragSample = sampleTime;
             lastDragPosition = currentPosition;
             const bool adjustedNow = std::abs(previewOffset.x) > 0.002F
                 || std::abs(previewOffset.y) > 0.002F || std::abs(previewOffset.z) > 0.002F;

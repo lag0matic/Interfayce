@@ -180,3 +180,20 @@ Interfayce sends settled captions at most once per second, then a final caption
 on release. Long text rolls forward at word boundaries. Clearing or sending a
 shortcut suppresses further captions from that utterance. Stream failures use
 the complete local recording for the existing STT fallback.
+
+### Buffered Whisper live captions
+
+Run `Enable Whisper Streaming.cmd` on the STT server PC to try the existing
+Whisper Turbo model for live captions. The adapter retains the bounded utterance
+(up to 31 seconds), re-decodes after each second of new audio, and performs a
+final pass on release. Client-side agreement/throttling still governs publication.
+This uses more compute than native streaming but preserves sentence context and
+avoids stitching separate windows. VAD filtering remains configured; temperature
+is zero and no common conversational phrases are blacklisted.
+
+The helper first repeats the bundled speech sample into a 30-second load test.
+It requires real-time factor below 0.8, no partial decode over two seconds, and
+nonempty partial/final output before changing `streaming_model`. This is a speed
+smoke test, not an accuracy evaluation of the user's voice. If activation fails,
+the prior configuration is restored. `Restore Nemotron.cmd` switches back.
+No desktop app rebuild is required. Logs are in `logs/whisper-streaming-*`.

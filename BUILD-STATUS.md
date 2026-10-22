@@ -1,5 +1,131 @@
 # Interfayce build status
 
+## Built 1.2.41 - Cetra Open Wireless battery readout
+
+Compact left/right/case readout on MUSIC and labelled readings on RIG. Both
+share one asynchronous USB HID poll at startup and every THREE MINUTES, per
+user preference. No browser or Gear Link dependency. After initial detection,
+unavailable readings show --. Charging green, <=20% yellow, <=10% red. Tracker
+runtime estimates and voice alerts are unchanged.
+
+Live receiver verified: VID 0B05 PID 1CAC, usage FF00/1. Direct query returned
+left 93%, right 66%, case 13% with case charging. ASUS Gear Link O701 v1.00.23
+public plugin defines report CC, GET 12 with index 00 00: connection key 01,
+battery key 12, charging key 11. Only these read-only queries are sent. Shared
+handles, background I/O, timeout/cancellation cleanup, invalid values rejected.
+Source: https://gearlink.asus.com/view/7340/manifest.json
+Case information may be the receiver's last reported case state. Other Cetra
+models and Bluetooth-only connections are unsupported.
+
+Validation: 249 Python tests passed, 2 skipped; native battery tests passed for
+charging/full/empty, partial disconnect, malformed and unknown readings. Release
+build passed. Production MUSIC/RIG renders checked with Slime online/offline.
+Hardware probe did not change playback. Installer 1.2.41 built; not installed
+or restarted during this pass. No GitHub update requested for this addition.
+Installer SHA256: B1031A7324A2155902FF64B6DFCCC972F764ED6FAA6F6F94CDEF3D590C6FF8FA.
+
+## Built 1.2.40 � review fixes and GitHub checkpoint
+
+Music microphone start/stop, transport, COMMS controls, and wrist settings now
+queue HTTP work off the VR input thread. Completions apply on the UI thread;
+FIFO ordering preserves a quick press/release while start is pending. Tab
+changes use cached state and schedule existing background polls. Settings and
+COMMS discard polls predating queued changes; health uses the existing worker.
+
+Keyboard dictation cancellation closes the streaming session, wakes its final
+wait immediately, and does not start whole-recording fallback after cancellation.
+An already-running whole-recording fallback remains bounded by its existing
+backend timeout; it is not forcibly interrupted while decoding.
+
+Music metadata and cover bytes now come from one provider-pinned snapshot.
+Spotify reads one media-properties object; Pear reads one song response. The
+wire response carries provider identity so a stale provider response is ignored.
+Artwork failure retains title/playback information with an empty cover.
+
+Validation: 248 Python tests passed, 2 skipped, followed by the additional
+snapshot binary-framing test passing (249 total passing tests). Native Release
+build and asynchronous FIFO/nonblocking/UI-completion, drag acceleration,
+keyboard dictation, and artwork-cache checks passed. No real microphone,
+keyboard injection, playspace movement, or playback commands used in tests.
+The previous 1.2.39 drag fix was confirmed by the user as much better.
+
+This checkpoint also includes keyboard dictation and accelerated dragging since
+1.2.35. Caption append/buffering remains reverted. Installer built for 1.2.40;
+not installed or restarted during this pass. Installed baseline remains 1.2.39.
+Installer SHA256: 3CB26476C5B2785544DA9843F547C1266ABAF5C021B765311C79D224681A56F1.
+
+## Installed 1.2.39 — drag jitter and toggle correction
+
+User reported jitter even when Normal was selected. Saved settings and the live
+service both reported acceleration off. Normal now restores the pre-acceleration
+standing-pose delta path and bypasses all new gain/filter/coordinate conversion.
+Accelerated sampling uses calibrated standing poses with the current universe
+transform removed, rather than driver-raw poses. Repeated/cached pose samples
+accumulate elapsed time so a fresh pose is not interpreted as a speed spike;
+long frame stalls retain unboosted motion instead of dropping it. Changing mode
+or strength discards the prior sample and resets the gain filter. In-flight
+settings polls started before a wrist toggle are discarded to prevent rollback.
+
+242 Python tests pass, 2 skipped. Native acceleration tests include repeated poses
+with 19 ms cached + 1 ms fresh samples and unchanged Normal gain through stalls
+and rapid samples. The previous code fails these cases. Headset confirmation of
+the reported jitter remains necessary; no live playspace movement was automated.
+
+Installed/restarted October 12: version 1.2.39, health 200 ready, one overlay
+and service. Four executable hashes match staging; settings/key unchanged.
+Installer SHA256: 320E4691135ED18C58C190726E0E26C281450453365EB65727E0ACE6D7437216.
+Native Release/installer builds passed. Local checkpoint only; no GitHub push.
+
+
+## Installed 1.2.38 — optional accelerated space dragging
+
+SPACE panel toggles Normal/Accelerated; desktop settings expose the same switch
+and maximum boost (1-6x, default 4x). Defaults to Normal for existing installations.
+A smooth speed curve ramps from 1x below 0.15 m/s to max at 1 m/s, with 60 ms rise
+smoothing and immediate precision when slowing. No momentum after release.
+Physical controller samples use raw tracking coordinates, converted through the
+saved baseline rotation for the existing origin translation; applied playspace
+offsets cannot feed back into speed. Tracking loss, hand changes, implausible
+samples and stalls reset the speed filter. Existing travel limit/restore retained.
+
+242 Python tests pass (2 skipped). Native checks cover precision, boost, stopping,
+reset, nonfinite/jump/stall samples, and consistent travel at 72/90/144 Hz.
+Headset feel and travel still need user testing; no live playspace manipulation
+was performed during automated validation.
+
+Installed/restarted October 12: 1.2.38, health 200 ready, one overlay/service,
+four executable hashes match staging, settings and protected key unchanged.
+Installed settings endpoint returns the new fields. SPACE production render
+visually checked; General settings now scroll and build correctly off-screen.
+Installer SHA256: FF403EA306A55B10993B5079CEADBDF24B6AD559A3EA85248E6D6EC13FB496D3.
+Local checkpoint only; no GitHub push.
+
+
+## Installed 1.2.37 — keyboard microphone dictation
+
+Added a mic key beside Space on the independent desktop keyboard. Tap to start,
+tap again to stop; the final cleaned transcript is inserted once into the original
+focused field with Unicode input, without clipboard changes or Enter. Uses COMMS'
+configured streaming STT backend and whole-recording fallback; no LLM or OSC.
+Capture is bounded to 30 seconds and shares the global microphone lock. HTTP runs
+asynchronously off the overlay loop. Target window/control changes, desktop clicks,
+other keyboard keys, close/hide and shutdown cancel and discard pending output.
+Status appears in the keyboard header and the mic glows while listening. Native
+focus checks cannot identify browser DOM fields changed without a desktop click
+or native focus event. Discord insertion and headset ergonomics need user trial.
+
+Validation: 241 Python tests pass (2 skipped), including six new recording tests.
+Six isolated native scenarios pass: insertion once, changed focus, cancellation,
+stop during startup, unavailable service, and failed polling. Tests inject no real
+keystrokes, microphone audio, or remote requests. Chatbox behavior stays reverted.
+
+Installed/restarted October 10: 1.2.37, health 200 ready, one overlay/service.
+All four executable hashes match staging; settings and protected key unchanged.
+Installed dictation status endpoint verified using an expired token (no recording).
+Installer SHA256: 20431FB0705F7666932C1A62BA8D100CC05775AE78FAB759C7E620406FEF7CCA.
+Native build and installer succeeded. Local checkpoint only; no GitHub push.
+
+
 ## Installed 1.2.35 — cached model archive and dual SlimeVR support
 
 Model ZIP cache is keyed by all five source files' contents, with an archive
@@ -368,3 +494,22 @@ prevents promising absolute privacy.
 Build runtime is Python 3.12; audioop requires attention before Python 3.13+.
 Native orchestration remains concentrated in main.cpp and should be split gradually
 as features change. In-headset testing remains essential.
+
+## 1.2.42 - caption reading pause
+
+Live captions hold for three seconds before dropping older words on overflow.
+Further rollovers are spaced three seconds apart; release respects the pause.
+Clear and shortcuts suppress pending text. No queue of 30-second pages.
+Validation: 252 Python tests passed, 2 skipped, including rollover timing,
+release flushing and clear during the final pause. Panel previews also support
+shareable production renders with supplied music/status and sample chat content.
+
+## 1.2.43 - preserve captions during early transcript revisions
+
+The live publisher holds the displayed caption when a partial revision reduces
+its settled prefix below the previously published word count. This prevents an
+early wording or punctuation correction from collapsing the chatbox to a short
+prefix. A settled replacement and authoritative final result can still update;
+three-second overflow timing remains intact. Validation: 251 application tests
+passed, including early corrections, shorter final corrections and overflow
+reading-deadline preservation.
