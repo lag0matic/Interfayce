@@ -513,3 +513,18 @@ prefix. A settled replacement and authoritative final result can still update;
 three-second overflow timing remains intact. Validation: 251 application tests
 passed, including early corrections, shorter final corrections and overflow
 reading-deadline preservation.
+
+## 1.2.44 - longer caption reading pause
+
+Changed the initial overflow pause and subsequent rollover spacing from three
+to seven seconds at the user's request. Release still respects the pause; clear
+can suppress pending text. All 29 caption/chatbox tests passed.
+
+## 1.2.45 - configurable caption rollover delay
+
+Desktop Settings > COMMS provides a 3-15 second caption rollover slider with a
+whole-second value label. Default remains seven seconds for existing profiles.
+Save applies the setting to the next dictation without restarting; active
+utterances keep their starting delay. Settings persistence bounds the range.
+Validation: 253 application tests passed; hidden Tk panel construction, slider
+limits and value labels verified. No wrist layout or server changes required.

@@ -28,7 +28,8 @@ def caption_tail(text, limit=144):
 
 
 class LiveCaptionPublisher:
-    def __init__(self, publish, clock=time.monotonic):
+    def __init__(self, publish, clock=time.monotonic, rollover_seconds=7.0):
+        self.rollover_seconds = max(3.0, min(15.0, float(rollover_seconds)))
         self.publish = publish
         self.clock = clock
         self.previous = []
@@ -62,7 +63,7 @@ class LiveCaptionPublisher:
         self.pending_rollover = False
         if len(text) > 144 and caption != self.last:
             if self.rollover_at is None:
-                self.rollover_at = now + 3.0
+                self.rollover_at = now + self.rollover_seconds
             if now < self.rollover_at:
                 self.pending_rollover = True
                 if not self.last:
@@ -73,7 +74,7 @@ class LiveCaptionPublisher:
                 else:
                     return self.last
             else:
-                self.rollover_at = now + 3.0
+                self.rollover_at = now + self.rollover_seconds
         elif len(text) <= 144:
             self.rollover_at = None
         if caption and (final or (caption != self.last and self.clock() >= self.next_update)):

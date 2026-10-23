@@ -13,6 +13,15 @@ from interfayce.settings import (
 
 
 class SettingsTests(unittest.TestCase):
+    def test_caption_rollover_persists_and_is_bounded(self):
+        with TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")
+        }):
+            self.assertEqual(load_settings().caption_rollover_seconds, 7)
+            for requested, expected in ((1, 3), (5, 5), (15, 15), (99, 15)):
+                save_settings(AppSettings(caption_rollover_seconds=requested))
+                self.assertEqual(load_settings().caption_rollover_seconds, expected)
+
     def test_round_trip_and_clamping(self) -> None:
         with TemporaryDirectory() as directory, patch.dict(os.environ, {
             "INTERFAYCE_SETTINGS_PATH": str(Path(directory) / "settings.json")

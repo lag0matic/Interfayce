@@ -95,6 +95,8 @@ class SettingsWindow:
         self.stt_endpoint = tk.StringVar(value=current.stt_endpoint)
         self.stt_model = tk.StringVar(value=current.stt_model)
         self.stt_key = tk.StringVar()
+        self.caption_rollover = tk.DoubleVar(value=current.caption_rollover_seconds)
+        self.caption_rollover_label = tk.StringVar(value=f"{current.caption_rollover_seconds:.0f} seconds")
         self.comms_silence_timeout = tk.DoubleVar(
             value=current.comms_silence_timeout_seconds)
         self.tts_output = tk.StringVar(value=current.tts_output)
@@ -492,9 +494,23 @@ class SettingsWindow:
     def _build_comms(self, panel: ttk.Frame) -> None:
         row = self._section(panel, 0, "VOICE PRIVACY")
         ttk.Label(panel,
-                  text="Comms records only while you hold the wrist mic. Release to transcribe and send one complete message.",
+                  text="Comms records only while you hold the wrist mic. Live captions update while you speak and finalize on release.",
                   style="Muted.Panel.TLabel", wraplength=690).grid(
                       row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        row = self._section(panel, row + 1, "LIVE CAPTIONS")
+        ttk.Label(panel, text="Caption rollover delay", style="Panel.TLabel").grid(
+            row=row, column=0, sticky="w")
+        ttk.Label(panel, textvariable=self.caption_rollover_label, style="Muted.Panel.TLabel").grid(
+            row=row, column=1, sticky="e")
+        row += 1
+        ttk.Scale(panel, from_=3, to=15, variable=self.caption_rollover,
+                  command=lambda value: self.caption_rollover_label.set(
+                      f"{round(float(value))} seconds")).grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=8)
+        row += 1
+        ttk.Label(panel, text="How long to keep a full caption before older words roll off. Save to apply to your next dictation.",
+                  style="Muted.Panel.TLabel", wraplength=690).grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
         row = self._section(panel, row + 1, "OSC CHATBOX SHORTCUTS")
         ttk.Label(panel, text="Short labels appear on the wrist. Messages are sent immediately to VRChat.",
                   style="Muted.Panel.TLabel").grid(
@@ -786,6 +802,7 @@ class SettingsWindow:
             stt_microphone="" if selected_input == "System default" else selected_input,
             stt_endpoint=stt_endpoint,
             stt_model=self.stt_model.get(),
+            caption_rollover_seconds=round(self.caption_rollover.get()),
             comms_silence_timeout_seconds=self.comms_silence_timeout.get(),
             haptic_strength=self.haptic.get() / 100.0,
             broadcast_gain_db=round(self.broadcast_gain.get()),
