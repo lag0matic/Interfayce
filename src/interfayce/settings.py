@@ -32,6 +32,7 @@ class AppSettings:
     stt_microphone: str = ""
     stt_endpoint: str = ""
     stt_model: str = "whisper-turbo"
+    caption_rollover_seconds: float = 7.0
     comms_silence_timeout_seconds: float = 3.0
     haptic_strength: float = 0.22
     broadcast_gain_db: float = 12.0
@@ -153,6 +154,7 @@ def _clamp(settings: AppSettings) -> AppSettings:
         stt_microphone=str(settings.stt_microphone).strip(),
         stt_endpoint=str(settings.stt_endpoint).strip().rstrip("/"),
         stt_model=str(settings.stt_model).strip() or "whisper-turbo",
+        caption_rollover_seconds=max(3.0, min(15.0, round(float(settings.caption_rollover_seconds)))),
         comms_silence_timeout_seconds=max(
             1.0, min(30.0, float(settings.comms_silence_timeout_seconds))),
         haptic_strength=max(0.0, min(1.0, float(settings.haptic_strength))),
@@ -198,6 +200,7 @@ def load_settings() -> AppSettings:
                 stt_microphone=data.get("stt_microphone", ""),
                 stt_endpoint=data.get("stt_endpoint", ""),
                 stt_model=data.get("stt_model", "whisper-turbo"),
+                caption_rollover_seconds=data.get("caption_rollover_seconds", 7.0),
                 comms_silence_timeout_seconds=data.get("comms_silence_timeout_seconds", 3.0),
                 haptic_strength=data.get("haptic_strength", 0.22),
                 broadcast_gain_db=data.get("broadcast_gain_db", 12.0),
@@ -369,6 +372,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               playspace_max_boost: float | None = None,
                               codex_model: str | None = None,
                               music_provider: str | None = None,
+                              caption_rollover_seconds: float | None = None,
                               baseline: AppSettings | None = None) -> AppSettings:
     current = load_settings()
     candidate = _clamp(replace(
@@ -383,6 +387,7 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
         stt_microphone=stt_microphone,
         stt_endpoint=current.stt_endpoint if stt_endpoint is None else stt_endpoint,
         stt_model=current.stt_model if stt_model is None else stt_model,
+        caption_rollover_seconds=current.caption_rollover_seconds if caption_rollover_seconds is None else caption_rollover_seconds,
         comms_silence_timeout_seconds=comms_silence_timeout_seconds,
         haptic_strength=haptic_strength,
         broadcast_gain_db=broadcast_gain_db,

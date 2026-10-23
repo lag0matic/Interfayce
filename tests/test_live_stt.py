@@ -69,7 +69,7 @@ def test_revision_preserves_overflow_reading_deadline():
     publisher.update(revised)
     assert len(sent) == 1
     assert publisher.rollover_at == deadline
-    now[0] = 3.0
+    now[0] = 7.0
     publisher.update(revised)
     assert sent[-1] == caption_tail(revised)
 
@@ -85,7 +85,7 @@ class Osc:
         self.messages.append("<clear>")
 
 
-def test_overflow_waits_three_seconds_even_on_release():
+def test_overflow_waits_seven_seconds_even_on_release():
     sent, now = [], [0.0]
     publisher = LiveCaptionPublisher(sent.append, lambda: now[0])
     opening = " ".join(f"word{i}" for i in range(20))
@@ -94,17 +94,17 @@ def test_overflow_waits_three_seconds_even_on_release():
     now[0] = 1.0
     assert publisher.update(long, final=True) == opening
     assert publisher.pending_rollover
-    now[0] = 3.9
+    now[0] = 7.9
     publisher.update(long, final=True)
     assert sent == [opening]
-    now[0] = 4.0
+    now[0] = 8.0
     publisher.update(long, final=True)
     assert sent[-1] == caption_tail(long)
     assert not publisher.pending_rollover
-    now[0] = 5.0
+    now[0] = 9.0
     publisher.update(long + " more", final=True)
     assert len(sent) == 2
-    now[0] = 7.0
+    now[0] = 15.0
     publisher.update(long + " more", final=True)
     assert sent[-1].endswith(" more")
 
@@ -117,10 +117,25 @@ def test_first_large_result_shows_opening_before_tail():
     assert sent[0].startswith("word0 ")
     assert len(sent[0]) <= 144
     assert publisher.pending_rollover
-    now[0] = 3.0
+    now[0] = 7.0
     publisher.update(text, final=True)
     assert sent[-1] == caption_tail(text)
     assert not publisher.pending_rollover
+
+
+def test_configured_rollover_limits_control_deadline():
+    for delay in (3, 5, 15):
+        sent, now = [], [0.0]
+        publisher = LiveCaptionPublisher(sent.append, lambda: now[0], rollover_seconds=delay)
+        text = " ".join(f"word{i}" for i in range(50))
+        publisher.update(text, final=True)
+        now[0] = delay - 0.1
+        publisher.update(text, final=True)
+        assert len(sent) == 1
+        now[0] = delay
+        publisher.update(text, final=True)
+        assert sent[-1] == caption_tail(text)
+        assert not publisher.pending_rollover
 
 
 def test_release_waits_for_rollover_and_clear_can_cancel_it():
@@ -150,7 +165,7 @@ def test_release_waits_for_rollover_and_clear_can_cancel_it():
         assert comms._thread.is_alive()
         if clear:
             comms.clear()
-        comms._thread.join(4)
+        comms._thread.join(8)
         assert not comms._thread.is_alive()
         if clear:
             assert osc.messages[-1] == "<clear>"

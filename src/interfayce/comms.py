@@ -11,6 +11,7 @@ from typing import Callable, Protocol
 from .capture_cue import capture_with_cues
 from .live_stt import clean_transcript, LiveCaptionPublisher
 from .osc import VrchatOscClient, fit_chatbox_text
+from .settings import load_settings
 from .parakeet_stt import capture_microphone_until
 
 
@@ -151,7 +152,8 @@ class CommsDictation:
                 self._osc.set_busy(True)
             self._set_typing(True)
             if hasattr(self._transcriber, "start_stream"):
-                publisher = LiveCaptionPublisher(publish)
+                publisher = LiveCaptionPublisher(
+                    publish, rollover_seconds=load_settings().caption_rollover_seconds)
                 try:
                     live = self._transcriber.start_stream(publisher.update)
                 except Exception:
