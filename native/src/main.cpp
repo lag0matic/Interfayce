@@ -1557,13 +1557,13 @@ int main(int argc, char** argv) {
     bool discardCommsPoll = false;
     const auto queueComms = [&](std::string path) {
         discardCommsPoll = commsPoll.valid();
-        commsActions.Submit([path] { return RequestCommsState("POST", path); },
+        return commsActions.Submit([path] { return RequestCommsState("POST", path); },
             [&](auto changed) {
                 commsState = changed.value_or(CommsState{L"COMMS ERROR", L"Voice service did not respond", false});
                 renderer.SetCommsStatus(commsState.status, commsState.transcript, commsState.active);
                 nextCommsPoll = std::chrono::steady_clock::now();
                 serviceUiDirty = true;
-            });
+            }, path == "/comms/stop");
     };
     const auto stopMusicMic = [&] {
         const auto token = std::exchange(musicMicHeldToken, {});
@@ -1573,7 +1573,7 @@ int main(int argc, char** argv) {
             if (musicVoiceCommand.valid())
                 renderer.SetMusicVoiceStatus(stopped ? L"PROCESSING..." : L"VOICE STOP ERROR", false);
             serviceUiDirty = true;
-        });
+        }, true);
     };
     std::vector<PendingFavoriteCapture> pendingFavoriteCaptures;
     auto nextRigPoll = std::chrono::steady_clock::now();
@@ -2396,8 +2396,8 @@ int main(int argc, char** argv) {
                 LaunchVoiceService(directory, projectRoot);
                 commsState = {L"VOICE WARMING", L"", false};
             } else {
-                commsMicHeld = true;
-                queueComms("/comms/start");
+                if (!commsActions.Busy())
+                    commsMicHeld = queueComms("/comms/start");
             }
             renderer.SetCommsStatus(
                 commsState.status, commsState.transcript, commsState.active);

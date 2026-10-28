@@ -157,6 +157,8 @@ private:
         float widthMeters{0.69F};
         vr::HmdMatrix34_t transform{};
         bool visible{true};
+        bool frameHighlighted{};
+        bool captureSuspended{};
         bool locked{};
         bool privateMode{};
         DesktopInputRouter input;

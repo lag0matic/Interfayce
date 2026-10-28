@@ -528,3 +528,25 @@ Save applies the setting to the next dictation without restarting; active
 utterances keep their starting delay. Settings persistence bounds the range.
 Validation: 253 application tests passed; hidden Tk panel construction, slider
 limits and value labels verified. No wrist layout or server changes required.
+
+## 1.2.46 - reduce Windows media-session resource churn
+
+Reuse one Windows media-session manager across polling requests and threads,
+with single-flight initialization and reconnection after enumeration failure.
+Cache one track's artwork for up to 30 seconds (missing artwork retries after
+two); track changes bypass the cache. Explicitly close thumbnail readers and
+their streams on success/failure, with an 8 MiB artwork bound.
+
+Validation: 256 application tests passed. Twenty concurrent live Windows
+Spotify snapshots returned valid metadata/artwork across separate event loops.
+Tests cover manager reuse/recovery, artwork changes/expiry and cleanup failures.
+This addresses concrete resource-lifecycle issues implicated by the prior CPU
+spike; sustained VR usage is still needed to confirm the long-session symptom.
+
+## 2026-10-26 - v1.2.47 resource review fixes
+
+- Desktop frame glow updates now run only when hover/grab highlighting changes; hidden decks skip these calls. Frame hit-target alpha remains initialized once.
+- Parking the desktop deck un-submits capture textures, releases held pointer input, and stops Windows capture sessions. Reopening restarts captures; missing sources fall back to the picker. Private-window watchdog continues while parked. Favorite launches completing while parked also suspend immediately.
+- Wrist action queues accept at most eight pending ordinary requests plus one reserved microphone-release request. COMMS starts only when its queue is idle, so overload cannot orphan a release. Accepted work retains FIFO ordering.
+- Validation: native Release build passed; async queue test includes 10,000 rejected overload requests and release-slot/FIFO validation; six keyboard-dictation scenarios passed; desktop coordinate tests passed on three monitor origins; five media-resource Python tests passed. git diff --check passed.
+- Installer prepared as 1.2.47. No install, app launch, shutdown, or restart requested for this checkpoint: user is going to sleep. Live VR capture hide/resume and long-session resource behavior remain to be checked.
