@@ -38,11 +38,9 @@ class AssistantHarnessTests(unittest.TestCase):
 
     def test_synchronous_speech_uses_clean_answer(self):
         harness = AssistantHarness(assistant=_Assistant(), research=_Research())
-        with patch("interfayce.kokoro.synthesize", return_value=b"wav") as synthesize, \
-                patch("interfayce.kokoro.play_wav") as play:
+        with patch("interfayce.kokoro.speak") as speak:
             harness.ask("question", speak=True)
-        synthesize.assert_called_once_with("An EFHW is resonant.")
-        play.assert_called_once_with(b"wav")
+        speak.assert_called_once_with("An EFHW is resonant.")
 
     def test_audio_file_uses_configured_remote_stt_then_assistant(self):
         harness = AssistantHarness(assistant=_Assistant())
@@ -58,9 +56,10 @@ class AssistantHarnessTests(unittest.TestCase):
             path, "http://server:5010", "whisper-turbo")
         self.assertEqual(result.transcript, "What is an EFHW?")
 
-    def test_tts_cleanup_is_bounded(self):
+    def test_tts_cleanup_preserves_complete_reply_and_delivery_tags(self):
         self.assertEqual(tts_text("**Answer** [S1]"), "Answer")
-        self.assertLessEqual(len(tts_text("x" * 2_000)), 1_200)
+        self.assertEqual(len(tts_text("x" * 2_000)), 2_000)
+        self.assertEqual(tts_text("[voice:soft] **Hello** [sigh]"), "[voice:soft] Hello [sigh]")
 
 
 if __name__ == "__main__":

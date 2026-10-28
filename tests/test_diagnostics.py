@@ -13,7 +13,7 @@ from interfayce.settings import AppSettings
 class DiagnosticsTests(unittest.TestCase):
     def test_core_and_optional_results_are_distinct(self) -> None:
         report = run_diagnostics(
-            AppSettings(), voice_service_ready=False,
+            AppSettings(tts_provider="kokoro"), voice_service_ready=False,
             input_devices=[], output_devices=[], install_root=Path("not-installed"),
         )
         states = {result.name: result.state for result in report.results}

@@ -2,6 +2,7 @@
 import json
 
 from .music_choices import offered_indices, ordinal_choice, question
+from .speech_delivery import delivery_guidance
 from .llm_client import OpenAiCompatibleClient
 from .music_llm import LlmMusicResult
 from .pear_music import PearApi, PearError
@@ -44,7 +45,7 @@ def run_pear_request(transcript, *, context=None, client=None, api=None, choices
     if not candidates and ordinal_choice(transcript, 5) is not None:
         return LlmMusicResult(False, "I no longer have those choices. Please repeat the song or artist you wanted.")
     for _ in range(5):
-        reply = None if direct is not None else client.chat_json(system=PROMPT, user=json.dumps({
+        reply = None if direct is not None else client.chat_json(system=PROMPT + delivery_guidance(music=True), user=json.dumps({
             "request": transcript[:2000], "history": (context or [])[-5:],
             "playback": {k: song.get(k) for k in ("title", "artist", "isPaused")},
             "observations": observations}, ensure_ascii=False))

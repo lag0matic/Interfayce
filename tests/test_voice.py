@@ -101,8 +101,8 @@ class VoiceIntentTests(unittest.TestCase):
         self.assertTrue(callable(capture.call_args.kwargs["on_ready"]))
         cue.assert_not_called()
 
-    @patch("interfayce.voice_service.synthesize", return_value=b"warm audio")
-    def test_startup_warmup_primes_stt_and_tts_without_playback(self, synthesize) -> None:
+    @patch("interfayce.ming_tts.check_ready")
+    def test_startup_warmup_primes_stt_and_tts_without_playback(self, ready) -> None:
         runtime = object.__new__(VoiceRuntime)
         runtime.transcriber = FakeTranscriber()
         runtime._warm_lock = threading.Lock()
@@ -110,7 +110,7 @@ class VoiceIntentTests(unittest.TestCase):
         runtime.warm()
 
         self.assertTrue(runtime.transcriber.warmed)
-        synthesize.assert_called_once_with("Ready.")
+        ready.assert_not_called()  # Ming readiness belongs to the status worker.
 
     def test_assistant_panel_state_is_bounded_to_one_wire_line(self) -> None:
         runtime = object.__new__(VoiceRuntime)

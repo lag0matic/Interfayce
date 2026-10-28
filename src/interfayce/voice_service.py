@@ -20,7 +20,7 @@ from .assistant import AssistantSnapshot, AssistantState
 from .assistant_harness import AssistantHarness, tts_text
 from .assistant_session import AssistantSession
 from .battery_alerts import BatteryAlertMonitor
-from .kokoro import speak_in_background, synthesize
+from .kokoro import speak_in_background, synthesize, strip_delivery_tags
 from .local_service import get_or_create_token, request_is_authorized
 from .llm_client import LlmError, OpenAiCompatibleClient
 from .music_choices import MusicChoices
@@ -221,7 +221,7 @@ class VoiceRuntime:
 
     def _codex_update(self):
         snapshot = self.assistant_session.codex.snapshot()
-        self._set_assistant_status(snapshot["status"], response=snapshot["response"])
+        self._set_assistant_status(snapshot["status"], response=strip_delivery_tags(snapshot["response"]))
 
     def restore_assistant(self):
         if self.assistant_session.backend != 'codex' or not self.command_lock.acquire(blocking=False):
@@ -273,7 +273,7 @@ class VoiceRuntime:
                 speak_in_background(spoken, cancel=speech_cancel)
             self._set_assistant_status(
                 "ANSWER" if result.succeeded else "ERROR",
-                response=result.answer,
+                response=strip_delivery_tags(result.answer),
             )
             LOGGER.info("Assistant command completed: succeeded=%s transcript_chars=%s "
                         "response_chars=%s tools=%s", result.succeeded, len(transcript),
@@ -338,8 +338,13 @@ class VoiceRuntime:
                 LOGGER.exception("Configured STT warm-up failed")
             try:
                 LOGGER.info("Warming configured TTS")
-                synthesize("Ready.")
-                LOGGER.info("Configured TTS ready")
+                if load_settings().tts_provider == "ming":
+                    # The status worker owns Ming readiness checks. Unlike
+                    # Kokoro, Ming warms itself before accepting traffic.
+                    LOGGER.info("Ming readiness is checked by the status worker")
+                else:
+                    synthesize("Ready.")
+                    LOGGER.info("Configured TTS ready")
             except Exception:
                 LOGGER.exception("Configured TTS warm-up failed")
         finally:
@@ -395,7 +400,7 @@ class VoiceRuntime:
             # not need to stop and read the wrist to learn that nothing happened.
             speak_in_background(result.message)
             state = "OK" if result.succeeded else "NO_MATCH"
-            return f"{state}\t{_safe_field(transcript)}\t{_safe_field(result.message)}"
+            return f"{state}\t{_safe_field(transcript)}\t{_safe_field(strip_delivery_tags(result.message))}"
         finally:
             self.command_lock.release()
 
