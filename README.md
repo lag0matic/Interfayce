@@ -10,6 +10,8 @@ The project is personal-use-first. It is developed and tested around a Valve Ind
 
 ## Development disclosure
 
+The Windows speech server now has its own private [Interfayce Remote STT recovery repository](https://github.com/lag0matic/Interfayce-Remote-STT), with pinned dependencies, the working Whisper Turbo configuration, and restore/verification helpers. See [RECOVERY.md](RECOVERY.md) for the server recovery checkpoint. The existing `remote-stt/` folder is retained for historical releases; future server maintenance belongs in the separate repository.
+
 Interfayce is developed with substantial AI assistance. Lag0Matic supplies the original concept, requirements, visual direction, product decisions, and live VR testing. OpenAI Codex/ChatGPT has contributed substantial implementation, refactoring, debugging, research, and documentation. This repository does not represent the project as solely hand-written by the maintainer.
 
 ## Features
