@@ -8,9 +8,11 @@ Interfayce is a lightweight Windows wrist interface for SteamVR and VRChat. It b
 
 The project is personal-use-first. It is developed and tested around a Valve Index with Knuckles controllers, VRChat, SlimeVR, and the maintainer's own Windows setup. It is provided as-is and is not intended to be a universal VR dashboard or a supported commercial product.
 
-## Development disclosure
+## Speech server recovery
 
 The Windows speech server now has its own private [Interfayce Remote STT recovery repository](https://github.com/lag0matic/Interfayce-Remote-STT), with pinned dependencies, the working Whisper Turbo configuration, and restore/verification helpers. See [RECOVERY.md](RECOVERY.md) for the server recovery checkpoint. The existing `remote-stt/` folder is retained for historical releases; future server maintenance belongs in the separate repository.
+
+## Development disclosure
 
 Interfayce is developed with substantial AI assistance. Lag0Matic supplies the original concept, requirements, visual direction, product decisions, and live VR testing. OpenAI Codex/ChatGPT has contributed substantial implementation, refactoring, debugging, research, and documentation. This repository does not represent the project as solely hand-written by the maintainer.
 
