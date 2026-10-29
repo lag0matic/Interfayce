@@ -1526,6 +1526,9 @@ int main(int argc, char** argv) {
     std::array<std::wstring, 4> commsShortcuts;
     AssistantPanelState assistantState;
     std::future<std::optional<AssistantPanelState>> assistantCommand;
+    interfayce::AsyncActions<std::optional<std::string>> assistantMicActions;
+    std::string assistantMicHeldToken;
+    bool assistantMicReleased = true;
     auto nextAssistantPoll = std::chrono::steady_clock::now();
     std::future<std::optional<AssistantPanelState>> assistantPoll;
     std::future<void> assistantControl;
@@ -1554,6 +1557,18 @@ int main(int argc, char** argv) {
     interfayce::AsyncActions<std::optional<std::string>> musicTransport;
     bool musicMicReleased = true;
     bool serviceUiDirty = false;
+    const auto stopAssistantMic = [&] {
+        const auto token = std::exchange(assistantMicHeldToken, {});
+        assistantMicActions.Submit([token] {
+            return LocalHttpRequest("POST", "/listen/assistant/stop/" + token,
+                std::chrono::seconds(2));
+        }, [&](auto stopped) {
+            if (!stopped) assistantState.status = L"MIC RELEASE ERROR";
+            renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                assistantState.response, assistantState.active);
+            serviceUiDirty = true;
+        }, true);
+    };
     bool discardCommsPoll = false;
     const auto queueComms = [&](std::string path) {
         discardCommsPoll = commsPoll.valid();
@@ -2233,6 +2248,11 @@ int main(int argc, char** argv) {
             musicMicReleased = true;
             if (!musicMicHeldToken.empty()) stopMusicMic();
         }
+        if (wristUiClick.bChanged && !wristUiClick.bState) {
+            assistantMicReleased = true;
+            if (!assistantMicHeldToken.empty()) stopAssistantMic();
+        }
+        assistantMicActions.Tick();
         musicMicActions.Tick();
         musicTransport.Tick();
         commsActions.Tick();
@@ -2438,11 +2458,27 @@ int main(int argc, char** argv) {
                 queueAssistantControl("/assistant/answer/" + assistantState.decisionToken);
             } else if (assistantSwitchHit && !assistantCommand.valid()) {
                 queueAssistantControl("/assistant/select");
-            } else if (assistantMicHit && !assistantCommand.valid() && !assistantState.active) {
+            } else if (assistantMicHit && !assistantCommand.valid() && !assistantState.active
+                       && !assistantMicActions.Busy()) {
                 assistantState = {L"LISTENING", L"", L"", true};
-                assistantCommand = std::async(std::launch::async, [] {
-                    return RequestAssistantState("POST", "/listen/assistant",
-                        std::chrono::seconds(660));
+                assistantMicReleased = false;
+                assistantMicActions.Submit([] {
+                    return LocalHttpRequest("POST", "/listen/assistant/start", std::chrono::seconds(2));
+                }, [&](auto token) {
+                    if (token && token->size() == 32) {
+                        assistantMicHeldToken = *token;
+                        assistantCommand = std::async(std::launch::async, [captureToken = *token] {
+                            return RequestAssistantState("POST", "/listen/assistant/result/" + captureToken,
+                                std::chrono::seconds(660));
+                        });
+                        // Release can arrive before the server acknowledges start.
+                        if (assistantMicReleased) stopAssistantMic();
+                    } else {
+                        assistantState = {L"ERROR", L"", L"Voice capture unavailable", false};
+                    }
+                    renderer.SetAssistantStatus(assistantState.status, assistantState.transcript,
+                        assistantState.response, assistantState.active);
+                    serviceUiDirty = true;
                 });
             } else if (assistantCancelHit) {
                 queueAssistantControl("/assistant/cancel");

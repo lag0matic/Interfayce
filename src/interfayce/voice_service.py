@@ -132,6 +132,8 @@ class VoiceRuntime:
                                     for name in ("spotify", "youtube")}
         self.music_choices = MusicChoices()
         self.music_capture = MusicVoiceCapture(self.music_command)
+        self.assistant_capture = MusicVoiceCapture(
+            self.assistant_command, label="Assistant", result_timeout=660)
         self.keyboard_dictation = KeyboardDictation(
             self.transcriber, self.command_lock, cue=play_capture_cue)
         self.chatbox = ChatboxCoordinator(
@@ -234,20 +236,28 @@ class VoiceRuntime:
         finally:
             self.command_lock.release()
 
-    def assistant_command(self) -> str:
+    def assistant_command(self, *, stop_event=None, expected_generation=None) -> str:
         if not self.command_lock.acquire(blocking=False):
             self._set_assistant_status("BUSY", response="Voice capture is already active.")
             return self.assistant_status()
         try:
             session = self.assistant_session
             generation = session.generation
+            if expected_generation is not None and generation != expected_generation:
+                self._set_assistant_status("CANCELLED")
+                return self.assistant_status()
             self._assistant_speech_cancel.set()
             speech_cancel = threading.Event()
             self._assistant_speech_cancel = speech_cancel
             self._set_assistant_status("LISTENING", transcript="", response="")
             try:
                 LOGGER.info("Assistant microphone capture started")
-                audio = capture_microphone_with_cues()
+                audio = (capture_microphone_with_cues() if stop_event is None else
+                         capture_with_cues(capture_microphone_until, stop_event,
+                                           max_seconds=30.0, cue=play_capture_cue))
+                if session.generation != generation:
+                    self._set_assistant_status("CANCELLED")
+                    return self.assistant_status()
                 transcript = self.transcriber.transcribe(audio)
             except Exception as error:
                 LOGGER.exception("Assistant capture or transcription failed")
@@ -256,6 +266,9 @@ class VoiceRuntime:
             transcript = _safe_field(transcript)
             if session.generation != generation:
                 self._set_assistant_status("CANCELLED")
+                return self.assistant_status()
+            if not transcript:
+                self._set_assistant_status("READY", transcript="", response="I didn't catch anything.")
                 return self.assistant_status()
             self._set_assistant_status("THINKING", transcript=transcript, response="")
             if session.backend == "codex":
@@ -300,6 +313,7 @@ class VoiceRuntime:
         self._set_assistant_status("STOPPING")
         self._assistant_speech_cancel.set()
         self.assistant_session.cancel()
+        self.assistant_capture.stop_current()
         if not self.command_lock.locked():
             self._set_assistant_status("CANCELLED")
         return self.assistant_status()
@@ -575,6 +589,14 @@ def serve_voice(*, port: int = DEFAULT_PORT, warm: bool = False) -> None:
                 self._reply(200, "warming")
             elif self.path == "/listen/assistant":
                 self._reply(200, runtime.assistant_command())
+            elif self.path == "/listen/assistant/start":
+                token = runtime.assistant_capture.start(expected_generation=runtime.assistant_session.generation)
+                self._reply(200 if token else 409, token or "busy")
+            elif self.path.startswith("/listen/assistant/stop/"):
+                stopped = runtime.assistant_capture.stop(self.path.rsplit("/", 1)[-1])
+                self._reply(200 if stopped else 409, "stopped" if stopped else "expired")
+            elif self.path.startswith("/listen/assistant/result/"):
+                self._reply(200, runtime.assistant_capture.result(self.path.rsplit("/", 1)[-1]))
             elif self.path == "/assistant/clear":
                 self._reply(200, runtime.clear_assistant())
             elif self.path == "/assistant/cancel":
