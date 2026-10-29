@@ -33,9 +33,17 @@ def test_stale_success_becomes_unknown_and_wire_has_fixed_services():
     with patch('interfayce.service_health.time.monotonic', return_value=100):
         health.set('TTS', 'good', 'Available')
         assert 'TTS\tgood\tAvailable' in health.wire()
-    with patch('interfayce.service_health.time.monotonic', return_value=146):
+    with patch('interfayce.service_health.time.monotonic', return_value=220):
+        assert 'TTS\tgood\tAvailable' in health.wire()
+    with patch('interfayce.service_health.time.monotonic', return_value=251):
         assert 'TTS\tunknown\t' in health.wire()
         assert len(health.wire().splitlines()) == 4
+
+
+def test_tts_polling_is_quiet_and_recovery_is_bounded():
+    assert ServiceHealth.poll_interval('TTS', 'good') == 120
+    assert ServiceHealth.poll_interval('TTS', 'offline') == 60
+    assert ServiceHealth.poll_interval('STT', 'good') == 15
 
 
 def test_muted_tts_does_not_contact_server():

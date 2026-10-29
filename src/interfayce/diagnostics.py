@@ -62,8 +62,9 @@ def run_diagnostics(settings: AppSettings, *, voice_service_ready: bool,
         "A virtual cable output is available." if cable
         else "No VB-CABLE-style output found; only Spotify-to-VRChat broadcast is unavailable."))
     results.append(DiagnosticResult(
-        "Kokoro", "ready" if settings.tts_endpoint else "optional",
-        "Speech endpoint is configured." if settings.tts_endpoint
+        "Ming" if settings.tts_provider == "ming" else "Kokoro",
+        "ready" if (settings.ming_endpoint if settings.tts_provider == "ming" else settings.tts_endpoint) else "optional",
+        "Speech endpoint is configured (availability is shown on the wrist)." if (settings.ming_endpoint if settings.tts_provider == "ming" else settings.tts_endpoint)
         else "Not configured; spoken acknowledgements and battery warnings stay silent."))
     results.append(DiagnosticResult(
         "Spotify OAuth", "ready" if settings.spotify_client_id else "optional",

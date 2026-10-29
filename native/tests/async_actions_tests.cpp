@@ -31,5 +31,27 @@ int main() {
     }
     Check(responsive && pending && onWorker && !actions.Busy());
     Check(completed == std::vector<int>({1,2,3}));
+    // A stalled request must not permit an unbounded backlog, and saturation
+    // must never consume the slot reserved for a held microphone's release.
+    std::promise<void> unblock;
+    auto stalled = unblock.get_future().share();
+    completed.clear();
+    Check(actions.Submit([stalled] { stalled.wait(); return 0; },
+        [&](int result) { completed.push_back(result); }));
+    actions.Tick();
+    for (int i = 1; i <= 8; ++i)
+        Check(actions.Submit([i] { return i; }, [&](int result) { completed.push_back(result); }));
+    for (int i = 0; i < 10000; ++i)
+        Check(!actions.Submit([] { return -1; }, [](int) {}));
+    Check(actions.Submit([] { return 9; }, [&](int result) { completed.push_back(result); }, true));
+    Check(!actions.Submit([] { return -1; }, [](int) {}, true));
+    unblock.set_value();
+    const auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (actions.Busy() && std::chrono::steady_clock::now() < drainDeadline) {
+        actions.Tick();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Check(!actions.Busy());
+    Check(completed == std::vector<int>({0,1,2,3,4,5,6,7,8,9}));
     std::cout << "Nonblocking, FIFO and UI-thread completion checks passed.\n";
 }

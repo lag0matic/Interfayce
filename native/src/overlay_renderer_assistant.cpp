@@ -10,12 +10,12 @@ void OverlayRenderer::DrawAssistantPanel(const GlyphPainter& drawHoloAsset) {
                               D2D1_RECT_F rect, ID2D1Brush* brush) {
         d2dContext_->DrawText(text.data(), static_cast<UINT32>(text.size()), format, rect, brush);
     };
-        drawText(assistantTranscript_.empty() ? L"Tap the core and ask anything"
+        drawText(assistantTranscript_.empty() ? L"Hold the core to talk; release to ask"
                 : (L"YOU  /  " + assistantTranscript_), labelFormat_.Get(),
             D2D1::RectF(42, 108, 726, 142),
             assistantTranscript_.empty() ? mutedTextBrush_.Get() : structureBrush_.Get());
         const auto answer = assistantResponse_.empty()
-            ? std::wstring(L"Ask a question. Use the thumbstick over this text to scroll replies.") : assistantResponse_;
+            ? std::wstring(L"Hold to record up to 30 seconds. Use the thumbstick over this text to scroll replies.") : assistantResponse_;
         Microsoft::WRL::ComPtr<IDWriteTextLayout> answerLayout;
         if (!assistantWriteFactory_) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(assistantWriteFactory_.GetAddressOf()));
         if (assistantWriteFactory_ && SUCCEEDED(assistantWriteFactory_->CreateTextLayout(answer.c_str(), static_cast<UINT32>(answer.size()),

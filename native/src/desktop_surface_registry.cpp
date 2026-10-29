@@ -990,6 +990,7 @@ bool DesktopSurfaceRegistry::AssignSource(uint64_t id, const DesktopSource& sour
     found->hoveredSource.reset();
     found->aspectRatio = capture->AspectRatio();
     found->capture = std::move(capture);
+    found->captureSuspended = false;
     // The capture now owns the submitted texture. Rebuild picker pages only
     // when returning to source selection, not throughout the capture lifetime.
     found->additionalPickerPages.clear();
@@ -998,6 +999,12 @@ bool DesktopSurfaceRegistry::AssignSource(uint64_t id, const DesktopSource& sour
     found->sources = {selectedSource};
     found->assignedSource = 0;
     UpdateFrameOverlays(*found);
+    // A favorite can finish launching after the user has left the Desk tab.
+    if (!deckVisible_) {
+        vr::VROverlay()->ClearOverlayTexture(found->overlay);
+        found->capture->Stop();
+        found->captureSuspended = true;
+    }
     return true;
 }
 
@@ -1222,17 +1229,19 @@ void DesktopSurfaceRegistry::SetHoveredKeyboard(const std::optional<KeyboardSurf
 }
 
 void DesktopSurfaceRegistry::SetHoveredFrame(std::optional<uint64_t> id) {
-    for (const auto& surface : surfaces_) {
+    if (!deckVisible_) return;
+    for (auto& surface : surfaces_) {
         const bool highlighted = (id && *id == surface.id)
             || std::any_of(activeGrabs_.begin(), activeGrabs_.end(), [&surface](const auto& grab) {
                 return grab && grab->id == surface.id;
             });
-        for (const auto frame : surface.frameOverlays) {
-            vr::VROverlay()->SetOverlayAlpha(frame, 0.001F);
-        }
+        if (surface.frameHighlighted == highlighted) continue;
+        bool updated = true;
         for (const auto glow : surface.glowOverlays) {
-            vr::VROverlay()->SetOverlayAlpha(glow, highlighted ? 0.42F : 0.0F);
+            updated = (vr::VROverlay()->SetOverlayAlpha(glow, highlighted ? 0.42F : 0.0F)
+                == vr::VROverlayError_None) && updated;
         }
+        if (updated) surface.frameHighlighted = highlighted;
     }
 }
 
@@ -1248,7 +1257,36 @@ void DesktopSurfaceRegistry::SetDeckVisible(bool visible) {
             vr::VROverlay()->HideOverlay(surface.overlay);
             for (const auto frame : surface.frameOverlays) vr::VROverlay()->HideOverlay(frame);
             for (const auto glow : surface.glowOverlays) vr::VROverlay()->HideOverlay(glow);
+            surface.visible = false;
+            ReleasePointerInput(surface);
+            if (surface.capture) {
+                // Unsubmit the shared texture before releasing its owning resource.
+                vr::VROverlay()->ClearOverlayTexture(surface.overlay);
+                surface.capture->Stop();
+                surface.captureSuspended = true;
+            }
             continue;
+        }
+        if (surface.capture && surface.captureSuspended) {
+            bool resumed = surface.assignedSource
+                && *surface.assignedSource < surface.sources.size()
+                && surface.capture->Start(device_, surface.sources[*surface.assignedSource]);
+            if (resumed) {
+                const auto texture = surface.capture->Texture();
+                resumed = vr::VROverlay()->SetOverlayTexture(surface.overlay, &texture)
+                    == vr::VROverlayError_None;
+            }
+            if (resumed) {
+                surface.captureSuspended = false;
+                surface.aspectRatio = surface.capture->AspectRatio();
+                UpdateFrameOverlays(surface);
+            } else {
+                vr::VROverlay()->ClearOverlayTexture(surface.overlay);
+                surface.capture->Stop();
+                // A closed source returns to selection; allocation failure keeps
+                // the surface hidden and permits retry on the next deck opening.
+                if (!ReturnToPicker(surface.id, DesktopSurfaceManager{}.EnumerateSources())) continue;
+            }
         }
         surface.visible = vr::VROverlay()->ShowOverlay(surface.overlay)
             == vr::VROverlayError_None;
@@ -1262,8 +1300,7 @@ void DesktopSurfaceRegistry::Update() {
     privateWindows_.Tick();
     dictation_.Tick();
     const bool voiceChanged = renderedVoiceLabel_ != dictation_.Label();
-    // Keep Windows capture sessions alive for instant restoration, but do not
-    // copy frames or update OpenVR textures while the Desk deck is parked.
+    // Parked captures are stopped; private-window recovery still runs above.
     if (!deckVisible_) return;
     renderedVoiceLabel_ = dictation_.Label();
     for (auto& surface : surfaces_) {
@@ -1281,7 +1318,7 @@ void DesktopSurfaceRegistry::Update() {
                 surface.keyboardControlled, surface.keyboardAltered,
                 surface.hoveredKey, std::nullopt);
         }
-        if (!surface.capture) continue;
+        if (!surface.capture || surface.captureSuspended) continue;
         bool sourceLost = false;
         if (surface.assignedSource && *surface.assignedSource < surface.sources.size()) {
             const auto& source = surface.sources[*surface.assignedSource];
@@ -1333,6 +1370,7 @@ bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
     const auto found = std::find_if(surfaces_.begin(), surfaces_.end(),
         [id](const auto& surface) { return surface.id == id; });
     if (found == surfaces_.end() || !PlaceAtEyeLine(*found)) return false;
+    if (!deckVisible_ || found->captureSuspended) return false;
     found->visible = vr::VROverlay()->ShowOverlay(found->overlay) == vr::VROverlayError_None;
     if (found->visible) {
         for (const auto frame : found->frameOverlays) vr::VROverlay()->ShowOverlay(frame);
@@ -1342,7 +1380,7 @@ bool DesktopSurfaceRegistry::BringToMe(uint64_t id) {
 }
 
 bool DesktopSurfaceRegistry::BringAllToMe() {
-    if (surfaces_.empty()) return false;
+    if (surfaces_.empty() || !deckVisible_) return false;
     for (auto& grab : activeGrabs_) grab.reset();
     activeScale_.reset();
 
@@ -1372,6 +1410,10 @@ bool DesktopSurfaceRegistry::BringAllToMe() {
     }
 
     for (auto& surface : surfaces_) {
+        if (surface.captureSuspended) {
+            allPlaced = false;
+            continue;
+        }
         surface.visible = vr::VROverlay()->ShowOverlay(surface.overlay)
             == vr::VROverlayError_None;
         if (!surface.visible) {
@@ -1435,6 +1477,7 @@ bool DesktopSurfaceRegistry::ReturnToPicker(
     ReleasePointerInput(*found);
     if (found->capture) found->capture->Stop();
     found->capture.reset();
+    found->captureSuspended = false;
     found->sources = sources;
     found->assignedSource.reset();
     found->hoveredSource.reset();

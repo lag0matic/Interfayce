@@ -11,6 +11,7 @@ import uuid
 
 from .codex_transport import CodexTransport, CodexConnectionError
 from .settings import load_settings
+from .speech_delivery import delivery_guidance
 from .codex_items import CodexItems
 
 
@@ -123,7 +124,8 @@ class CodexBackend:
                 return ""
             result = transport.request("turn/start", {"threadId": self.thread_id, "effort": "low",
                 "model": load_settings().codex_model, "serviceTier": "default",
-                "input": [{"type": "text", "text": text}]})
+                "input": [{"type": "text", "text": text}] +
+                    ([{"type": "text", "text": delivery_guidance()}] if delivery_guidance() else [])})
             self.turn_id = result["turn"]["id"]
             self.state = "THINKING"
             interrupted = False

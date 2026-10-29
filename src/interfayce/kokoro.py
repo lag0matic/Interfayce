@@ -1,7 +1,8 @@
-"""Queued client for David's OpenAI-compatible Kokoro server."""
+"""Serialized speech queue with Ming streaming and selectable Kokoro playback."""
 
 from __future__ import annotations
 
+from collections import deque
 from io import BytesIO
 import json
 import logging
@@ -10,6 +11,7 @@ import threading
 import time
 import urllib.request
 import wave
+import re
 
 from .settings import load_settings
 from .playback_controls import PlaybackControls
@@ -17,9 +19,9 @@ from .playback_controls import PlaybackControls
 
 LOGGER = logging.getLogger("interfayce.voice")
 _CONDITION = threading.Condition()
-_pending_text: str | None = None
+_pending_speech: deque[tuple[str, threading.Event | None]] = deque()
 _worker_started = False
-_pending_cancel: threading.Event | None = None
+_SPEECH_LOCK = threading.Lock()
 
 
 def synthesize(text: str, *, timeout_seconds: float = 30.0) -> bytes:
@@ -31,7 +33,7 @@ def synthesize(text: str, *, timeout_seconds: float = 30.0) -> bytes:
         raise RuntimeError("Kokoro endpoint, model, and voice must be configured in Settings.")
     payload = json.dumps({
         "model": model,
-        "input": text,
+        "input": strip_delivery_tags(text),
         "voice": voice,
         "response_format": "wav",
         "speed": float(os.environ.get("INTERFAYCE_KOKORO_SPEED", str(settings.tts_speed))),
@@ -121,45 +123,52 @@ def play_wav(wav_bytes: bytes, *, cancel: threading.Event | None = None) -> None
 
 
 def _speech_worker() -> None:
-    global _pending_text, _pending_cancel
     while True:
         with _CONDITION:
-            while _pending_text is None:
+            while not _pending_speech:
                 _CONDITION.wait()
-            text = _pending_text
-            cancel = _pending_cancel
-            _pending_text = None
-            _pending_cancel = None
+            text, cancel = _pending_speech.popleft()
         try:
+            speak(text, cancel=cancel)
+        except Exception:
+            LOGGER.exception("Speech acknowledgment failed")
+
+
+def strip_delivery_tags(text: str) -> str:
+    return re.sub(r"\[(?:voice:[^\]]+|chuckle|laugh|sigh|gasp|groan|hmm|hmph|cough|clear throat|uhm|shush|shh|question ah|question huh)\]", "", text, flags=re.I).strip()
+
+
+def speak(text: str, *, cancel=None) -> None:
+    # Harness and queued speech share this gate: one TTS request at a time.
+    with _SPEECH_LOCK:
+        settings = load_settings()
+        if settings.tts_muted or settings.tts_volume <= 0 or (cancel and cancel.is_set()):
+            return
+        if settings.tts_provider == "ming":
+            from .ming_tts import stream_speech
+            stream_speech(text, cancel=cancel)
+        else:
             wav = synthesize(text)
-            with _CONDITION:
-                superseded = _pending_text is not None
-            if superseded or (cancel is not None and cancel.is_set()):
-                LOGGER.info("Discarding stale Kokoro acknowledgment")
-                continue
             if cancel is None:
                 play_wav(wav)
             else:
                 play_wav(wav, cancel=cancel)
-            LOGGER.info("Kokoro acknowledgment played")
-        except Exception:
-            # Spoken feedback is optional and must never invalidate a completed command.
-            LOGGER.exception("Kokoro acknowledgment failed")
-        finally:
-            # Do not retain the last audio buffer while waiting for another request.
-            wav = None
 
 
 def speak_in_background(text: str, *, cancel: threading.Event | None = None) -> None:
-    global _pending_text, _worker_started, _pending_cancel
+    global _worker_started
     if os.environ.get("INTERFAYCE_TTS", "on").casefold() in {"0", "false", "off", "no"}:
         return
     with _CONDITION:
-        _pending_text = text
-        _pending_cancel = cancel
+        if cancel is not None and cancel.is_set():
+            return
+        if len(_pending_speech) >= 8:
+            LOGGER.warning("Speech queue full; skipping new acknowledgment")
+            return
+        _pending_speech.append((text, cancel))
         if not _worker_started:
             threading.Thread(
-                target=_speech_worker, name="InterfayceKokoro", daemon=True
+                target=_speech_worker, name="InterfayceSpeech", daemon=True
             ).start()
             _worker_started = True
         _CONDITION.notify()

@@ -7,6 +7,14 @@ from source is only necessary when producing a new release.
 
 ## What to preserve before resetting Windows
 
+### Speech server recovery (2026-10-29)
+
+The private [Interfayce-Remote-STT repository](https://github.com/lag0matic/Interfayce-Remote-STT) is the maintained server source. Its README covers restoring Windows/Python, NVIDIA runtime prerequisites, pinned packages, model downloads, authentication, login startup and verification. Whisper Turbo is configured for both commands and live captions. The original `remote-stt/` folder here remains historical source, not an automatically synchronized copy.
+
+A source recovery ZIP and SHA256 checksum are saved in `D:\Interfayce Backups\Speech Server\` at checkpoint `02e3503`. This kit excludes credentials, model weights and CUDA DLLs; it requires downloads and a trusted NVIDIA runtime. Preserve the server's `config.json` separately and securely if retaining its API key matters, or let restoration generate a new key and update Interfayce's settings. The optional old `cuda-runtime` directory can be reused.
+
+Validation: 11 server tests passed; PowerShell syntax checked; the running server passed authenticated readiness plus command and live-caption transcription of a public sample. A full restore on a fresh Windows machine has not yet been exercised. The server was not changed or restarted while creating this backup.
+
 ### Private VR windows (1.2.17)
 
 Use **Recover VR windows** in the Start menu or the Interfayce tray to bring parked

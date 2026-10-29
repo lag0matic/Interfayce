@@ -8,6 +8,10 @@ Interfayce is a lightweight Windows wrist interface for SteamVR and VRChat. It b
 
 The project is personal-use-first. It is developed and tested around a Valve Index with Knuckles controllers, VRChat, SlimeVR, and the maintainer's own Windows setup. It is provided as-is and is not intended to be a universal VR dashboard or a supported commercial product.
 
+## Speech server recovery
+
+The Windows speech server now has its own private [Interfayce Remote STT recovery repository](https://github.com/lag0matic/Interfayce-Remote-STT), with pinned dependencies, the working Whisper Turbo configuration, and restore/verification helpers. See [RECOVERY.md](RECOVERY.md) for the server recovery checkpoint. The existing `remote-stt/` folder is retained for historical releases; future server maintenance belongs in the separate repository.
+
 ## Development disclosure
 
 Interfayce is developed with substantial AI assistance. Lag0Matic supplies the original concept, requirements, visual direction, product decisions, and live VR testing. OpenAI Codex/ChatGPT has contributed substantial implementation, refactoring, debugging, research, and documentation. This repository does not represent the project as solely hand-written by the maintainer.
@@ -356,3 +360,39 @@ Additional project references:
 - [`remote-stt/README.md`](remote-stt/README.md) — portable Windows Faster-Whisper service
 
 SPACE panel: tap **DRAG: NORMAL / ACCELERATED** to toggle speed-sensitive dragging. Slow movement stays 1:1; faster sweeps ramp to the maximum multiplier configured in desktop settings (default 4x, range 1-6x). Release stops immediately. The existing travel limit and Restore remain in effect.
+
+## Ming spoken replies (1.2.48)
+
+Settings > VOICE selects `ming` (default) or `kokoro`. Ming uses the Cassia
+voice at speed 1.0. Its URL accepts either `http://thearkive.local:7082/v1`
+or the full `/v1/audio/speech` URL. Kokoro endpoint, model, voice, and speed
+remain saved separately. Both providers use the existing output, mute, and
+volume controls. Ming's optional API key is stored with Windows DPAPI; the
+`INTERFAYCE_MING_API_KEY` environment variable can override it.
+
+Ming plays one continuous 24 kHz mono signed-16-bit PCM stream, with a bounded
+four-second buffer and a 200 ms initial local jitter cushion. HTTP byte chunks
+may split samples; a carry byte preserves alignment. Speech requests are
+serialized, with up to eight waiting replies. Cancellation stops playback and
+closes the request; there are no automatic retry storms or automatic provider
+switches. Server-side generation may continue briefly after disconnect.
+
+ASK can choose subtle voice/performance tags without an extra LLM request.
+Music confirmations remain neutral unless an expressive reply is appropriate.
+Supported delivery tags reach Ming unchanged and are stripped before Kokoro
+synthesis. Existing ASK conversations retain their instructions and receive
+voice-delivery guidance with each new question.
+
+The wrist TTS light checks Ming's `/health` readiness. Logs record request,
+headers, first PCM, playback start, EOF, byte counts, and underruns; they do not
+record audio bodies or API keys. Live tests demonstrated streaming before EOF,
+correct emotion profiles, chuckle/laughter completion, and variable server
+latency. Repeated long replies exposed occasional server delivery slower than
+playback; the client reports underruns rather than claiming gap-free speech.
+
+TTS readiness is checked every two minutes, or once a minute while offline;
+reading the wrist status does not trigger another remote request. If connection
+logs show delays before `Ming connected`, check hostname resolution. On the
+current LAN, unreachable IPv6 addresses for `thearkive.local` caused three
+five-second connection attempts before IPv4 succeeded. Using the configured
+LAN address removed that 15-second delay without changing Ming generation.

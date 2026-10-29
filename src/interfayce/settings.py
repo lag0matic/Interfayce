@@ -22,6 +22,8 @@ MAX_DESKTOP_HISTORY = 8
 
 @dataclass(frozen=True)
 class AppSettings:
+    tts_provider: str = "ming"
+    ming_endpoint: str = "http://thearkive.local:7082/v1"
     tts_volume: float = 0.85
     tts_muted: bool = False
     tts_speed: float = 1.0
@@ -144,6 +146,8 @@ def _clamp(settings: AppSettings) -> AppSettings:
         favorites.append((clean_label, clean_executable))
     favorites.extend((("", ""),) * (3 - len(favorites)))
     return AppSettings(
+        tts_provider=settings.tts_provider if settings.tts_provider in {"ming", "kokoro"} else "ming",
+        ming_endpoint=str(settings.ming_endpoint).strip().rstrip("/"),
         tts_volume=max(0.0, min(1.0, float(settings.tts_volume))),
         tts_muted=bool(settings.tts_muted),
         tts_speed=max(0.25, min(4.0, float(settings.tts_speed))),
@@ -190,6 +194,8 @@ def load_settings() -> AppSettings:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             return _clamp(AppSettings(
+                tts_provider=data.get("tts_provider", "ming"),
+                ming_endpoint=data.get("ming_endpoint", "http://thearkive.local:7082/v1"),
                 tts_volume=data.get("tts_volume", 0.85),
                 tts_muted=data.get("tts_muted", False),
                 tts_speed=data.get("tts_speed", 1.0),
@@ -373,10 +379,14 @@ def set_desktop_configuration(*, tts_volume: float, tts_muted: bool,
                               codex_model: str | None = None,
                               music_provider: str | None = None,
                               caption_rollover_seconds: float | None = None,
+                              tts_provider: str | None = None,
+                              ming_endpoint: str | None = None,
                               baseline: AppSettings | None = None) -> AppSettings:
     current = load_settings()
     candidate = _clamp(replace(
         current,
+        tts_provider=current.tts_provider if tts_provider is None else tts_provider,
+        ming_endpoint=current.ming_endpoint if ming_endpoint is None else ming_endpoint,
         tts_volume=tts_volume,
         tts_muted=tts_muted,
         tts_speed=tts_speed,

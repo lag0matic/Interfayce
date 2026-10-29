@@ -34,7 +34,8 @@ class ServiceHealth:
             rows = []
             for name in ("TTS", "STT", "LLM", "SPOTIFY"):
                 state, detail, stamp = self._values.get(name, ("unknown", "Checking", 0))
-                if time.monotonic() - stamp > 45:
+                max_age = 150 if name == "TTS" else 45
+                if time.monotonic() - stamp > max_age:
                     state, detail = "unknown", "Waiting for a fresh check"
                 rows.append("\t".join((name, state, detail.replace("\t", " ").replace("\n", " "))))
             return "\n".join(rows)
@@ -45,6 +46,10 @@ class ServiceHealth:
             endpoint = os.environ.get("INTERFAYCE_KOKORO_URL", s.tts_endpoint).strip()
             if s.tts_muted or s.tts_volume <= 0:
                 return "unknown", "Muted"
+            if s.tts_provider == "ming":
+                from .ming_tts import check_ready
+                check_ready(s.ming_endpoint)
+                return "good", "Ming ready"
             if not endpoint:
                 return "unknown", "Not configured"
             base = endpoint.removesuffix("/audio/speech").rstrip("/")
@@ -89,7 +94,13 @@ class ServiceHealth:
             except Exception:
                 state, detail = "offline", "Service unreachable or not ready"
             self.set(name, state, detail)
-            self._stop.wait(15)
+            self._stop.wait(self.poll_interval(name, state))
+
+    @staticmethod
+    def poll_interval(name, state):
+        if name == "TTS":
+            return 60 if state == "offline" else 120
+        return 15
 
     def start(self):
         for name in ("TTS", "STT", "LLM"):

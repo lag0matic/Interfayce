@@ -106,6 +106,9 @@ class SettingsWindow:
         self.playspace_max_boost = tk.DoubleVar(value=current.playspace_max_boost)
         self.playspace_travel_limit = tk.DoubleVar(
             value=current.playspace_travel_limit_meters)
+        self.tts_provider = tk.StringVar(value=current.tts_provider)
+        self.ming_endpoint = tk.StringVar(value=current.ming_endpoint)
+        self.ming_key = tk.StringVar()
         self.tts_endpoint = tk.StringVar(value=current.tts_endpoint)
         self.tts_model = tk.StringVar(value=current.tts_model)
         self.tts_voice = tk.StringVar(value=current.tts_voice)
@@ -249,7 +252,20 @@ class SettingsWindow:
         general_canvas.bind("<Configure>", lambda event:
             general_canvas.itemconfigure(general_item, width=event.width))
         self._build_general(general_content)
-        self._build_voice(voice)
+        voice.columnconfigure(0, weight=1)
+        voice.rowconfigure(0, weight=1)
+        voice_canvas = tk.Canvas(voice, background=self.PANEL, highlightthickness=0)
+        voice_scroll = ttk.Scrollbar(voice, orient="vertical", command=voice_canvas.yview)
+        voice_canvas.configure(yscrollcommand=voice_scroll.set)
+        voice_canvas.grid(row=0, column=0, sticky="nsew")
+        voice_scroll.grid(row=0, column=1, sticky="ns")
+        voice_content = ttk.Frame(voice_canvas, style="Panel.TFrame")
+        voice_item = voice_canvas.create_window((0, 0), window=voice_content, anchor="nw")
+        voice_content.bind("<Configure>", lambda _event:
+            voice_canvas.configure(scrollregion=voice_canvas.bbox("all")))
+        voice_canvas.bind("<Configure>", lambda event:
+            voice_canvas.itemconfigure(voice_item, width=event.width))
+        self._build_voice(voice_content)
         self._build_integrations(integrations)
         self._build_ask(ask)
         self._build_comms(comms)
@@ -293,7 +309,7 @@ class SettingsWindow:
         row += 1
         ttk.Checkbutton(panel, text="Mute spoken responses", variable=self.muted).grid(
             row=row, column=0, sticky="w")
-        ttk.Label(panel, text="Speed", style="Panel.TLabel").grid(row=row, column=1, sticky="w", padx=(60, 0))
+        ttk.Label(panel, text="Kokoro speed", style="Panel.TLabel").grid(row=row, column=1, sticky="w", padx=(60, 0))
         ttk.Spinbox(panel, from_=0.25, to=4.0, increment=0.05, textvariable=self.speed,
                     width=8).grid(row=row, column=1, sticky="e")
 
@@ -362,7 +378,20 @@ class SettingsWindow:
         panel.columnconfigure(1, weight=1)
 
     def _build_voice(self, panel: ttk.Frame) -> None:
-        row = self._section(panel, 0, "KOKORO TTS")
+        row = self._section(panel, 0, "SPOKEN REPLIES")
+        ttk.Label(panel, text="Voice engine", style="Panel.TLabel").grid(row=row, column=0, sticky="w")
+        ttk.Combobox(panel, textvariable=self.tts_provider, values=("ming", "kokoro"), state="readonly").grid(row=row, column=1, sticky="ew")
+        row += 1
+        row = self._entry_row(panel, row, "Ming base or speech URL", self.ming_endpoint)
+        ttk.Label(panel, text="Ming API key (optional)", style="Panel.TLabel").grid(row=row, column=0, sticky="w")
+        key_row = ttk.Frame(panel, style="Panel.TFrame")
+        key_row.grid(row=row, column=1, sticky="ew")
+        ttk.Entry(key_row, textvariable=self.ming_key, show="●").pack(side="left", fill="x", expand=True)
+        ttk.Button(key_row, text="Save", command=self.save_ming_key).pack(side="left")
+        ttk.Button(key_row, text="Remove", command=self.remove_ming_key).pack(side="left")
+        row += 1
+        ttk.Label(panel, text="Ming uses Cassia at normal speed. Kokoro settings are kept below.", style="Muted.Panel.TLabel").grid(row=row, column=0, columnspan=2, sticky="w")
+        row = self._section(panel, row + 1, "KOKORO TTS")
         row = self._entry_row(panel, row, "Speech endpoint", self.tts_endpoint)
         row = self._entry_row(panel, row, "Model", self.tts_model)
         row = self._entry_row(panel, row, "Voice or blend", self.tts_voice)
@@ -773,7 +802,23 @@ class SettingsWindow:
     def open_releases(self) -> None:
         webbrowser.open(self._latest_release_url or RELEASES_URL)
 
+    def save_ming_key(self) -> None:
+        from .secure_store import write_secret
+        if self.ming_key.get().strip():
+            write_secret("ming-api-key", self.ming_key.get().strip().encode("utf-8"))
+            self.ming_key.set("")
+            messagebox.showinfo("Interfayce", "Ming API key stored securely.", parent=self.root)
+
+    def remove_ming_key(self) -> None:
+        from .secure_store import delete_secret
+        delete_secret("ming-api-key")
+        self.ming_key.set("")
+        messagebox.showinfo("Interfayce", "Ming API key removed.", parent=self.root)
+
     def _persist(self) -> bool:
+        if not _valid_http_url(self.ming_endpoint.get().strip()):
+            messagebox.showerror("Interfayce", "Ming needs a valid HTTP or HTTPS URL.", parent=self.root)
+            return False
         tts_endpoint = self.tts_endpoint.get().strip()
         stt_endpoint = self.stt_endpoint.get().strip()
         llm_endpoint = self.llm_endpoint.get().strip()
@@ -795,6 +840,8 @@ class SettingsWindow:
             tts_volume=self.volume.get() / 100.0,
             tts_muted=self.muted.get(),
             tts_speed=self.speed.get(),
+            tts_provider=self.tts_provider.get(),
+            ming_endpoint=self.ming_endpoint.get().strip(),
             tts_endpoint=tts_endpoint,
             tts_model=self.tts_model.get(),
             tts_voice=self.tts_voice.get(),

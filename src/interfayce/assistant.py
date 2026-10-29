@@ -10,6 +10,7 @@ import threading
 import time
 from typing import Any, Callable, Mapping
 
+from .speech_delivery import delivery_guidance
 from .llm_client import LlmError, LlmResponse, OpenAiCompatibleClient
 
 
@@ -283,7 +284,7 @@ class ConversationalAssistant:
         self._cancel.clear()
         try:
             messages: list[dict[str, Any]] = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT + delivery_guidance()},
                 *self.memory.messages(),
                 {"role": "user", "content": user},
             ]

@@ -30,7 +30,7 @@ def tts_text(answer: str) -> str:
     text = re.sub(r"[*_`#>]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(r"\s+([.,!?;:])", r"\1", text)
-    return text[:1_200]
+    return text
 
 
 class AssistantHarness:
@@ -57,8 +57,8 @@ class AssistantHarness:
         if speak and result.response:
             # The CLI is a proof harness, so speech is intentionally synchronous:
             # the process must not exit while the daemon speech queue is pending.
-            from .kokoro import play_wav, synthesize
-            play_wav(synthesize(spoken))
+            from .kokoro import speak as speak_reply
+            speak_reply(spoken)
         citations = self.research.citations() if self.research is not None else {}
         labels = set(re.findall(r"\[S[1-5]\]", result.response))
         sources = tuple(

@@ -528,3 +528,43 @@ Save applies the setting to the next dictation without restarting; active
 utterances keep their starting delay. Settings persistence bounds the range.
 Validation: 253 application tests passed; hidden Tk panel construction, slider
 limits and value labels verified. No wrist layout or server changes required.
+
+## 1.2.46 - reduce Windows media-session resource churn
+
+Reuse one Windows media-session manager across polling requests and threads,
+with single-flight initialization and reconnection after enumeration failure.
+Cache one track's artwork for up to 30 seconds (missing artwork retries after
+two); track changes bypass the cache. Explicitly close thumbnail readers and
+their streams on success/failure, with an 8 MiB artwork bound.
+
+Validation: 256 application tests passed. Twenty concurrent live Windows
+Spotify snapshots returned valid metadata/artwork across separate event loops.
+Tests cover manager reuse/recovery, artwork changes/expiry and cleanup failures.
+This addresses concrete resource-lifecycle issues implicated by the prior CPU
+spike; sustained VR usage is still needed to confirm the long-session symptom.
+
+## 2026-10-26 - v1.2.47 resource review fixes
+
+- Desktop frame glow updates now run only when hover/grab highlighting changes; hidden decks skip these calls. Frame hit-target alpha remains initialized once.
+- Parking the desktop deck un-submits capture textures, releases held pointer input, and stops Windows capture sessions. Reopening restarts captures; missing sources fall back to the picker. Private-window watchdog continues while parked. Favorite launches completing while parked also suspend immediately.
+- Wrist action queues accept at most eight pending ordinary requests plus one reserved microphone-release request. COMMS starts only when its queue is idle, so overload cannot orphan a release. Accepted work retains FIFO ordering.
+- Validation: native Release build passed; async queue test includes 10,000 rejected overload requests and release-slot/FIFO validation; six keyboard-dictation scenarios passed; desktop coordinate tests passed on three monitor origins; five media-resource Python tests passed. git diff --check passed.
+- Installer prepared as 1.2.47. No install, app launch, shutdown, or restart requested for this checkpoint: user is going to sleep. Live VR capture hide/resume and long-session resource behavior remain to be checked.
+
+## 2026-10-28 - v1.2.48 Ming streaming TTS
+
+Added selectable Ming/Cassia streaming speech (default), retaining separate Kokoro configuration. One 24 kHz mono Int16 callback stream per reply, four-second bounded PCM buffer, odd-byte carry, 200 ms local cushion, serialized bounded reply queue, cancellation-aware socket reads, dynamic mute/volume and output-selection cancellation, optional DPAPI API key, /health readiness, and timing/underrun logging. ASK and music planners receive provider-specific delivery guidance without extra inference. Full ASK speech is preserved; display strips supported delivery tags. Voice settings scroll to fit smaller windows.
+Native Release build passed. Application suite: 264 passed with one legacy diagnostics expectation subsequently corrected; focused diagnostics rerun 3 passed. Streaming tests cover early playback before EOF, arbitrary odd chunks, error body rejection, blocked-read cancellation and cleanup, bounded buffer, truncated samples, serialization, and Kokoro configuration retention. Live server tests confirmed neutral/soft/confident/amused profiles, complete chuckle/laugh responses, and short/long streaming. Most first audio ~3s; two requests delayed ~15s before headers. Long-repeat test had ~2.16s aggregate underrun with slow delivery; no server configuration/model changes made. Live samples and timing logs in packaging/out/ming-*.wav and ming-*-probe.log. Subjective voice quality and in-VR output remain user validation.
+Final validation: all 265 application tests passed (14.02s). 1.2.48 installer compiled successfully. Running installed copy was not stopped, upgraded, or relaunched; deployment awaits a convenient restart. Ming server and other projects were not modified.
+
+## 2026-10-28 - v1.2.49 quieter TTS health checks
+TTS status polling now runs every 120 seconds (60 seconds when offline), instead of every 15 seconds. TTS cached status expires after 150 seconds so the wrist light does not falsely go unknown between polls. Ming startup warm-up no longer sends a duplicate health request; the status worker owns readiness. Other service intervals unchanged. Focused health/startup tests: 14 passed.
+
+Latency diagnosis (same checkpoint): intermittent 15-second pre-header delays were traced to hostname address selection, not Ming generation. thearkive.local resolves unreachable IPv6 addresses before the working IPv4 LAN address; each of the first three attempts used a five-second connection timeout. Direct 192.168.4.194:7082 connections succeeded in 0-16 ms. Changed ONLY the installed settings ming_endpoint to http://192.168.4.194:7082/v1 inside the existing settings transaction; live service picks this up for the next reply without restart. Three health checks succeeded in 47/16/16 ms. Added a connection-established timestamp to speech logs for future diagnosis. Normal first PCM is still about 2-4 seconds, plus ~0.3 seconds local buffering/device startup. Server generation/configuration unchanged.
+Installed 1.2.49 verification: installer succeeded, executable hashes matched staging, and settings/credential hashes were unchanged. Overlay and service restarted; local health HTTP200, Ming ready, remote STT reachable, media available. Corrected Ming LAN endpoint preserved. GitHub checkpoint includes resource fixes from 1.2.46/1.2.47 and Ming integration/polling changes from 1.2.48/1.2.49. Validation: native Release builds, 265-test full suite for Ming plus 14 focused health/startup checks after polling changes, live Ming streaming and audio-format checks.
+
+## 2026-10-28 - 1.2.50 ASK hold-to-talk
+ASK's main microphone now records while the trigger is held, submits on release, and shares COMMS' 30-second maximum and short release tail. Dedicated tokenized start/stop/result requests preserve early release and reject stale stops. Cancel stops the capture and prevents partial questions reaching the LLM, including cancellation before worker startup; empty transcripts are not submitted. The existing tap endpoint remains for compatibility. Wrist instructions now explain hold/release. Existing conversation, Ming configuration, and voice output are unchanged.
+Validation: native Release build and async FIFO/release test passed; 269-test application suite passed, followed by eight focused capture lifecycle tests after the final early-cancellation guard. Hardware trigger behavior awaits user verification in VR.
+Installed 1.2.50 successfully; executable hashes match staging, saved settings and credentials unchanged. Overlay/service restarted; local health HTTP 200, Ming ready, remote STT reachable. ASK Codex connection remains lazy until the next question.
+2026-10-29: User verified ASK hold/release in VR works exactly as intended.
